@@ -1,0 +1,382 @@
+package domi
+
+import "encoding/json"
+
+// patch is a single mutation op the client applies to its DOM. One struct,
+// op-tagged at marshal time — Go's encoding of a tagged union.
+//
+// `replace` and `insert_child` carry a pre-rendered HTML fragment rather
+// than a serialized Node — the client parses it via a <template> element.
+//
+// insert_child / remove_child / move_child come in two flavours, chosen
+// by which diff function produced them:
+//
+//   - Positional (from diffPositional, for unkeyed children): use idx /
+//     from / to to address siblings by position.
+//   - Identity-based (from diffKeyed, for keyed children): use key /
+//     before to address siblings by their data-domi-key. The client
+//     keeps a per-parent Map<key, ChildNode> to resolve them in O(1).
+//     An empty `before` means "insert/move to the end".
+type patch struct {
+	op   string
+	path []int
+
+	// Op-specific fields. Only the relevant ones are emitted.
+	value  string
+	name   string
+	html   string
+	idx    int
+	from   int
+	to     int
+	key    string
+	before string
+	// keyed is set on insert_child / remove_child / move_child that
+	// came from diffKeyed; it selects the identity-based wire shape.
+	keyed bool
+}
+
+func (p patch) MarshalJSON() ([]byte, error) {
+	out := map[string]any{"op": p.op, "path": p.path}
+	switch p.op {
+	case "set_text":
+		out["value"] = p.value
+	case "set_attr":
+		out["name"] = p.name
+		out["value"] = p.value
+	case "remove_attr":
+		out["name"] = p.name
+	case "replace":
+		out["html"] = p.html
+	case "insert_child":
+		out["html"] = p.html
+		if p.keyed {
+			out["key"] = p.key
+			if p.before != "" {
+				out["before"] = p.before
+			}
+		} else {
+			out["idx"] = p.idx
+		}
+	case "remove_child":
+		if p.keyed {
+			out["key"] = p.key
+		} else {
+			out["idx"] = p.idx
+		}
+	case "move_child":
+		if p.keyed {
+			out["key"] = p.key
+			if p.before != "" {
+				out["before"] = p.before
+			}
+		} else {
+			out["from"] = p.from
+			out["to"] = p.to
+		}
+	}
+	return json.Marshal(out)
+}
+
+// diff produces the minimal patch list that transforms old into next.
+func diff(old, next Node) []patch {
+	var out []patch
+	diffNode(old, next, []int{}, &out)
+	return out
+}
+
+func diffNode(old, next Node, path []int, out *[]patch) {
+	if old.kind != next.kind || (old.kind == nodeElement && old.tag != next.tag) {
+		*out = append(*out, patch{op: "replace", path: clonePath(path), html: render(next)})
+		return
+	}
+	switch old.kind {
+	case nodeText:
+		if old.text != next.text {
+			*out = append(*out, patch{op: "set_text", path: clonePath(path), value: next.text})
+		}
+	case nodeElement:
+		diffAttrs(old.attrs, next.attrs, path, out)
+		diffChildren(old.children, next.children, path, out)
+	}
+}
+
+func diffAttrs(old, next []Attr, path []int, out *[]patch) {
+	o := combinedAttrs(old)
+	n := combinedAttrs(next)
+	oldByName := make(map[string]string, len(o))
+	for _, a := range o {
+		oldByName[a.name] = a.value
+	}
+	nextByName := make(map[string]string, len(n))
+	for _, a := range n {
+		nextByName[a.name] = a.value
+	}
+	// Emit sets in next-occurrence order so patches are deterministic.
+	for _, a := range n {
+		if existing, ok := oldByName[a.name]; !ok || existing != a.value {
+			*out = append(*out, patch{op: "set_attr", path: clonePath(path), name: a.name, value: a.value})
+		}
+	}
+	// Emit removes in old-occurrence order.
+	for _, a := range o {
+		if _, ok := nextByName[a.name]; !ok {
+			*out = append(*out, patch{op: "remove_attr", path: clonePath(path), name: a.name})
+		}
+	}
+}
+
+func diffChildren(old, next []Node, path []int, out *[]patch) {
+	if allKeyed(old) && allKeyed(next) {
+		diffKeyed(old, next, path, out)
+	} else {
+		diffPositional(old, next, path, out)
+	}
+}
+
+func diffPositional(old, next []Node, path []int, out *[]patch) {
+	for i := len(old) - 1; i >= len(next); i-- {
+		*out = append(*out, patch{op: "remove_child", path: clonePath(path), idx: i})
+	}
+	common := min(len(old), len(next))
+	for i := range common {
+		diffNode(old[i], next[i], append(path, i), out)
+	}
+	for i := len(old); i < len(next); i++ {
+		*out = append(*out, patch{op: "insert_child", path: clonePath(path), idx: i, html: render(next[i])})
+	}
+}
+
+// diffKeyed reconciles two child slices whose elements all carry stable
+// keys (and are all elements, so they can carry data-domi-key).
+//
+// It runs Snabbdom's four-rule head/tail loop until none of the rules
+// fire, then — if anything is left in the unknown middle — falls
+// through to a Vue 3-style LIS to minimize moves. Both phases emit
+// identity-based ops (key + before), so the server never tracks
+// positions and the client resolves siblings in O(1) via a per-parent
+// Map.
+//
+// Content diffs for matched pairs are deferred until after all
+// structural patches are emitted, so paths (which use new-position
+// childNodes traversal) point at the right elements when they apply.
+func diffKeyed(old, next []Node, path []int, out *[]patch) {
+	oldStart, newStart := 0, 0
+	oldEnd, newEnd := len(old)-1, len(next)-1
+
+	type deferredMatch struct {
+		oldNode, newNode Node
+		newIdx           int
+	}
+	var deferred []deferredMatch
+
+	// beforeKey returns the key of next[newEnd+1] (the start of the tail
+	// or whatever sits just past the unhandled new region); "" means the
+	// element should land at the end.
+	beforeKey := func() string {
+		if newEnd+1 < len(next) {
+			return next[newEnd+1].key
+		}
+		return ""
+	}
+
+	// Snabbdom's four-rule head/tail loop.
+	for oldStart <= oldEnd && newStart <= newEnd {
+		switch {
+		case old[oldStart].key == next[newStart].key:
+			// Rule 1: match at the head; no structural change.
+			deferred = append(deferred, deferredMatch{old[oldStart], next[newStart], newStart})
+			oldStart++
+			newStart++
+		case old[oldEnd].key == next[newEnd].key:
+			// Rule 2: match at the tail; no structural change.
+			deferred = append(deferred, deferredMatch{old[oldEnd], next[newEnd], newEnd})
+			oldEnd--
+			newEnd--
+		case old[oldStart].key == next[newEnd].key:
+			// Rule 3: old head moved to new tail. Move it to land just
+			// before whatever sits past the unhandled tail.
+			n := old[oldStart]
+			*out = append(*out, patch{op: "move_child", path: clonePath(path), keyed: true, key: n.key, before: beforeKey()})
+			deferred = append(deferred, deferredMatch{n, next[newEnd], newEnd})
+			oldStart++
+			newEnd--
+		case old[oldEnd].key == next[newStart].key:
+			// Rule 4: old tail moved to new head. Move it to land just
+			// before the current head of unhandled old (old[oldStart]) —
+			// the key-based equivalent of Snabbdom's
+			// insertBefore(oldEnd.elm, oldStart.elm).
+			n := old[oldEnd]
+			*out = append(*out, patch{op: "move_child", path: clonePath(path), keyed: true, key: n.key, before: old[oldStart].key})
+			deferred = append(deferred, deferredMatch{n, next[newStart], newStart})
+			oldEnd--
+			newStart++
+		default:
+			// None of the four rules apply; the middle is genuinely
+			// shuffled. Hand off to LIS below.
+			goto middle
+		}
+	}
+
+middle:
+	emitDeferred := func() {
+		for _, d := range deferred {
+			diffNode(d.oldNode, d.newNode, append(path, d.newIdx), out)
+		}
+	}
+
+	if oldStart > oldEnd {
+		// Only inserts left.
+		for i := newStart; i <= newEnd; i++ {
+			before := ""
+			if i+1 <= newEnd {
+				before = next[i+1].key
+			} else if newEnd+1 < len(next) {
+				before = next[newEnd+1].key
+			}
+			*out = append(*out, patch{op: "insert_child", path: clonePath(path), keyed: true, key: next[i].key, html: render(next[i]), before: before})
+		}
+		emitDeferred()
+		return
+	}
+	if newStart > newEnd {
+		// Only removes left.
+		for i := oldStart; i <= oldEnd; i++ {
+			*out = append(*out, patch{op: "remove_child", path: clonePath(path), keyed: true, key: old[i].key})
+		}
+		emitDeferred()
+		return
+	}
+
+	// Unknown middle: LIS.
+	keyToNewIdx := make(map[string]int, newEnd-newStart+1)
+	for i := newStart; i <= newEnd; i++ {
+		keyToNewIdx[next[i].key] = i
+	}
+
+	toPatch := newEnd - newStart + 1
+	// newToOld[j-newStart] = oldIndex+1 of the matched old node, or 0 if
+	// position j is a fresh insert. The +1 encoding matches Vue 3 so 0
+	// can mean "unmatched" in the LIS input.
+	newToOld := make([]int, toPatch)
+	moved := false
+	maxNewSeen := 0
+	patched := 0
+
+	for i := oldStart; i <= oldEnd; i++ {
+		if patched >= toPatch {
+			break
+		}
+		if j, ok := keyToNewIdx[old[i].key]; ok {
+			newToOld[j-newStart] = i + 1
+			if j >= maxNewSeen {
+				maxNewSeen = j
+			} else {
+				moved = true
+			}
+			deferred = append(deferred, deferredMatch{old[i], next[j], j})
+			patched++
+		}
+	}
+
+	// Remove unmatched old middle entries (forward iteration is fine —
+	// identity-based removes don't depend on sibling positions).
+	for i := oldStart; i <= oldEnd; i++ {
+		if _, ok := keyToNewIdx[old[i].key]; !ok {
+			*out = append(*out, patch{op: "remove_child", path: clonePath(path), keyed: true, key: old[i].key})
+		}
+	}
+
+	var lis []int
+	if moved {
+		lis = longestIncreasingSubseq(newToOld)
+	}
+	lisIdx := len(lis) - 1
+
+	// Right-to-left walk: for each new position, either insert, move
+	// before its anchor (next[newIdx+1]), or leave alone if LIS-stable.
+	for i := toPatch - 1; i >= 0; i-- {
+		newIdx := newStart + i
+		nextNode := next[newIdx]
+
+		before := ""
+		if newIdx+1 < len(next) {
+			before = next[newIdx+1].key
+		}
+
+		if newToOld[i] == 0 {
+			*out = append(*out, patch{op: "insert_child", path: clonePath(path), keyed: true, key: nextNode.key, html: render(nextNode), before: before})
+			continue
+		}
+		if !moved {
+			continue
+		}
+		if lisIdx >= 0 && i == lis[lisIdx] {
+			lisIdx--
+			continue
+		}
+		*out = append(*out, patch{op: "move_child", path: clonePath(path), keyed: true, key: nextNode.key, before: before})
+	}
+
+	emitDeferred()
+}
+
+func clonePath(p []int) []int {
+	out := make([]int, len(p))
+	copy(out, p)
+	return out
+}
+
+// longestIncreasingSubseq returns the indices into arr (in ascending order)
+// that form a longest strictly-increasing subsequence of the positive
+// values in arr. Zero values are treated as "no old match" and are not
+// eligible for the subsequence — those positions are inserts and always
+// need a structural patch regardless of LIS membership.
+//
+// Used by diffKeyed to identify which matched-and-relocated nodes can
+// stay put. Patience-sorting based, O(n log n).
+func longestIncreasingSubseq(arr []int) []int {
+	n := len(arr)
+	if n == 0 {
+		return nil
+	}
+	pred := make([]int, n)
+	// tails[k] is the index in arr of the smallest possible tail of any
+	// increasing subseq of length k+1 seen so far.
+	tails := make([]int, 0, n)
+	for i, v := range arr {
+		if v == 0 {
+			continue
+		}
+		// Find leftmost k in tails where arr[tails[k]] >= v.
+		lo, hi := 0, len(tails)
+		for lo < hi {
+			mid := (lo + hi) / 2
+			if arr[tails[mid]] < v {
+				lo = mid + 1
+			} else {
+				hi = mid
+			}
+		}
+		if lo > 0 {
+			pred[i] = tails[lo-1]
+		} else {
+			pred[i] = -1
+		}
+		if lo == len(tails) {
+			tails = append(tails, i)
+		} else {
+			tails[lo] = i
+		}
+	}
+	if len(tails) == 0 {
+		return nil
+	}
+	// Reconstruct by following predecessors from the last tail.
+	out := make([]int, len(tails))
+	k := tails[len(tails)-1]
+	for i := len(tails) - 1; i >= 0; i-- {
+		out[i] = k
+		k = pred[k]
+	}
+	return out
+}
