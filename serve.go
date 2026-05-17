@@ -40,7 +40,13 @@ func Handler[Msg any](newApp func() App[Msg]) http.Handler {
 
 // ---- session bookkeeping ----
 
+// sessionState holds the per-session goroutine plumbing. ctx is the
+// authoritative "is this session alive" signal — cancelling it tears
+// down the session loop, unblocks any in-flight Cmd sends, and triggers
+// the auto-removal watcher installed in handleRoot.
 type sessionState[Msg any] struct {
+	ctx     context.Context
+	cancel  context.CancelFunc
 	msgChan chan Msg
 	patchRx chan []patch
 	mu      sync.Mutex
@@ -83,28 +89,48 @@ func newSessionID() string {
 
 // ---- session loop ----
 
+// sessionLoop drains msgChan, applies Update/View/diff, and ships patches
+// to patchTx. Exits when ctx is cancelled; in-flight patches that can't
+// be delivered are dropped (the SSE consumer is also going away).
 func sessionLoop[Msg any](
+	ctx context.Context,
 	app App[Msg],
 	prev Node,
 	msgChan chan Msg,
 	patchTx chan<- []patch,
 ) {
-	for msg := range msgChan {
-		cmd := app.Update(msg)
-		next := app.View()
-		if patches := diff(prev, next); len(patches) > 0 {
-			patchTx <- patches
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case msg := <-msgChan:
+			cmd := app.Update(msg)
+			next := app.View()
+			if patches := diff(prev, next); len(patches) > 0 {
+				select {
+				case patchTx <- patches:
+				case <-ctx.Done():
+					return
+				}
+			}
+			prev = next
+			spawnCmd(ctx, cmd, msgChan)
 		}
-		prev = next
-		spawnCmd(cmd, msgChan)
 	}
 }
 
-func spawnCmd[Msg any](cmd Cmd[Msg], msgTx chan<- Msg) {
+// spawnCmd runs each Cmd in its own goroutine. The ctx is passed to the
+// Cmd's body (which should respect it) and also guards the send back to
+// msgChan, so a cancelled session doesn't leak goroutines waiting on a
+// reader that will never come.
+func spawnCmd[Msg any](ctx context.Context, cmd Cmd[Msg], msgTx chan<- Msg) {
 	for _, fn := range cmd.fns {
 		go func(f func(context.Context) Msg) {
-			ctx := context.Background()
-			msgTx <- f(ctx)
+			msg := f(ctx)
+			select {
+			case msgTx <- msg:
+			case <-ctx.Done():
+			}
 		}(fn)
 	}
 }
@@ -120,14 +146,24 @@ func handleRoot[Msg any](newApp func() App[Msg], store *sessionStore[Msg]) http.
 		title := app.Title()
 		body := render(initial)
 
+		ctx, cancel := context.WithCancel(context.Background())
 		st := &sessionState[Msg]{
+			ctx:     ctx,
+			cancel:  cancel,
 			msgChan: make(chan Msg, 64),
 			patchRx: make(chan []patch, 64),
 		}
 		store.put(id, st)
+		// Auto-remove from the store when the session is torn down
+		// (SSE drop, explicit cancel, eventual timeout). Centralizing
+		// the deletion here means handlers only need to call cancel().
+		go func() {
+			<-ctx.Done()
+			store.delete(id)
+		}()
 
-		go sessionLoop(app, initial, st.msgChan, st.patchRx)
-		spawnCmd(cmd, st.msgChan)
+		go sessionLoop(ctx, app, initial, st.msgChan, st.patchRx)
+		spawnCmd(ctx, cmd, st.msgChan)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = io.WriteString(w, page(title, body, id))
@@ -172,8 +208,10 @@ func handleEvent[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 			}
 			select {
 			case st.msgChan <- msg:
+			case <-st.ctx.Done():
+				http.Error(w, "session gone", http.StatusGone)
+				return
 			case <-r.Context().Done():
-				http.Error(w, "client gone", http.StatusGone)
 				return
 			}
 		}
@@ -208,11 +246,15 @@ func handleSSE[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 		w.Header().Set("Connection", "keep-alive")
 		flusher.Flush()
 
+		// SSE disconnect ends the session (reconnection is a separate
+		// roadmap item). Cancel triggers the watcher in handleRoot to
+		// remove the session from the store.
+		defer st.cancel()
+
 		ctx := r.Context()
 		for {
 			select {
 			case <-ctx.Done():
-				store.delete(id)
 				return
 			case patches, ok := <-st.patchRx:
 				if !ok {
