@@ -134,6 +134,15 @@ func handleRoot[Msg any](newApp func() App[Msg], store *sessionStore[Msg]) http.
 	}
 }
 
+// eventEnvelope is the JSON body the client posts on every dispatch.
+// H is a comma-separated list of handler hashes (one per On() bound to
+// the firing element); E is the kitchen-sink event payload that gets
+// spliced into each Msg's `domi:"event"` field, if any.
+type eventEnvelope struct {
+	H string          `json:"h"`
+	E json.RawMessage `json:"e"`
+}
+
 func handleEvent[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
@@ -142,12 +151,12 @@ func handleEvent[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 			http.Error(w, "session", http.StatusNotFound)
 			return
 		}
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
+		var env eventEnvelope
+		if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		for _, h := range strings.Split(string(body), ",") {
+		for _, h := range strings.Split(env.H, ",") {
 			if h == "" {
 				continue
 			}
@@ -157,8 +166,8 @@ func handleEvent[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 				// restart, or a forged value). Skip rather than fail the batch.
 				continue
 			}
-			var msg Msg
-			if err := json.Unmarshal(raw, &msg); err != nil {
+			msg, err := spliceEvent[Msg](raw, env.E)
+			if err != nil {
 				continue
 			}
 			select {

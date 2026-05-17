@@ -31,7 +31,7 @@ var (
 	ul      = html.Ul
 	li      = html.Li
 	button  = html.Button
-	onClick = event.Click[Msg]
+	onClick = event.Click
 )
 
 type Item struct {

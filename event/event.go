@@ -5,6 +5,6 @@ package event
 
 import "ily.dev/domi"
 
-func Click[Msg any](msg Msg) domi.Attr  { return domi.On("click", msg) }
-func Submit[Msg any](msg Msg) domi.Attr { return domi.On("submit", msg) }
-func Input[Msg any](msg Msg) domi.Attr  { return domi.On("input", msg) }
+func Click(msg any) domi.Attr  { return domi.On("click", msg) }
+func Submit(msg any) domi.Attr { return domi.On("submit", msg) }
+func Input(msg any) domi.Attr  { return domi.On("input", msg) }

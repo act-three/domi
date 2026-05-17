@@ -24,9 +24,10 @@
           const raw = el.dataset && el.dataset[key];
           if (raw) {
             if (ev === 'submit') e.preventDefault();
-            // The attribute is a comma-separated list of handler hashes.
-            // Post the value verbatim; the server splits and resolves each.
-            postBody(raw);
+            // Attribute value is a comma-separated list of handler hashes;
+            // the server splits and resolves each. We bundle the hashes
+            // and a kitchen-sink event payload into one JSON envelope.
+            postEnvelope(raw, eventPayload(e, el));
             return;
           }
         }
@@ -40,12 +41,54 @@
     return 'msg' + event.charAt(0).toUpperCase() + event.slice(1);
   }
 
-  function postBody(body) {
+  // eventPayload builds the kitchen-sink record sent with every dispatch.
+  // The server splices it into any Msg field tagged `domi:"event"`; Msgs
+  // without that tag ignore it. Modifier/coordinate fields are omitted
+  // when zero so the wire stays small for ordinary clicks.
+  function eventPayload(e, el) {
+    const t = e.target;
+    const target = { tag: (t.tagName || '').toLowerCase() };
+    if (t.id) target.id = t.id;
+    if (t.name) target.name = t.name;
+    if (t.value !== undefined && t.value !== '') target.value = t.value;
+    if (t.checked) target.checked = true;
+    if (t.dataset) {
+      const data = {};
+      let any = false;
+      for (const k in t.dataset) { data[k] = t.dataset[k]; any = true; }
+      if (any) target.data = data;
+    }
+    const out = { type: e.type, target };
+    if (e.key) out.key = e.key;
+    if (e.code) out.code = e.code;
+    if (e.button) out.button = e.button;
+    if (e.clientX) out.clientX = e.clientX;
+    if (e.clientY) out.clientY = e.clientY;
+    if (e.ctrlKey) out.ctrl = true;
+    if (e.shiftKey) out.shift = true;
+    if (e.altKey) out.alt = true;
+    if (e.metaKey) out.meta = true;
+    // If the firing element is inside a <form>, attach the form's fields.
+    // Last-value-wins matches the server's map[string]string shape.
+    const form = el.closest && el.closest('form');
+    if (form) {
+      const fd = new FormData(form);
+      const f = {};
+      let any = false;
+      for (const [k, v] of fd.entries()) {
+        if (typeof v === 'string') { f[k] = v; any = true; }
+      }
+      if (any) out.form = f;
+    }
+    return out;
+  }
+
+  function postEnvelope(h, e) {
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body,
-    }).catch((e) => console.error('domi: event POST failed', e));
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ h, e }),
+    }).catch((err) => console.error('domi: event POST failed', err));
   }
 
   // ---- SSE: receive patches ----

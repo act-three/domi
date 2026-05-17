@@ -4,17 +4,16 @@
 //
 // The package exposes only the primitives needed to construct any
 // node or attribute (E, Text, Attribute, On). Convenience wrappers for
-// common HTML tags, attributes, and events live in domi/html,
-// domi/attr, and domi/event.
+// common HTML tags, attributes, and events live in domi/html, domi/attr,
+// and domi/event.
 //
-// VDOM values are Msg-erased: handler attributes carry a pre-marshaled
-// JSON snippet of the Msg, encoded as a data-msg-<event> attribute.
-// Multiple handlers for the same event combine via comma; the JS client
-// wraps in brackets and parses to recover the array.
+// VDOM values are Msg-erased: handler attributes carry a content hash
+// of the pre-marshaled Msg JSON. The Msg itself lives in a process-wide
+// registry; only the hash crosses the wire. Multiple handlers for the
+// same event combine via comma in the attribute value.
 package domi
 
 import (
-	"encoding/json"
 	"hash/fnv"
 	"strconv"
 	"strings"
@@ -95,29 +94,13 @@ func Attribute(name, value string) Attr {
 	return Attr{name: name, value: value}
 }
 
-// On constructs an event handler attribute. The Msg is JSON-marshaled
-// immediately and stored in a process-wide registry keyed by a content
-// hash. The attribute value is just that hash (bare hex), so the wire
-// form carries only a short opaque token rather than the full Msg JSON.
-//
-// Multiple On("click", ...) attributes on the same element are combined
-// (comma-joined). The client posts the value verbatim; the server splits
-// on commas and resolves each hash via the registry.
-func On[Msg any](event string, msg Msg) Attr {
-	raw, err := json.Marshal(msg)
-	if err != nil {
-		raw = []byte("null")
-	}
-	return Attr{name: "data-msg-" + event, value: registerHandler(raw)}
-}
-
 // combineSep returns the separator for attributes whose duplicate
 // occurrences should be combined. Non-combining attributes are first-wins.
 //
 //   - class:      single space
 //   - style:      semicolon
-//   - data-msg-*: comma (so the client can wrap the value in brackets and
-//     parse as a JSON array of bundled msgs)
+//   - data-msg-*: comma (the server splits on commas to recover the
+//     individual handler hashes)
 func combineSep(name string) (sep string, ok bool) {
 	switch name {
 	case "class":
