@@ -1,0 +1,8 @@
+{
+  "name": "domi-testdata",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "jsdom": "^29.0.0"
+  }
+}

@@ -85,7 +85,12 @@ func diff(old, next Node) []patch {
 }
 
 func diffNode(old, next Node, path []int, out *[]patch) {
-	if old.kind != next.kind || (old.kind == nodeElement && old.tag != next.tag) {
+	// Replace when kind, tag, or key differ. Key is part of the rendered
+	// element (as data-domi-key), so a key change is observable to the
+	// client; treating it as a structural replace keeps the client's
+	// per-parent Map<key, ChildNode> consistent without inventing a
+	// "set key" patch op. Same-keyed pairs follow the normal path.
+	if old.kind != next.kind || (old.kind == nodeElement && (old.tag != next.tag || old.key != next.key)) {
 		*out = append(*out, patch{op: "replace", path: clonePath(path), html: render(next)})
 		return
 	}
@@ -126,11 +131,52 @@ func diffAttrs(old, next []Attr, path []int, out *[]patch) {
 }
 
 func diffChildren(old, next []Node, path []int, out *[]patch) {
+	// Coalesce adjacent text siblings before diffing. The HTML parser
+	// merges adjacent text into one DOM Text node on round-trip, so
+	// position-indexed patches must address children using the merged
+	// count — otherwise insert_child/remove_child idx would walk off
+	// the end of the parent's childNodes on the client.
+	old = coalesceText(old)
+	next = coalesceText(next)
 	if allKeyed(old) && allKeyed(next) {
 		diffKeyed(old, next, path, out)
 	} else {
 		diffPositional(old, next, path, out)
 	}
+}
+
+// coalesceText concatenates adjacent text-node children into a single
+// text node, matching the shape the HTML parser produces. Returns the
+// input slice unchanged when no coalescing happens.
+func coalesceText(children []Node) []Node {
+	merged := false
+	for i := 1; i < len(children); i++ {
+		if children[i-1].kind == nodeText && children[i].kind == nodeText {
+			merged = true
+			break
+		}
+	}
+	if !merged {
+		return children
+	}
+	out := make([]Node, 0, len(children))
+	var buf string
+	flush := func() {
+		if buf != "" {
+			out = append(out, Text(buf))
+			buf = ""
+		}
+	}
+	for _, c := range children {
+		if c.kind == nodeText {
+			buf += c.text
+			continue
+		}
+		flush()
+		out = append(out, c)
+	}
+	flush()
+	return out
 }
 
 func diffPositional(old, next []Node, path []int, out *[]patch) {
@@ -225,13 +271,14 @@ middle:
 	}
 
 	if oldStart > oldEnd {
-		// Only inserts left.
-		for i := newStart; i <= newEnd; i++ {
+		// Only inserts left. Walk right-to-left so each insert's `before`
+		// anchor — the sibling at newIdx+1 — is already in place when its
+		// patch is applied. (Forward order would reference siblings that
+		// the next iteration hasn't inserted yet.) Mirrors the LIS branch.
+		for i := newEnd; i >= newStart; i-- {
 			before := ""
-			if i+1 <= newEnd {
+			if i+1 < len(next) {
 				before = next[i+1].key
-			} else if newEnd+1 < len(next) {
-				before = next[newEnd+1].key
 			}
 			*out = append(*out, patch{op: "insert_child", path: clonePath(path), keyed: true, key: next[i].key, html: render(next[i]), before: before})
 		}
