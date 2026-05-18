@@ -1,6 +1,6 @@
 package domi
 
-import "encoding/json"
+import "encoding/json/v2"
 
 // patch is a single mutation op the client applies to its DOM. One struct,
 // op-tagged at marshal time — Go's encoding of a tagged union.

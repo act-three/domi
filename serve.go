@@ -5,7 +5,8 @@ import (
 	"crypto/rand"
 	"embed"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -175,8 +176,8 @@ func handleRoot[Msg any](newApp func() App[Msg], store *sessionStore[Msg]) http.
 // the firing element); E is the kitchen-sink event payload that gets
 // spliced into each Msg's `domi:"event"` field, if any.
 type eventEnvelope struct {
-	H string          `json:"h"`
-	E json.RawMessage `json:"e"`
+	H string         `json:"h"`
+	E jsontext.Value `json:"e"`
 }
 
 func handleEvent[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
@@ -188,7 +189,7 @@ func handleEvent[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 			return
 		}
 		var env eventEnvelope
-		if err := json.NewDecoder(r.Body).Decode(&env); err != nil {
+		if err := json.UnmarshalRead(r.Body, &env); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
