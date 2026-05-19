@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+env:
+  GOEXPERIMENT: jsonv2
+
 jobs:
   test:
     runs-on: ubuntu-latest
