@@ -7,6 +7,13 @@
 // for common HTML tags, attributes, and events live in domi/html,
 // domi/attr, and domi/event.
 //
+// Node is an interface: it's satisfied by text, by a finished element,
+// and by Element — the function-typed builder returned by Tag(name)(attrs).
+// An Element with no children is itself a Node; the diff and render paths
+// materialize it via its no-children call (e()). That lets void elements
+// like Br() and Input() appear as children without a trailing empty-call
+// for children.
+//
 // VDOM values are Msg-erased: handler attributes carry a content hash
 // of the pre-marshaled Msg JSON. The Msg itself lives in a process-wide
 // registry; only the hash crosses the wire. Multiple handlers for the
@@ -48,29 +55,56 @@ func lookupHandler(key string) ([]byte, bool) {
 	return raw, ok
 }
 
-// nodeKind discriminates between element and text nodes.
-type nodeKind uint8
-
-const (
-	nodeText nodeKind = iota
-	nodeElement
-)
-
-// Node is a DOM tree node. Construct via Tag or Text.
-// Add an identifying key with WithKey.
-type Node struct {
-	kind     nodeKind
-	key      string
-	text     string // kind == nodeText
-	tag      string // kind == nodeElement
-	attrs    []Attr // kind == nodeElement
-	children []Node // kind == nodeElement
+// Node is anything that can appear in a domi tree: a text node, a finished
+// element, or an Element builder. The interface is sealed via the unexported
+// isNode marker — only types defined inside the domi package satisfy it.
+type Node interface {
+	isNode()
+	// key returns the identifying key set via WithKey, or "" for unkeyed
+	// nodes. Element returns "" because its key lives on its materialized
+	// form; key an Element with WithKey to fix this.
+	key() string
+	// WithKey returns a copy of the node carrying the given key. Used by
+	// the keyed-children diff path to give children stable identities
+	// across renders.
+	WithKey(key string) Node
 }
 
-// Attr is an opaque name/value attribute. Construct via Attribute or On.
-type Attr struct {
-	name  string
+// element is a fully-realized element node. The diff and render walk these
+// after materializing any Element entries they encounter.
+type element struct {
+	tag      string
+	k        string
+	attrs    []Attr
+	children []Node
+}
+
+func (element) isNode()                   {}
+func (e element) key() string             { return e.k }
+func (e element) WithKey(key string) Node { e.k = key; return e }
+
+// text is a text node.
+type text struct {
+	k     string
 	value string
+}
+
+func (text) isNode()                   {}
+func (t text) key() string             { return t.k }
+func (t text) WithKey(key string) Node { t.k = key; return t }
+
+// Element is the curried element builder returned by Tag(name)(attrs).
+// Calling it with children yields a finished element node; Element itself
+// also satisfies Node — equivalent to "this element with no children",
+// which is what render and diff materialize via e().
+type Element func(...Node) element
+
+func (Element) isNode()     {}
+func (Element) key() string { return "" }
+func (e Element) WithKey(key string) Node {
+	n := e()
+	n.k = key
+	return n
 }
 
 // Tag returns a curried builder for an HTML element with the given name:
@@ -78,25 +112,29 @@ type Attr struct {
 //
 //	Tag("div")(attr.Class("x"))(Text("hi"))
 //
+// Void elements (and any other "no children" case) can skip the trailing
+// empty children call — Element is itself a Node:
+//
+//	Div()(Text("a"), Br(), Text("b"))
+//
 // Prebound helpers for common tags live in [ily.dev/domi/html].
-func Tag(name string) func(...Attr) func(...Node) Node {
-	return func(attrs ...Attr) func(...Node) Node {
-		return func(children ...Node) Node {
-			return Node{kind: nodeElement, tag: name, attrs: attrs, children: children}
+func Tag(name string) func(...Attr) Element {
+	return func(attrs ...Attr) Element {
+		return func(children ...Node) element {
+			return element{tag: name, attrs: attrs, children: children}
 		}
 	}
 }
 
 // Text constructs a text node.
 func Text(s string) Node {
-	return Node{kind: nodeText, text: s}
+	return text{value: s}
 }
 
-// WithKey returns a copy of n with the given key. Used by the keyed-children
-// diff path to give children stable identities across renders.
-func (n Node) WithKey(key string) Node {
-	n.key = key
-	return n
+// Attr is an opaque name/value attribute. Construct via Attribute or On.
+type Attr struct {
+	name  string
+	value string
 }
 
 // Attribute constructs a static HTML attribute (e.g. class="foo").
@@ -179,7 +217,8 @@ func allKeyed(children []Node) bool {
 		return false
 	}
 	for _, c := range children {
-		if c.key == "" || c.kind != nodeElement {
+		e, ok := c.(element)
+		if !ok || e.k == "" {
 			return false
 		}
 	}

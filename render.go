@@ -13,32 +13,37 @@ func render(n Node) string {
 }
 
 func writeNode(n Node, b *strings.Builder) {
-	switch n.kind {
-	case nodeText:
-		writeEscapedText(n.text, b)
-	case nodeElement:
+	// An Element is equivalent to its no-children form; materialize so
+	// the switch only has to handle concrete element/text values.
+	if e, ok := n.(Element); ok {
+		n = e()
+	}
+	switch v := n.(type) {
+	case text:
+		writeEscapedText(v.value, b)
+	case element:
 		b.WriteByte('<')
-		b.WriteString(n.tag)
-		for _, a := range combinedAttrs(n.attrs) {
+		b.WriteString(v.tag)
+		for _, a := range combinedAttrs(v.attrs) {
 			writeAttr(a, b)
 		}
-		if n.key != "" {
+		if v.k != "" {
 			// Emit alongside user attrs so the client can resolve this
 			// element by key when applying keyed structural patches.
 			b.WriteString(` data-domi-key="`)
-			writeEscapedAttr(n.key, b)
+			writeEscapedAttr(v.k, b)
 			b.WriteByte('"')
 		}
-		if isVoid(n.tag) {
+		if isVoid(v.tag) {
 			b.WriteString("/>")
 			return
 		}
 		b.WriteByte('>')
-		for _, c := range n.children {
+		for _, c := range v.children {
 			writeNode(c, b)
 		}
 		b.WriteString("</")
-		b.WriteString(n.tag)
+		b.WriteString(v.tag)
 		b.WriteByte('>')
 	}
 }

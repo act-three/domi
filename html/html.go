@@ -8,8 +8,10 @@
 //
 //	Div(attr.Class("x"))(Text("hi"), Button(event.Click(msg))(Text("ok")))
 //
-// Void elements (Input, etc.) still need the trailing empty children call:
-// Input(attr.Type("text"))().
+// For "no children" cases (void elements like Input, or any element used as
+// a child without nested content), the trailing children call is optional:
+//
+//	Div()(Text("a"), Br(), Input(attr.Type("text")), Text("b"))
 package html
 
 import "ily.dev/domi"
