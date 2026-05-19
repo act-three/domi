@@ -1,9 +1,11 @@
 package domi
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
-	"embed"
+	"crypto/sha256"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
@@ -12,10 +14,16 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 )
 
-//go:embed static/domi.js
-var staticFS embed.FS
+//go:embed client.js
+var clientJS []byte
+
+var clientJSPath = func() string {
+	h := sha256.Sum256(clientJS)
+	return fmt.Sprintf("/domi.%x.js", h[:4])
+}()
 
 // Handler returns an http.Handler that serves the domi App. The factory
 // `newApp` is called once per session to produce a fresh app instance with
@@ -27,14 +35,10 @@ func Handler[Msg any](newApp func() App[Msg]) http.Handler {
 	mux.HandleFunc("GET /{$}", handleRoot(newApp, store))
 	mux.HandleFunc("GET /sse/{id}", handleSSE(store))
 	mux.HandleFunc("POST /event/{id}", handleEvent(store))
-	mux.HandleFunc("GET /domi.js", func(w http.ResponseWriter, _ *http.Request) {
-		b, err := staticFS.ReadFile("static/domi.js")
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
+	mux.HandleFunc("GET "+clientJSPath, func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		_, _ = w.Write(b)
+		w.Header().Set("Cache-Control", "max-age=31536000, immutable")
+		http.ServeContent(w, req, "domi.js", time.Time{}, bytes.NewReader(clientJS))
 	})
 	return mux
 }
