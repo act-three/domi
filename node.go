@@ -3,9 +3,9 @@
 // session and ships patches to the browser over SSE.
 //
 // The package exposes only the primitives needed to construct any
-// node or attribute (E, Text, Attribute, On). Convenience wrappers for
-// common HTML tags, attributes, and events live in domi/html, domi/attr,
-// and domi/event.
+// node or attribute (Tag, Text, Attribute, On). Convenience wrappers
+// for common HTML tags, attributes, and events live in domi/html,
+// domi/attr, and domi/event.
 //
 // VDOM values are Msg-erased: handler attributes carry a content hash
 // of the pre-marshaled Msg JSON. The Msg itself lives in a process-wide
@@ -56,7 +56,8 @@ const (
 	nodeElement
 )
 
-// Node is an opaque UI tree node. Construct via E or Text; key with WithKey.
+// Node is a DOM tree node. Construct via Tag or Text.
+// Add an identifying key with WithKey.
 type Node struct {
 	kind     nodeKind
 	key      string
@@ -72,9 +73,18 @@ type Attr struct {
 	value string
 }
 
-// E constructs an element node.
-func E(tag string, attrs []Attr, children []Node) Node {
-	return Node{kind: nodeElement, tag: tag, attrs: attrs, children: children}
+// Tag returns a curried builder for an HTML element with the given name:
+// the first call takes attributes, the second takes children.
+//
+//	Tag("div")(attr.Class("x"))(Text("hi"))
+//
+// Prebound helpers for common tags live in [ily.dev/domi/html].
+func Tag(name string) func(...Attr) func(...Node) Node {
+	return func(attrs ...Attr) func(...Node) Node {
+		return func(children ...Node) Node {
+			return Node{kind: nodeElement, tag: name, attrs: attrs, children: children}
+		}
+	}
 }
 
 // Text constructs a text node.

@@ -17,10 +17,7 @@ type Msg struct {
 	ID  uint64 `json:"id,omitempty"`
 }
 
-type (
-	N = domi.Node
-	A = domi.Attr
-)
+type N = domi.Node
 
 var (
 	text    = domi.Text
@@ -94,13 +91,10 @@ func (t *Todos) View() N {
 	for i, it := range t.items {
 		items[i] = itemRow(it).WithKey(strconv.FormatUint(it.ID, 10))
 	}
-	return div(
-		[]A{style("font-family:system-ui;padding:2rem;max-width:32rem")},
-		[]N{
-			h1(nil, []N{text("todos")}),
-			ul([]A{style("list-style:none;padding:0")}, items),
-			button([]A{onClick(Msg{Tag: "Add"})}, []N{text("+ add item")}),
-		},
+	return div(style("font-family:system-ui;padding:2rem;max-width:32rem"))(
+		h1()(text("todos")),
+		ul(style("list-style:none;padding:0"))(items...),
+		button(onClick(Msg{Tag: "Add"}))(text("+ add item")),
 	)
 }
 
@@ -111,14 +105,11 @@ func itemRow(it Item) N {
 		labelStyle = "text-decoration:line-through;color:#888;flex:1"
 		toggleLabel = "↺"
 	}
-	return li(
-		[]A{style("display:flex;gap:0.5rem;align-items:center;padding:0.25rem 0")},
-		[]N{
-			span([]A{style(labelStyle)}, []N{text(it.Text)}),
-			button([]A{onClick(Msg{Tag: "Toggle", ID: it.ID})}, []N{text(toggleLabel)}),
-			button([]A{onClick(Msg{Tag: "MoveUp", ID: it.ID})}, []N{text("↑")}),
-			button([]A{onClick(Msg{Tag: "Remove", ID: it.ID})}, []N{text("×")}),
-		},
+	return li(style("display:flex;gap:0.5rem;align-items:center;padding:0.25rem 0"))(
+		span(style(labelStyle))(text(it.Text)),
+		button(onClick(Msg{Tag: "Toggle", ID: it.ID}))(text(toggleLabel)),
+		button(onClick(Msg{Tag: "MoveUp", ID: it.ID}))(text("↑")),
+		button(onClick(Msg{Tag: "Remove", ID: it.ID}))(text("×")),
 	)
 }
 

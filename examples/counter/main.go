@@ -15,10 +15,7 @@ type Msg struct {
 	Tag string `json:"msg"`
 }
 
-type (
-	N = domi.Node
-	A = domi.Attr
-)
+type N = domi.Node
 
 var (
 	text   = domi.Text
@@ -47,14 +44,11 @@ func (c *Counter) Update(msg Msg) domi.Cmd[Msg] {
 }
 
 func (c *Counter) View() N {
-	return div(
-		[]A{style("font-family:system-ui;padding:2rem")},
-		[]N{
-			h1(nil, []N{text(fmt.Sprintf("Count: %d", c.count))}),
-			button([]A{event.Click(Msg{"Decrement"})}, []N{text("-")}),
-			button([]A{event.Click(Msg{"Increment"})}, []N{text("+")}),
-			button([]A{event.Click(Msg{"Reset"})}, []N{text("reset")}),
-		},
+	return div(style("font-family:system-ui;padding:2rem"))(
+		h1()(text(fmt.Sprintf("Count: %d", c.count))),
+		button(event.Click(Msg{"Decrement"}))(text("-")),
+		button(event.Click(Msg{"Increment"}))(text("+")),
+		button(event.Click(Msg{"Reset"}))(text("reset")),
 	)
 }
 
