@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-// bunApplier drives the production patch applier (static/domi.js)
+// bunApplier drives the production patch applier (javascript)
 // inside jsdom under a long-running bun subprocess. Each call to apply
 // sends one JSON-line request and reads one JSON-line response over
 // stdin/stdout; reusing the process avoids paying spawn cost per

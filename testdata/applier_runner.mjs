@@ -17,7 +17,7 @@
 import { JSDOM } from 'jsdom';
 import * as readline from 'node:readline';
 
-// Set up jsdom globals BEFORE importing the applier, since static/domi.js
+// Set up jsdom globals BEFORE importing the applier, since client.js
 // touches `document` at module load to decide whether to initSession.
 // We deliberately don't include a #domi-root in the initial HTML so the
 // auto-init no-ops; tests drive applyPatch directly.
@@ -29,7 +29,7 @@ globalThis.Node = dom.window.Node;
 globalThis.NodeFilter = dom.window.NodeFilter;
 globalThis.DocumentFragment = dom.window.DocumentFragment;
 
-const { applyPatch } = await import('../static/domi.js');
+const { applyPatch } = await import('../client.js');
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 for await (const line of rl) {

@@ -106,8 +106,8 @@ func page(title, bodyHTML, sessionID string) string {
 <title>%s</title>
 </head><body>
 <div id="domi-root" data-domi-session="%s">%s</div>
-<script type="module" src="/domi.js"></script>
+<script type="module" src="%s"></script>
 </body></html>`,
-		t.String(), s.String(), bodyHTML,
+		t.String(), s.String(), bodyHTML, clientJSPath,
 	)
 }
