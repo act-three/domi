@@ -94,11 +94,6 @@ func diffNode(old, next Node, path []int, out *[]patch) {
 	if e, ok := next.(Element); ok {
 		next = e()
 	}
-	// Replace when kind, tag, or key differ. Key is part of the rendered
-	// element (as data-domi-key), so a key change is observable to the
-	// client; treating it as a structural replace keeps the client's
-	// per-parent Map<key, ChildNode> consistent without inventing a
-	// "set key" patch op. Same-keyed pairs follow the normal path.
 	switch o := old.(type) {
 	case text:
 		n, isText := next.(text)
@@ -110,13 +105,22 @@ func diffNode(old, next Node, path []int, out *[]patch) {
 			*out = append(*out, patch{op: "set_text", path: clonePath(path), value: n.value})
 		}
 	case element:
+		// Replace on tag mismatch, or on keyed-vs-positional mismatch.
+		// The latter is treated as structural even at the same tag: the
+		// children would lose their key-based identities (or gain ones
+		// the client doesn't have indexes for), and a wholesale rebuild
+		// is simpler than reconstructing the per-parent Map<key, child>.
 		n, isElement := next.(element)
-		if !isElement || o.tag != n.tag || o.k != n.k {
+		if !isElement || o.tag != n.tag || (o.keys == nil) != (n.keys == nil) {
 			*out = append(*out, patch{op: "replace", path: clonePath(path), html: render(next)})
 			return
 		}
 		diffAttrs(o.attrs, n.attrs, path, out)
-		diffChildren(o.children, n.children, path, out)
+		if o.keys != nil {
+			diffKeyed(o.children, n.children, o.keys, n.keys, path, out)
+		} else {
+			diffChildren(o.children, n.children, path, out)
+		}
 	}
 }
 
@@ -153,11 +157,7 @@ func diffChildren(old, next []Node, path []int, out *[]patch) {
 	// the end of the parent's childNodes on the client.
 	old = coalesceText(old)
 	next = coalesceText(next)
-	if allKeyed(old) && allKeyed(next) {
-		diffKeyed(old, next, path, out)
-	} else {
-		diffPositional(old, next, path, out)
-	}
+	diffPositional(old, next, path, out)
 }
 
 // coalesceText concatenates adjacent text-node children into a single
@@ -210,8 +210,9 @@ func diffPositional(old, next []Node, path []int, out *[]patch) {
 	}
 }
 
-// diffKeyed reconciles two child slices whose elements all carry stable
-// keys (and are all elements, so they can carry data-domi-key).
+// diffKeyed reconciles two keyed-children regions, given parallel slices
+// of children and their keys. Caller guarantees len(kids)==len(keys) on
+// both sides.
 //
 // It runs Snabbdom's four-rule head/tail loop until none of the rules
 // fire, then — if anything is left in the unknown middle — falls
@@ -223,9 +224,9 @@ func diffPositional(old, next []Node, path []int, out *[]patch) {
 // Content diffs for matched pairs are deferred until after all
 // structural patches are emitted, so paths (which use new-position
 // childNodes traversal) point at the right elements when they apply.
-func diffKeyed(old, next []Node, path []int, out *[]patch) {
+func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, out *[]patch) {
 	oldStart, newStart := 0, 0
-	oldEnd, newEnd := len(old)-1, len(next)-1
+	oldEnd, newEnd := len(oldKids)-1, len(newKids)-1
 
 	type deferredMatch struct {
 		oldNode, newNode Node
@@ -237,8 +238,8 @@ func diffKeyed(old, next []Node, path []int, out *[]patch) {
 	// or whatever sits just past the unhandled new region); "" means the
 	// element should land at the end.
 	beforeKey := func() string {
-		if newEnd+1 < len(next) {
-			return next[newEnd+1].key()
+		if newEnd+1 < len(newKeys) {
+			return newKeys[newEnd+1]
 		}
 		return ""
 	}
@@ -246,32 +247,32 @@ func diffKeyed(old, next []Node, path []int, out *[]patch) {
 	// Snabbdom's four-rule head/tail loop.
 	for oldStart <= oldEnd && newStart <= newEnd {
 		switch {
-		case old[oldStart].key() == next[newStart].key():
+		case oldKeys[oldStart] == newKeys[newStart]:
 			// Rule 1: match at the head; no structural change.
-			deferred = append(deferred, deferredMatch{old[oldStart], next[newStart], newStart})
+			deferred = append(deferred, deferredMatch{oldKids[oldStart], newKids[newStart], newStart})
 			oldStart++
 			newStart++
-		case old[oldEnd].key() == next[newEnd].key():
+		case oldKeys[oldEnd] == newKeys[newEnd]:
 			// Rule 2: match at the tail; no structural change.
-			deferred = append(deferred, deferredMatch{old[oldEnd], next[newEnd], newEnd})
+			deferred = append(deferred, deferredMatch{oldKids[oldEnd], newKids[newEnd], newEnd})
 			oldEnd--
 			newEnd--
-		case old[oldStart].key() == next[newEnd].key():
+		case oldKeys[oldStart] == newKeys[newEnd]:
 			// Rule 3: old head moved to new tail. Move it to land just
 			// before whatever sits past the unhandled tail.
-			n := old[oldStart]
-			*out = append(*out, patch{op: "move_child", path: clonePath(path), keyed: true, key: n.key(), before: beforeKey()})
-			deferred = append(deferred, deferredMatch{n, next[newEnd], newEnd})
+			k := oldKeys[oldStart]
+			*out = append(*out, patch{op: "move_child", path: clonePath(path), keyed: true, key: k, before: beforeKey()})
+			deferred = append(deferred, deferredMatch{oldKids[oldStart], newKids[newEnd], newEnd})
 			oldStart++
 			newEnd--
-		case old[oldEnd].key() == next[newStart].key():
+		case oldKeys[oldEnd] == newKeys[newStart]:
 			// Rule 4: old tail moved to new head. Move it to land just
 			// before the current head of unhandled old (old[oldStart]) —
 			// the key-based equivalent of Snabbdom's
 			// insertBefore(oldEnd.elm, oldStart.elm).
-			n := old[oldEnd]
-			*out = append(*out, patch{op: "move_child", path: clonePath(path), keyed: true, key: n.key(), before: old[oldStart].key()})
-			deferred = append(deferred, deferredMatch{n, next[newStart], newStart})
+			k := oldKeys[oldEnd]
+			*out = append(*out, patch{op: "move_child", path: clonePath(path), keyed: true, key: k, before: oldKeys[oldStart]})
+			deferred = append(deferred, deferredMatch{oldKids[oldEnd], newKids[newStart], newStart})
 			oldEnd--
 			newStart++
 		default:
@@ -295,10 +296,10 @@ middle:
 		// the next iteration hasn't inserted yet.) Mirrors the LIS branch.
 		for i := newEnd; i >= newStart; i-- {
 			before := ""
-			if i+1 < len(next) {
-				before = next[i+1].key()
+			if i+1 < len(newKeys) {
+				before = newKeys[i+1]
 			}
-			*out = append(*out, patch{op: "insert_child", path: clonePath(path), keyed: true, key: next[i].key(), html: render(next[i]), before: before})
+			*out = append(*out, patch{op: "insert_child", path: clonePath(path), keyed: true, key: newKeys[i], html: render(newKids[i]), before: before})
 		}
 		emitDeferred()
 		return
@@ -306,7 +307,7 @@ middle:
 	if newStart > newEnd {
 		// Only removes left.
 		for i := oldStart; i <= oldEnd; i++ {
-			*out = append(*out, patch{op: "remove_child", path: clonePath(path), keyed: true, key: old[i].key()})
+			*out = append(*out, patch{op: "remove_child", path: clonePath(path), keyed: true, key: oldKeys[i]})
 		}
 		emitDeferred()
 		return
@@ -315,7 +316,7 @@ middle:
 	// Unknown middle: LIS.
 	keyToNewIdx := make(map[string]int, newEnd-newStart+1)
 	for i := newStart; i <= newEnd; i++ {
-		keyToNewIdx[next[i].key()] = i
+		keyToNewIdx[newKeys[i]] = i
 	}
 
 	toPatch := newEnd - newStart + 1
@@ -331,14 +332,14 @@ middle:
 		if patched >= toPatch {
 			break
 		}
-		if j, ok := keyToNewIdx[old[i].key()]; ok {
+		if j, ok := keyToNewIdx[oldKeys[i]]; ok {
 			newToOld[j-newStart] = i + 1
 			if j >= maxNewSeen {
 				maxNewSeen = j
 			} else {
 				moved = true
 			}
-			deferred = append(deferred, deferredMatch{old[i], next[j], j})
+			deferred = append(deferred, deferredMatch{oldKids[i], newKids[j], j})
 			patched++
 		}
 	}
@@ -346,8 +347,8 @@ middle:
 	// Remove unmatched old middle entries (forward iteration is fine —
 	// identity-based removes don't depend on sibling positions).
 	for i := oldStart; i <= oldEnd; i++ {
-		if _, ok := keyToNewIdx[old[i].key()]; !ok {
-			*out = append(*out, patch{op: "remove_child", path: clonePath(path), keyed: true, key: old[i].key()})
+		if _, ok := keyToNewIdx[oldKeys[i]]; !ok {
+			*out = append(*out, patch{op: "remove_child", path: clonePath(path), keyed: true, key: oldKeys[i]})
 		}
 	}
 
@@ -361,15 +362,14 @@ middle:
 	// before its anchor (next[newIdx+1]), or leave alone if LIS-stable.
 	for i := toPatch - 1; i >= 0; i-- {
 		newIdx := newStart + i
-		nextNode := next[newIdx]
 
 		before := ""
-		if newIdx+1 < len(next) {
-			before = next[newIdx+1].key()
+		if newIdx+1 < len(newKeys) {
+			before = newKeys[newIdx+1]
 		}
 
 		if newToOld[i] == 0 {
-			*out = append(*out, patch{op: "insert_child", path: clonePath(path), keyed: true, key: nextNode.key(), html: render(nextNode), before: before})
+			*out = append(*out, patch{op: "insert_child", path: clonePath(path), keyed: true, key: newKeys[newIdx], html: render(newKids[newIdx]), before: before})
 			continue
 		}
 		if !moved {
@@ -379,7 +379,7 @@ middle:
 			lisIdx--
 			continue
 		}
-		*out = append(*out, patch{op: "move_child", path: clonePath(path), keyed: true, key: nextNode.key(), before: before})
+		*out = append(*out, patch{op: "move_child", path: clonePath(path), keyed: true, key: newKeys[newIdx], before: before})
 	}
 
 	emitDeferred()

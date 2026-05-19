@@ -127,9 +127,31 @@ func defaultConfig(rng *rand.Rand) *genConfig {
 func genElement(cfg *genConfig, depth int) Node {
 	tag := cfg.tags[cfg.rng.IntN(len(cfg.tags))]
 	attrs := genAttrs(cfg)
-	var children []Node
+	n := 0
 	if depth < cfg.maxDepth {
-		children = genChildren(cfg, depth)
+		n = cfg.rng.IntN(cfg.maxChildren + 1)
+	}
+	if n == 0 {
+		return Tag(tag)(attrs...)()
+	}
+
+	// Decide whether this is a keyed parent. Keyed children must all be
+	// elements (no text), so we always generate elements when keyed.
+	keyed := cfg.rng.IntN(100) < cfg.keyedChance && n <= len(cfg.keys)
+	if keyed {
+		keys := slices.Clone(cfg.keys)
+		cfg.rng.Shuffle(len(keys), func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
+		return Keyed(tag)(attrs...)(func(yield func(string, Node) bool) {
+			for i := range n {
+				if !yield(keys[i], genElement(cfg, depth+1)) {
+					return
+				}
+			}
+		})
+	}
+	children := make([]Node, 0, n)
+	for range n {
+		children = append(children, genNode(cfg, depth+1))
 	}
 	return Tag(tag)(attrs...)(children...)
 }
@@ -139,29 +161,6 @@ func genNode(cfg *genConfig, depth int) Node {
 		return Text(cfg.texts[cfg.rng.IntN(len(cfg.texts))])
 	}
 	return genElement(cfg, depth)
-}
-
-func genChildren(cfg *genConfig, depth int) []Node {
-	n := cfg.rng.IntN(cfg.maxChildren + 1)
-	if n == 0 {
-		return nil
-	}
-	keyed := cfg.rng.IntN(100) < cfg.keyedChance && n <= len(cfg.keys)
-	out := make([]Node, 0, n)
-	if keyed {
-		keys := slices.Clone(cfg.keys)
-		cfg.rng.Shuffle(len(keys), func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
-		for i := range n {
-			// Keyed children must be elements (only elements carry
-			// data-domi-key in the rendered HTML).
-			out = append(out, genElement(cfg, depth+1).WithKey(keys[i]))
-		}
-	} else {
-		for range n {
-			out = append(out, genNode(cfg, depth+1))
-		}
-	}
-	return out
 }
 
 func genAttrs(cfg *genConfig) []Attr {
