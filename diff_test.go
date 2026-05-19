@@ -305,3 +305,82 @@ func TestAttrCombiningBeforeDiff(t *testing.T) {
 		t.Fatalf("expected class to combine to \"a b\", got %+v", got)
 	}
 }
+
+// ---- regression cases pulled from property-test failures ----
+//
+// Each minimizes a failing seed from TestDiffApplyProperty into a
+// hand-rolled fixture asserting on patch shape. Property tests sample
+// a distribution; these pin the specific bug down so generator tweaks
+// can never silently lose coverage.
+
+// Regression: same tag + different key must trigger a replace. The key
+// is rendered as data-domi-key on the element, but lives in Node.key
+// (not attrs), so an attr-level diff misses it. Without the replace,
+// the client's data-domi-key drifts out of sync with the server's view.
+func TestKeyChangeForcesReplace(t *testing.T) {
+	old := E("ul", nil, []Node{E("li", nil, nil)})
+	next := E("ul", nil, []Node{E("li", nil, nil).WithKey("a")})
+	got := diff(old, next)
+	if len(got) != 1 || got[0].op != "replace" || len(got[0].path) != 1 || got[0].path[0] != 0 {
+		t.Fatalf("expected single replace at [0], got %+v", got)
+	}
+}
+
+// Regression: the keyed only-inserts branch must emit patches right-to-
+// left so each insert's `before` anchor is in place when the patch is
+// applied. Forward emission referenced a sibling that the next iteration
+// would insert, which on the client resolved to "anchor not in childMap"
+// and fell back to appending — producing the wrong child order.
+//
+// Setup: old = [a]; next = [b, c, a]. Snabbdom rule 2 matches `a` at
+// the tail (deferred). The remaining region is only-inserts for b, c.
+// Correct emission: insert c before a, then insert b before c.
+func TestKeyedOnlyInsertsAnchorOrder(t *testing.T) {
+	old := E("ul", nil, []Node{E("li", nil, nil).WithKey("a")})
+	next := E("ul", nil, []Node{
+		E("li", nil, nil).WithKey("b"),
+		E("li", nil, nil).WithKey("c"),
+		E("li", nil, nil).WithKey("a"),
+	})
+	got := diff(old, next)
+	var inserts []patch
+	for _, p := range got {
+		if p.op == "insert_child" {
+			inserts = append(inserts, p)
+		}
+	}
+	if len(inserts) != 2 {
+		t.Fatalf("expected 2 inserts, got %d: %+v", len(inserts), got)
+	}
+	if inserts[0].key != "c" || inserts[0].before != "a" {
+		t.Fatalf("expected first insert key=c before=a, got %+v", inserts[0])
+	}
+	if inserts[1].key != "b" || inserts[1].before != "c" {
+		t.Fatalf("expected second insert key=b before=c, got %+v", inserts[1])
+	}
+}
+
+// Regression: adjacent text children on the Go side must be coalesced
+// before the positional diff runs, because the HTML parser merges them
+// into a single DOM Text node. Without coalescing, positional indices
+// computed against the Go count walk off the end of the DOM's childNodes
+// (e.g. `remove_child idx=2` when the DOM only has 2 childNodes).
+//
+// Setup: old = div containing [text "a", text "b", span] — 3 Go
+// children, but 2 DOM childNodes after parsing (text "ab" + span).
+// next = div containing just [span]. Coalesce should normalize old to
+// 2 children, yielding remove_child idx=1 + replace at [0].
+func TestAdjacentTextCoalescesBeforePositionalDiff(t *testing.T) {
+	old := E("div", nil, []Node{Text("a"), Text("b"), E("span", nil, nil)})
+	next := E("div", nil, []Node{E("span", nil, nil)})
+	got := diff(old, next)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 patches (one remove + one replace), got %d: %+v", len(got), got)
+	}
+	if got[0].op != "remove_child" || got[0].idx != 1 {
+		t.Fatalf("expected first patch remove_child idx=1, got %+v", got[0])
+	}
+	if got[1].op != "replace" || len(got[1].path) != 1 || got[1].path[0] != 0 {
+		t.Fatalf("expected second patch replace at [0], got %+v", got[1])
+	}
+}
