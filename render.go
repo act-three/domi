@@ -22,17 +22,13 @@ func writeNode(n Node, b *strings.Builder) {
 	case text:
 		writeEscapedText(v.value, b)
 	case element:
+		// Keyed and unkeyed elements render identically — for keyed
+		// children, data-domi-key is already in attrs (injected by
+		// Keyed at construction time).
 		b.WriteByte('<')
 		b.WriteString(v.tag)
 		for _, a := range combinedAttrs(v.attrs) {
 			writeAttr(a, b)
-		}
-		if v.k != "" {
-			// Emit alongside user attrs so the client can resolve this
-			// element by key when applying keyed structural patches.
-			b.WriteString(` data-domi-key="`)
-			writeEscapedAttr(v.k, b)
-			b.WriteByte('"')
 		}
 		if isVoid(v.tag) {
 			b.WriteString("/>")

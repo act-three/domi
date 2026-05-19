@@ -2,23 +2,15 @@ package domi
 
 import "testing"
 
-// keyedText constructs a keyed text node for tests.
-func keyedText(k, s string) Node { return Text(s).WithKey(k) }
-
-// keyedItem constructs a keyed <li> wrapping the given text.
-func keyedItem(k string) Node {
-	return Tag("li")()(Text(k)).WithKey(k)
-}
-
-// keyedList builds a <ul> whose children are keyed <li> elements (one per key).
-// Keyed children must be elements so they can carry data-domi-key in the
-// rendered HTML (text nodes can't).
+// keyedList builds a keyed <ul> whose children are <li>s named for each key.
 func keyedList(keys ...string) Node {
-	kids := make([]Node, len(keys))
-	for i, k := range keys {
-		kids[i] = keyedItem(k)
-	}
-	return Tag("ul")()(kids...)
+	return Keyed("ul")()(func(yield func(string, Node) bool) {
+		for _, k := range keys {
+			if !yield(k, Tag("li")()(Text(k))) {
+				return
+			}
+		}
+	})
 }
 
 // countOps returns counts of structural patch ops in `patches`.
@@ -313,19 +305,6 @@ func TestAttrCombiningBeforeDiff(t *testing.T) {
 // a distribution; these pin the specific bug down so generator tweaks
 // can never silently lose coverage.
 
-// Regression: same tag + different key must trigger a replace. The key
-// is rendered as data-domi-key on the element, but lives in Node.key
-// (not attrs), so an attr-level diff misses it. Without the replace,
-// the client's data-domi-key drifts out of sync with the server's view.
-func TestKeyChangeForcesReplace(t *testing.T) {
-	old := Tag("ul")()(Tag("li")()())
-	next := Tag("ul")()(Tag("li")()().WithKey("a"))
-	got := diff(old, next)
-	if len(got) != 1 || got[0].op != "replace" || len(got[0].path) != 1 || got[0].path[0] != 0 {
-		t.Fatalf("expected single replace at [0], got %+v", got)
-	}
-}
-
 // Regression: the keyed only-inserts branch must emit patches right-to-
 // left so each insert's `before` anchor is in place when the patch is
 // applied. Forward emission referenced a sibling that the next iteration
@@ -336,12 +315,8 @@ func TestKeyChangeForcesReplace(t *testing.T) {
 // the tail (deferred). The remaining region is only-inserts for b, c.
 // Correct emission: insert c before a, then insert b before c.
 func TestKeyedOnlyInsertsAnchorOrder(t *testing.T) {
-	old := Tag("ul")()(Tag("li")()().WithKey("a"))
-	next := Tag("ul")()(
-		Tag("li")()().WithKey("b"),
-		Tag("li")()().WithKey("c"),
-		Tag("li")()().WithKey("a"),
-	)
+	old := keyedList("a")
+	next := keyedList("b", "c", "a")
 	got := diff(old, next)
 	var inserts []patch
 	for _, p := range got {

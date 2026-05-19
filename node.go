@@ -3,16 +3,16 @@
 // session and ships patches to the browser over SSE.
 //
 // The package exposes only the primitives needed to construct any
-// node or attribute (Tag, Text, Attribute, On). Convenience wrappers
-// for common HTML tags, attributes, and events live in domi/html,
-// domi/attr, and domi/event.
+// node or attribute (Tag, Keyed, Text, Attribute, On). Convenience
+// wrappers for common HTML tags, attributes, and events live in
+// domi/html, domi/attr, and domi/event.
 //
 // Node is an interface: it's satisfied by text, by a finished element,
-// and by Element — the function-typed builder returned by Tag(name)(attrs).
-// An Element with no children is itself a Node; the diff and render paths
-// materialize it via its no-children call (e()). That lets void elements
-// like Br() and Input() appear as children without a trailing empty-call
-// for children.
+// by Element — the function-typed builder returned by Tag(name)(attrs)
+// — and by a keyed element built via Keyed. An Element with no children
+// is itself a Node; the diff and render paths materialize it via its
+// no-children call (e()). That lets void elements like Br() and Input()
+// appear as children without a trailing empty-call for children.
 //
 // VDOM values are Msg-erased: handler attributes carry a content hash
 // of the pre-marshaled Msg JSON. The Msg itself lives in a process-wide
@@ -21,7 +21,9 @@
 package domi
 
 import (
+	"fmt"
 	"hash/fnv"
+	"iter"
 	"strconv"
 	"strings"
 	"sync"
@@ -55,43 +57,37 @@ func lookupHandler(key string) ([]byte, bool) {
 	return raw, ok
 }
 
-// Node is anything that can appear in a domi tree: a text node, a finished
-// element, or an Element builder. The interface is sealed via the unexported
-// isNode marker — only types defined inside the domi package satisfy it.
+// Node is anything that can appear in a domi tree: text, an element, or
+// an Element builder. The interface is sealed via the unexported isNode
+// marker — only types defined inside the domi package satisfy it.
 type Node interface {
 	isNode()
-	// key returns the identifying key set via WithKey, or "" for unkeyed
-	// nodes. Element returns "" because its key lives on its materialized
-	// form; key an Element with WithKey to fix this.
-	key() string
-	// WithKey returns a copy of the node carrying the given key. Used by
-	// the keyed-children diff path to give children stable identities
-	// across renders.
-	WithKey(key string) Node
 }
 
 // element is a fully-realized element node. The diff and render walk these
 // after materializing any Element entries they encounter.
+//
+// keys is the discriminator between positional and keyed elements: nil
+// means the element is positional (Tag); non-nil (even empty) means it
+// was built via Keyed and its children are paired with these keys for
+// identity-based reconciliation. When non-nil, keys is the same length
+// as children, and each child is an element (text can't carry a
+// data-domi-key attribute).
 type element struct {
 	tag      string
-	k        string
 	attrs    []Attr
 	children []Node
+	keys     []string
 }
 
-func (element) isNode()                   {}
-func (e element) key() string             { return e.k }
-func (e element) WithKey(key string) Node { e.k = key; return e }
+func (element) isNode() {}
 
 // text is a text node.
 type text struct {
-	k     string
 	value string
 }
 
-func (text) isNode()                   {}
-func (t text) key() string             { return t.k }
-func (t text) WithKey(key string) Node { t.k = key; return t }
+func (text) isNode() {}
 
 // Element is the curried element builder returned by Tag(name)(attrs).
 // Calling it with children yields a finished element node; Element itself
@@ -99,13 +95,7 @@ func (t text) WithKey(key string) Node { t.k = key; return t }
 // which is what render and diff materialize via e().
 type Element func(...Node) element
 
-func (Element) isNode()     {}
-func (Element) key() string { return "" }
-func (e Element) WithKey(key string) Node {
-	n := e()
-	n.k = key
-	return n
-}
+func (Element) isNode() {}
 
 // Tag returns a curried builder for an HTML element with the given name:
 // the first call takes attributes, the second takes children.
@@ -129,6 +119,59 @@ func Tag(name string) func(...Attr) Element {
 // Text constructs a text node.
 func Text(s string) Node {
 	return text{value: s}
+}
+
+// Keyed returns a curried builder for an element whose children are paired
+// with stable keys for identity-based reconciliation. The children sequence
+// yields (key, child) pairs in the desired DOM order:
+//
+//	Keyed("ul")(attr.Class("items"))(func(yield func(string, Node) bool) {
+//	    for _, it := range items {
+//	        if !yield(itemKey(it), itemRow(it)) {
+//	            return
+//	        }
+//	    }
+//	})
+//
+// Each yielded child must be an element — text can't carry a data-domi-key
+// attribute. Keyed panics on a non-element child. The key is injected as a
+// data-domi-key attribute on the child at construction time, so render and
+// diff don't have to thread it through separately.
+//
+// An empty sequence is still a keyed element (distinct from an unkeyed one
+// of the same tag for diff purposes): keys is allocated to a zero-length
+// non-nil slice so the keyed-ness is preserved.
+func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
+	return func(attrs ...Attr) func(iter.Seq2[string, Node]) Node {
+		return func(seq iter.Seq2[string, Node]) Node {
+			keys := []string{}
+			var children []Node
+			for k, n := range seq {
+				if e, ok := n.(Element); ok {
+					n = e()
+				}
+				v, ok := n.(element)
+				if !ok {
+					panic(fmt.Sprintf("domi: keyed child %q must be an element, got %T", k, n))
+				}
+				v.attrs = appendAttr(v.attrs, Attribute("data-domi-key", k))
+				keys = append(keys, k)
+				children = append(children, v)
+			}
+			return element{tag: name, attrs: attrs, children: children, keys: keys}
+		}
+	}
+}
+
+// appendAttr returns attrs with a single additional attribute. It always
+// allocates a fresh backing array so the caller's slice can't be mutated
+// through the returned one (avoids the classic append-aliasing footgun
+// when the keyed parent injects data-domi-key into a child's attrs).
+func appendAttr(attrs []Attr, extra Attr) []Attr {
+	out := make([]Attr, len(attrs)+1)
+	copy(out, attrs)
+	out[len(attrs)] = extra
+	return out
 }
 
 // Attr is an opaque name/value attribute. Construct via Attribute or On.
@@ -204,23 +247,4 @@ func combinedAttrs(attrs []Attr) []Attr {
 		out[idx[name]].value = buf.String()
 	}
 	return out
-}
-
-// allKeyed reports whether every child has a non-empty key AND is an
-// element. The element requirement is for the identity-based keyed
-// protocol: keyed children carry their key in a data-domi-key attribute
-// so the client can resolve them via a per-parent Map, and text nodes
-// can't carry attributes. Text-keyed children fall back to positional
-// diffing.
-func allKeyed(children []Node) bool {
-	if len(children) == 0 {
-		return false
-	}
-	for _, c := range children {
-		e, ok := c.(element)
-		if !ok || e.k == "" {
-			return false
-		}
-	}
-	return true
 }

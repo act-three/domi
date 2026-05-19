@@ -25,7 +25,7 @@ var (
 	div     = html.Div
 	h1      = html.H1
 	span    = html.Span
-	ul      = html.Ul
+	keyedUl = domi.Keyed("ul")
 	li      = html.Li
 	button  = html.Button
 	onClick = event.Click
@@ -87,13 +87,15 @@ func (t *Todos) Update(msg Msg) domi.Cmd[Msg] {
 }
 
 func (t *Todos) View() N {
-	items := make([]N, len(t.items))
-	for i, it := range t.items {
-		items[i] = itemRow(it).WithKey(strconv.FormatUint(it.ID, 10))
-	}
 	return div(style("font-family:system-ui;padding:2rem;max-width:32rem"))(
 		h1()(text("todos")),
-		ul(style("list-style:none;padding:0"))(items...),
+		keyedUl(style("list-style:none;padding:0"))(func(yield func(string, N) bool) {
+			for _, it := range t.items {
+				if !yield(strconv.FormatUint(it.ID, 10), itemRow(it)) {
+					return
+				}
+			}
+		}),
 		button(onClick(Msg{Tag: "Add"}))(text("+ add item")),
 	)
 }
