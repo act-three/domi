@@ -131,7 +131,7 @@ func genElement(cfg *genConfig, depth int) Node {
 	if depth < cfg.maxDepth {
 		children = genChildren(cfg, depth)
 	}
-	return E(tag, attrs, children)
+	return Tag(tag)(attrs...)(children...)
 }
 
 func genNode(cfg *genConfig, depth int) Node {

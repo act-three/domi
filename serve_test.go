@@ -13,7 +13,7 @@ type counterApp struct{ n int }
 
 func (a *counterApp) Init() Cmd[int]      { return CmdNone[int]() }
 func (a *counterApp) Update(int) Cmd[int] { a.n++; return CmdNone[int]() }
-func (a *counterApp) View() Node          { return E("div", nil, []Node{Text(fmt.Sprintf("%d", a.n))}) }
+func (a *counterApp) View() Node          { return Tag("div")()(Text(fmt.Sprintf("%d", a.n))) }
 func (a *counterApp) Title() string       { return "" }
 
 // sessionLoop exits promptly when its ctx is cancelled.
@@ -23,7 +23,7 @@ func TestSessionLoopExitsOnCancel(t *testing.T) {
 	patchChan := make(chan []patch, 1)
 	done := make(chan struct{})
 	go func() {
-		sessionLoop(ctx, &counterApp{}, E("div", nil, nil), msgChan, patchChan)
+		sessionLoop(ctx, &counterApp{}, Tag("div")()(), msgChan, patchChan)
 		close(done)
 	}()
 	cancel()
@@ -44,7 +44,7 @@ func TestSessionLoopPatchSendInterruptible(t *testing.T) {
 	msgChan <- 1
 	done := make(chan struct{})
 	go func() {
-		sessionLoop(ctx, &counterApp{}, E("div", nil, nil), msgChan, patchChan)
+		sessionLoop(ctx, &counterApp{}, Tag("div")()(), msgChan, patchChan)
 		close(done)
 	}()
 	// Give the loop time to consume the message and block on the send.
