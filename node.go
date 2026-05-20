@@ -7,9 +7,10 @@
 // user-generated events back through Update.
 //
 // The package exposes only the primitives needed to build any node or
-// attribute ([Tag], [Keyed], [Text], [Attribute], [On]). Convenience
-// wrappers for common HTML tags, attributes, and events live in
-// [ily.dev/domi/html], [ily.dev/domi/attr], and [ily.dev/domi/event].
+// attribute ([Tag], [Keyed], [Fragment], [Text], [Attribute], [On]).
+// Convenience wrappers for common HTML tags, attributes, and events
+// live in [ily.dev/domi/html], [ily.dev/domi/attr], and
+// [ily.dev/domi/event].
 //
 // A [Node] is anything that can appear in the tree: text, an element
 // built via [Tag], or a keyed element built via [Keyed]. [Tag] and
@@ -28,6 +29,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"iter"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -126,7 +128,8 @@ func (Element) isNode() {}
 func Tag(name string) func(...Attr) Element {
 	return func(attrs ...Attr) Element {
 		return func(children ...Node) element {
-			return element{tag: name, attrs: attrs, children: lowerChildren(children)}
+			c := slices.Collect(iter.Seq[node](Fragment(children...).(fragment)))
+			return element{tag: name, attrs: attrs, children: c}
 		}
 	}
 }
@@ -152,9 +155,10 @@ func Text(s string) Node {
 //	    }
 //	})
 //
-// Each yielded child must be an element; text nodes cannot be keyed and
-// Keyed panics on a non-element child. Keys should be unique within the
-// sequence and stable across renders for the same logical item.
+// Each yielded child must be an element; text and [Fragment] children
+// cannot be keyed, and Keyed panics on a non-element child. Keys should
+// be unique within the sequence and stable across renders for the same
+// logical item.
 func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 	return func(attrs ...Attr) func(iter.Seq2[string, Node]) Node {
 		return func(seq iter.Seq2[string, Node]) Node {
@@ -177,39 +181,62 @@ func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 	}
 }
 
-// lowerOne narrows a single Node returned by a public constructor to
-// its canonical form. The renderer and differ call it once at the root
-// of the tree they're handed; lowerChildren handles the interior.
-func lowerOne(n Node) node {
-	if e, ok := n.(Element); ok {
-		return e()
-	}
-	if v, ok := n.(node); ok {
-		return v
-	}
-	panic(fmt.Sprintf("domi: cannot lower %T", n))
+// fragment is the lowered form of a [Fragment]: a sequence of nodes that
+// splats into a parent's child list. fragment satisfies Node but not
+// node — the parent collects it into its own children slice rather
+// than walking it as an interior node. Nested fragments compose by
+// chaining iter.Seqs, so flattening is lazy and adds no per-level
+// overhead.
+type fragment iter.Seq[node]
+
+func (fragment) isNode() {}
+
+// Fragment returns a Node that, when used as a child of a [Tag]
+// element, contributes its children to that element's child list in
+// order, as if they had been written there directly.
+//
+// A Fragment cannot be keyed — [Keyed] children must each be a single
+// element with an identity — and cannot stand at the root of the tree
+// returned by [App.View]. Wrap it in an element first.
+func Fragment(children ...Node) Node {
+	return fragment(func(yield func(node) bool) {
+		for _, c := range children {
+			switch v := c.(type) {
+			case Element:
+				if !yield(v()) {
+					return
+				}
+			case fragment:
+				for n := range v {
+					if !yield(n) {
+						return
+					}
+				}
+			case node:
+				if !yield(v) {
+					return
+				}
+			default:
+				panic(fmt.Sprintf("domi: cannot lower %T", c))
+			}
+		}
+	})
 }
 
-// lowerChildren narrows a slice of public Nodes to their canonical
-// forms. Returns a fresh slice so the caller's variadic argument is
-// not aliased with the stored children.
-func lowerChildren(children []Node) []node {
-	if len(children) == 0 {
-		return nil
+// lowerOne narrows a single Node to its canonical form. Called by
+// the server on each [App.View] result; lowerChildren handles the
+// interior. Fragments are valid only inside an element; using one as
+// the tree root panics.
+func lowerOne(n Node) node {
+	switch v := n.(type) {
+	case Element:
+		return v()
+	case node:
+		return v
+	case fragment:
+		panic("domi: Fragment cannot stand alone; wrap it in an element")
 	}
-	out := make([]node, 0, len(children))
-	for _, c := range children {
-		if e, ok := c.(Element); ok {
-			out = append(out, e())
-			continue
-		}
-		if v, ok := c.(node); ok {
-			out = append(out, v)
-			continue
-		}
-		panic(fmt.Sprintf("domi: cannot lower %T", c))
-	}
-	return out
+	panic(fmt.Sprintf("domi: cannot lower %T", n))
 }
 
 // appendAttr returns attrs with a single additional attribute. It always
