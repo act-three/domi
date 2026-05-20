@@ -68,8 +68,17 @@ type Node interface {
 	isNode()
 }
 
-// element is a fully-realized element node. The diff and render walk these
-// after materializing any Element entries they encounter.
+// node is the lowered (canonical) form of a Node — what the renderer
+// and differ actually walk. Public constructors lower their inputs
+// into nodes at construction time, so the interior of an element tree
+// is uniformly element-or-text by type. New public node types compose
+// by lowering to existing nodes, not by adding cases to the walk.
+type node interface {
+	Node
+	lowered()
+}
+
+// element is a fully-realized element node.
 //
 // keys is the discriminator between positional and keyed elements: nil
 // means the element is positional (Tag); non-nil (even empty) means it
@@ -80,23 +89,25 @@ type Node interface {
 type element struct {
 	tag      string
 	attrs    []Attr
-	children []Node
+	children []node
 	keys     []string
 }
 
-func (element) isNode() {}
+func (element) isNode()  {}
+func (element) lowered() {}
 
 // text is a text node.
 type text struct {
 	value string
 }
 
-func (text) isNode() {}
+func (text) isNode()  {}
+func (text) lowered() {}
 
 // Element is the partially-applied builder returned by Tag(name)(attrs).
 // Calling it with children produces a finished element node; an Element
 // with no children is itself a [Node], so childless tags can appear in a
-// parent's child list without a trailing empty call.
+// parent's child list without a trailing empty children call.
 type Element func(...Node) element
 
 func (Element) isNode() {}
@@ -115,7 +126,7 @@ func (Element) isNode() {}
 func Tag(name string) func(...Attr) Element {
 	return func(attrs ...Attr) Element {
 		return func(children ...Node) element {
-			return element{tag: name, attrs: attrs, children: children}
+			return element{tag: name, attrs: attrs, children: lowerChildren(children)}
 		}
 	}
 }
@@ -148,7 +159,7 @@ func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 	return func(attrs ...Attr) func(iter.Seq2[string, Node]) Node {
 		return func(seq iter.Seq2[string, Node]) Node {
 			var keys []string
-			var children []Node
+			var children []node
 			for k, n := range seq {
 				if e, ok := n.(Element); ok {
 					n = e()
@@ -164,6 +175,41 @@ func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 			return element{tag: name, attrs: attrs, children: children, keys: keys}
 		}
 	}
+}
+
+// lowerOne narrows a single Node returned by a public constructor to
+// its canonical form. The renderer and differ call it once at the root
+// of the tree they're handed; lowerChildren handles the interior.
+func lowerOne(n Node) node {
+	if e, ok := n.(Element); ok {
+		return e()
+	}
+	if v, ok := n.(node); ok {
+		return v
+	}
+	panic(fmt.Sprintf("domi: cannot lower %T", n))
+}
+
+// lowerChildren narrows a slice of public Nodes to their canonical
+// forms. Returns a fresh slice so the caller's variadic argument is
+// not aliased with the stored children.
+func lowerChildren(children []Node) []node {
+	if len(children) == 0 {
+		return nil
+	}
+	out := make([]node, 0, len(children))
+	for _, c := range children {
+		if e, ok := c.(Element); ok {
+			out = append(out, e())
+			continue
+		}
+		if v, ok := c.(node); ok {
+			out = append(out, v)
+			continue
+		}
+		panic(fmt.Sprintf("domi: cannot lower %T", c))
+	}
+	return out
 }
 
 // appendAttr returns attrs with a single additional attribute. It always

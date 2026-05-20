@@ -78,22 +78,13 @@ func (p patch) MarshalJSON() ([]byte, error) {
 }
 
 // diff produces the minimal patch list that transforms old into next.
-func diff(old, next Node) []patch {
+func diff(old, next node) []patch {
 	var out []patch
 	diffNode(old, next, []int{}, &out)
 	return out
 }
 
-func diffNode(old, next Node, path []int, out *[]patch) {
-	// An Element on either side is equivalent to its no-children form;
-	// materialize before the switch so the cases only have to consider
-	// concrete element/text values.
-	if e, ok := old.(Element); ok {
-		old = e()
-	}
-	if e, ok := next.(Element); ok {
-		next = e()
-	}
+func diffNode(old, next node, path []int, out *[]patch) {
 	switch o := old.(type) {
 	case text:
 		n, isText := next.(text)
@@ -149,7 +140,7 @@ func diffAttrs(old, next []Attr, path []int, out *[]patch) {
 	}
 }
 
-func diffChildren(old, next []Node, path []int, out *[]patch) {
+func diffChildren(old, next []node, path []int, out *[]patch) {
 	// Coalesce adjacent text siblings before diffing. The HTML parser
 	// merges adjacent text into one DOM Text node on round-trip, so
 	// position-indexed patches must address children using the merged
@@ -164,7 +155,7 @@ func diffChildren(old, next []Node, path []int, out *[]patch) {
 // text node, matching the shape the HTML parser produces. Returns the
 // input slice unchanged when no coalescing happens. Element entries
 // pass through untouched — they're not text and aren't merged.
-func coalesceText(children []Node) []Node {
+func coalesceText(children []node) []node {
 	merged := false
 	for i := 1; i < len(children); i++ {
 		_, prev := children[i-1].(text)
@@ -177,7 +168,7 @@ func coalesceText(children []Node) []Node {
 	if !merged {
 		return children
 	}
-	out := make([]Node, 0, len(children))
+	out := make([]node, 0, len(children))
 	var buf string
 	flush := func() {
 		if buf != "" {
@@ -197,7 +188,7 @@ func coalesceText(children []Node) []Node {
 	return out
 }
 
-func diffPositional(old, next []Node, path []int, out *[]patch) {
+func diffPositional(old, next []node, path []int, out *[]patch) {
 	for i := len(old) - 1; i >= len(next); i-- {
 		*out = append(*out, patch{op: "remove_child", path: clonePath(path), idx: i})
 	}
@@ -224,12 +215,12 @@ func diffPositional(old, next []Node, path []int, out *[]patch) {
 // Content diffs for matched pairs are deferred until after all
 // structural patches are emitted, so paths (which use new-position
 // childNodes traversal) point at the right elements when they apply.
-func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, out *[]patch) {
+func diffKeyed(oldKids, newKids []node, oldKeys, newKeys []string, path []int, out *[]patch) {
 	oldStart, newStart := 0, 0
 	oldEnd, newEnd := len(oldKids)-1, len(newKids)-1
 
 	type deferredMatch struct {
-		oldNode, newNode Node
+		oldNode, newNode node
 		newIdx           int
 	}
 	var deferred []deferredMatch

@@ -3,14 +3,14 @@ package domi
 import "testing"
 
 // keyedList builds a keyed <ul> whose children are <li>s named for each key.
-func keyedList(keys ...string) Node {
-	return Keyed("ul")()(func(yield func(string, Node) bool) {
+func keyedList(keys ...string) node {
+	return lowerOne(Keyed("ul")()(func(yield func(string, Node) bool) {
 		for _, k := range keys {
 			if !yield(k, Tag("li")()(Text(k))) {
 				return
 			}
 		}
-	})
+	}))
 }
 
 // countOps returns counts of structural patch ops in `patches`.
