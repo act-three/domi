@@ -101,7 +101,7 @@ func newSessionID() string {
 func sessionLoop[Msg any](
 	ctx context.Context,
 	app App[Msg],
-	prev Node,
+	prev node,
 	msgChan chan Msg,
 	patchTx chan<- []patch,
 ) {
@@ -111,7 +111,7 @@ func sessionLoop[Msg any](
 			return
 		case msg := <-msgChan:
 			cmd := app.Update(msg)
-			next := app.View()
+			next := lowerOne(app.View())
 			if patches := diff(prev, next); len(patches) > 0 {
 				select {
 				case patchTx <- patches:
@@ -148,7 +148,7 @@ func handleRoot[Msg any](newApp func() App[Msg], store *sessionStore[Msg]) http.
 		id := newSessionID()
 		app := newApp()
 		cmd := app.Init()
-		initial := app.View()
+		initial := lowerOne(app.View())
 		title := app.Title()
 		body := render(initial)
 

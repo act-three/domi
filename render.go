@@ -5,26 +5,22 @@ import (
 	"strings"
 )
 
-// render produces the static HTML for a Node tree (used for first page load).
-func render(n Node) string {
+// render produces the static HTML for a node tree (used for first page
+// load and for the fragments embedded in insert_child / replace patches).
+func render(n node) string {
 	var b strings.Builder
 	writeNode(n, &b)
 	return b.String()
 }
 
-func writeNode(n Node, b *strings.Builder) {
-	// An Element is equivalent to its no-children form; materialize so
-	// the switch only has to handle concrete element/text values.
-	if e, ok := n.(Element); ok {
-		n = e()
-	}
+// writeNode walks a canonical node and writes its HTML to b. Keyed and
+// unkeyed elements render identically — for keyed children, data-domi-key
+// is already in attrs (injected by Keyed at construction time).
+func writeNode(n node, b *strings.Builder) {
 	switch v := n.(type) {
 	case text:
 		writeEscapedText(v.value, b)
 	case element:
-		// Keyed and unkeyed elements render identically — for keyed
-		// children, data-domi-key is already in attrs (injected by
-		// Keyed at construction time).
 		b.WriteByte('<')
 		b.WriteString(v.tag)
 		for _, a := range combinedAttrs(v.attrs) {

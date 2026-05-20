@@ -212,8 +212,8 @@ func TestDiffApplyProperty(t *testing.T) {
 
 	const iterations = 2000
 	for i := range iterations {
-		old := genElement(cfg, 0)
-		next := genElement(cfg, 0)
+		old := lowerOne(genElement(cfg, 0))
+		next := lowerOne(genElement(cfg, 0))
 
 		patches := diff(old, next)
 		gotHTML, err := a.apply(render(old), patches)
