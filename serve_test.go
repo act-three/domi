@@ -23,7 +23,7 @@ func TestSessionLoopExitsOnCancel(t *testing.T) {
 	patchChan := make(chan []patch, 1)
 	done := make(chan struct{})
 	go func() {
-		sessionLoop(ctx, &counterApp{}, Tag("div")()(), msgChan, patchChan)
+		sessionLoop(ctx, &counterApp{}, Tag("div")()().(node), msgChan, patchChan)
 		close(done)
 	}()
 	cancel()
@@ -44,7 +44,7 @@ func TestSessionLoopPatchSendInterruptible(t *testing.T) {
 	msgChan <- 1
 	done := make(chan struct{})
 	go func() {
-		sessionLoop(ctx, &counterApp{}, Tag("div")()(), msgChan, patchChan)
+		sessionLoop(ctx, &counterApp{}, Tag("div")()().(node), msgChan, patchChan)
 		close(done)
 	}()
 	// Give the loop time to consume the message and block on the send.
