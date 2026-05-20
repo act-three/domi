@@ -110,7 +110,7 @@ func (text) lowered() {}
 // Calling it with children produces a finished element node; an Element
 // with no children is itself a [Node], so childless tags can appear in a
 // parent's child list without a trailing empty children call.
-type Element func(...Node) element
+type Element func(...Node) Node
 
 func (Element) isNode() {}
 
@@ -127,7 +127,7 @@ func (Element) isNode() {}
 // Prebound helpers for common tags live in [ily.dev/domi/html].
 func Tag(name string) func(...Attr) Element {
 	return func(attrs ...Attr) Element {
-		return func(children ...Node) element {
+		return func(children ...Node) Node {
 			c := slices.Collect(iter.Seq[node](Fragment(children...).(fragment)))
 			return element{tag: name, attrs: attrs, children: c}
 		}
@@ -203,7 +203,7 @@ func Fragment(children ...Node) Node {
 		for _, c := range children {
 			switch v := c.(type) {
 			case Element:
-				if !yield(v()) {
+				if !yield(v().(node)) {
 					return
 				}
 			case fragment:
@@ -224,13 +224,12 @@ func Fragment(children ...Node) Node {
 }
 
 // lowerOne narrows a single Node to its canonical form. Called by
-// the server on each [App.View] result; lowerChildren handles the
-// interior. Fragments are valid only inside an element; using one as
-// the tree root panics.
+// the server on each [App.View] result. A Fragment is only valid
+// inside an element; using one as the tree root panics.
 func lowerOne(n Node) node {
 	switch v := n.(type) {
 	case Element:
-		return v()
+		return v().(node)
 	case node:
 		return v
 	case fragment:

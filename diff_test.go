@@ -29,15 +29,15 @@ func countOps(patches []patch) (inserts, removes, moves int) {
 }
 
 func TestNoChange(t *testing.T) {
-	a := Tag("div")()(Text("hi"))
+	a := Tag("div")()(Text("hi")).(node)
 	if got := diff(a, a); len(got) != 0 {
 		t.Fatalf("want no patches, got %+v", got)
 	}
 }
 
 func TestTextChange(t *testing.T) {
-	a := Tag("div")()(Text("hi"))
-	b := Tag("div")()(Text("bye"))
+	a := Tag("div")()(Text("hi")).(node)
+	b := Tag("div")()(Text("bye")).(node)
 	got := diff(a, b)
 	if len(got) != 1 || got[0].op != "set_text" || got[0].value != "bye" {
 		t.Fatalf("unexpected: %+v", got)
@@ -45,8 +45,8 @@ func TestTextChange(t *testing.T) {
 }
 
 func TestTagChangeReplaces(t *testing.T) {
-	a := Tag("div")()()
-	b := Tag("span")()()
+	a := Tag("div")()().(node)
+	b := Tag("span")()().(node)
 	got := diff(a, b)
 	if len(got) != 1 || got[0].op != "replace" {
 		t.Fatalf("unexpected: %+v", got)
@@ -90,8 +90,8 @@ func TestKeyedRemove(t *testing.T) {
 }
 
 func TestAttrAdded(t *testing.T) {
-	a := Tag("div")()()
-	b := Tag("div")(Attribute("class", "x"))()
+	a := Tag("div")()().(node)
+	b := Tag("div")(Attribute("class", "x"))().(node)
 	got := diff(a, b)
 	if len(got) != 1 || got[0].op != "set_attr" || got[0].name != "class" || got[0].value != "x" {
 		t.Fatalf("expected single set_attr, got %+v", got)
@@ -99,8 +99,8 @@ func TestAttrAdded(t *testing.T) {
 }
 
 func TestAttrChanged(t *testing.T) {
-	a := Tag("div")(Attribute("class", "x"))()
-	b := Tag("div")(Attribute("class", "y"))()
+	a := Tag("div")(Attribute("class", "x"))().(node)
+	b := Tag("div")(Attribute("class", "y"))().(node)
 	got := diff(a, b)
 	if len(got) != 1 || got[0].op != "set_attr" || got[0].value != "y" {
 		t.Fatalf("expected set_attr to y, got %+v", got)
@@ -108,8 +108,8 @@ func TestAttrChanged(t *testing.T) {
 }
 
 func TestAttrRemoved(t *testing.T) {
-	a := Tag("div")(Attribute("class", "x"))()
-	b := Tag("div")()()
+	a := Tag("div")(Attribute("class", "x"))().(node)
+	b := Tag("div")()().(node)
 	got := diff(a, b)
 	if len(got) != 1 || got[0].op != "remove_attr" || got[0].name != "class" {
 		t.Fatalf("expected remove_attr, got %+v", got)
@@ -117,8 +117,8 @@ func TestAttrRemoved(t *testing.T) {
 }
 
 func TestReplacePatchCarriesHTML(t *testing.T) {
-	a := Tag("div")()()
-	b := Tag("span")()(Text("hi"))
+	a := Tag("div")()().(node)
+	b := Tag("span")()(Text("hi")).(node)
 	got := diff(a, b)
 	if len(got) != 1 || got[0].op != "replace" {
 		t.Fatalf("expected single replace, got %+v", got)
@@ -129,8 +129,8 @@ func TestReplacePatchCarriesHTML(t *testing.T) {
 }
 
 func TestInsertChildPatchCarriesHTML(t *testing.T) {
-	a := Tag("ul")()()
-	b := Tag("ul")()(Tag("li")()(Text("one")))
+	a := Tag("ul")()().(node)
+	b := Tag("ul")()(Tag("li")()(Text("one"))).(node)
 	got := diff(a, b)
 	if len(got) != 1 || got[0].op != "insert_child" {
 		t.Fatalf("expected single insert_child, got %+v", got)
@@ -290,8 +290,8 @@ func TestKeyedMixedRemoveInsertMove(t *testing.T) {
 // Diff also runs combining: two `class` attrs at construction produce a single
 // canonical "a b" value that the diff sees.
 func TestAttrCombiningBeforeDiff(t *testing.T) {
-	a := Tag("div")(Attribute("class", "a"))()
-	b := Tag("div")(Attribute("class", "a"), Attribute("class", "b"))()
+	a := Tag("div")(Attribute("class", "a"))().(node)
+	b := Tag("div")(Attribute("class", "a"), Attribute("class", "b"))().(node)
 	got := diff(a, b)
 	if len(got) != 1 || got[0].op != "set_attr" || got[0].value != "a b" {
 		t.Fatalf("expected class to combine to \"a b\", got %+v", got)
@@ -346,8 +346,8 @@ func TestKeyedOnlyInsertsAnchorOrder(t *testing.T) {
 // next = div containing just [span]. Coalesce should normalize old to
 // 2 children, yielding remove_child idx=1 + replace at [0].
 func TestAdjacentTextCoalescesBeforePositionalDiff(t *testing.T) {
-	old := Tag("div")()(Text("a"), Text("b"), Tag("span")()())
-	next := Tag("div")()(Tag("span")()())
+	old := Tag("div")()(Text("a"), Text("b"), Tag("span")()()).(node)
+	next := Tag("div")()(Tag("span")()()).(node)
 	got := diff(old, next)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 patches (one remove + one replace), got %d: %+v", len(got), got)

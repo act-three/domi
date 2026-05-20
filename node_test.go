@@ -141,7 +141,7 @@ func TestCombineNoDuplicatesReturnsInput(t *testing.T) {
 // and a diff against the inline-equivalent tree.
 
 func TestFragmentLowersToInlineChildren(t *testing.T) {
-	e := Tag("div")()(Fragment(Text("a"), Text("b")))
+	e := Tag("div")()(Fragment(Text("a"), Text("b"))).(element)
 	if len(e.children) != 2 {
 		t.Fatalf("want 2 children after flatten, got %d", len(e.children))
 	}
@@ -153,16 +153,16 @@ func TestFragmentLowersToInlineChildren(t *testing.T) {
 }
 
 func TestFragmentNestedFlattens(t *testing.T) {
-	a := Tag("div")()(Fragment(Fragment(Text("a"), Text("b")), Text("c")))
-	b := Tag("div")()(Text("a"), Text("b"), Text("c"))
+	a := Tag("div")()(Fragment(Fragment(Text("a"), Text("b")), Text("c"))).(node)
+	b := Tag("div")()(Text("a"), Text("b"), Text("c")).(node)
 	if render(a) != render(b) {
 		t.Fatalf("nested Fragment should flatten: %q vs %q", render(a), render(b))
 	}
 }
 
 func TestFragmentEmptyContributesNothing(t *testing.T) {
-	a := Tag("div")()(Fragment(), Text("x"))
-	b := Tag("div")()(Text("x"))
+	a := Tag("div")()(Fragment(), Text("x")).(node)
+	b := Tag("div")()(Text("x")).(node)
 	if render(a) != render(b) {
 		t.Fatalf("empty Fragment should contribute nothing: %q vs %q", render(a), render(b))
 	}
@@ -173,16 +173,16 @@ func TestFragmentPreservesSiblingOrder(t *testing.T) {
 		Text("a"),
 		Fragment(Text("b"), Text("c")),
 		Text("d"),
-	)
-	b := Tag("div")()(Text("a"), Text("b"), Text("c"), Text("d"))
+	).(node)
+	b := Tag("div")()(Text("a"), Text("b"), Text("c"), Text("d")).(node)
 	if render(a) != render(b) {
 		t.Fatalf("Fragment children should appear in position: %q vs %q", render(a), render(b))
 	}
 }
 
 func TestFragmentIsTransparentToDiff(t *testing.T) {
-	a := Tag("div")()(Fragment(Text("a"), Text("b")))
-	b := Tag("div")()(Text("a"), Text("b"))
+	a := Tag("div")()(Fragment(Text("a"), Text("b"))).(node)
+	b := Tag("div")()(Text("a"), Text("b")).(node)
 	if got := diff(a, b); len(got) != 0 {
 		t.Fatalf("Fragment-wrapped should diff identically: got %+v", got)
 	}
