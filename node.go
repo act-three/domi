@@ -144,14 +144,10 @@ func Text(s string) Node {
 // Each yielded child must be an element; text nodes cannot be keyed and
 // Keyed panics on a non-element child. Keys should be unique within the
 // sequence and stable across renders for the same logical item.
-//
-// A keyed element and an unkeyed element of the same tag are distinct
-// shapes: switching one for the other at the same position is a
-// structural change that rebuilds the element wholesale.
 func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 	return func(attrs ...Attr) func(iter.Seq2[string, Node]) Node {
 		return func(seq iter.Seq2[string, Node]) Node {
-			keys := []string{}
+			var keys []string
 			var children []Node
 			for k, n := range seq {
 				if e, ok := n.(Element); ok {
