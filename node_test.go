@@ -134,3 +134,76 @@ func TestCombineNoDuplicatesReturnsInput(t *testing.T) {
 		t.Fatalf("want 2 attrs, got %d", len(out))
 	}
 }
+
+// Fragment is supposed to be indistinguishable from writing its children
+// inline at the use site. The tests below pin that property at the
+// places it could leak: the lowered children slice, the rendered HTML,
+// and a diff against the inline-equivalent tree.
+
+func TestFragmentLowersToInlineChildren(t *testing.T) {
+	e := Tag("div")()(Fragment(Text("a"), Text("b")))
+	if len(e.children) != 2 {
+		t.Fatalf("want 2 children after flatten, got %d", len(e.children))
+	}
+	for i, c := range e.children {
+		if _, ok := c.(text); !ok {
+			t.Fatalf("child[%d]: want text, got %T", i, c)
+		}
+	}
+}
+
+func TestFragmentNestedFlattens(t *testing.T) {
+	a := Tag("div")()(Fragment(Fragment(Text("a"), Text("b")), Text("c")))
+	b := Tag("div")()(Text("a"), Text("b"), Text("c"))
+	if render(a) != render(b) {
+		t.Fatalf("nested Fragment should flatten: %q vs %q", render(a), render(b))
+	}
+}
+
+func TestFragmentEmptyContributesNothing(t *testing.T) {
+	a := Tag("div")()(Fragment(), Text("x"))
+	b := Tag("div")()(Text("x"))
+	if render(a) != render(b) {
+		t.Fatalf("empty Fragment should contribute nothing: %q vs %q", render(a), render(b))
+	}
+}
+
+func TestFragmentPreservesSiblingOrder(t *testing.T) {
+	a := Tag("div")()(
+		Text("a"),
+		Fragment(Text("b"), Text("c")),
+		Text("d"),
+	)
+	b := Tag("div")()(Text("a"), Text("b"), Text("c"), Text("d"))
+	if render(a) != render(b) {
+		t.Fatalf("Fragment children should appear in position: %q vs %q", render(a), render(b))
+	}
+}
+
+func TestFragmentIsTransparentToDiff(t *testing.T) {
+	a := Tag("div")()(Fragment(Text("a"), Text("b")))
+	b := Tag("div")()(Text("a"), Text("b"))
+	if got := diff(a, b); len(got) != 0 {
+		t.Fatalf("Fragment-wrapped should diff identically: got %+v", got)
+	}
+}
+
+func TestFragmentAtRootPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic for Fragment at root, got none")
+		}
+	}()
+	_ = lowerOne(Fragment(Tag("div")()()))
+}
+
+func TestFragmentInKeyedPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic for Fragment yielded into Keyed, got none")
+		}
+	}()
+	_ = Keyed("ul")()(func(yield func(string, Node) bool) {
+		yield("a", Fragment(Tag("li")()(Text("x"))))
+	})
+}
