@@ -115,7 +115,7 @@ func diffNode(old, next node, path []int, out *[]patch) {
 	}
 }
 
-func diffAttrs(old, next []Attr, path []int, out *[]patch) {
+func diffAttrs(old, next []attr, path []int, out *[]patch) {
 	o := combinedAttrs(old)
 	n := combinedAttrs(next)
 	oldByName := make(map[string]string, len(o))

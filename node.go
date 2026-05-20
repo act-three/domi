@@ -7,9 +7,9 @@
 // user-generated events back through Update.
 //
 // The package exposes only the primitives needed to build any node or
-// attribute ([Tag], [Keyed], [Fragment], [Text], [Attribute], [On]).
-// Convenience wrappers for common HTML tags, attributes, and events
-// live in [ily.dev/domi/html], [ily.dev/domi/attr], and
+// attribute ([Tag], [Keyed], [Fragment], [Text], [Attribute], [Group],
+// [On]). Convenience wrappers for common HTML tags, attributes, and
+// events live in [ily.dev/domi/html], [ily.dev/domi/attr], and
 // [ily.dev/domi/event].
 //
 // A [Node] is anything that can appear in the tree: text, an element
@@ -90,7 +90,7 @@ type node interface {
 // data-domi-key attribute).
 type element struct {
 	tag      string
-	attrs    []Attr
+	attrs    []attr
 	children []node
 	keys     []string
 }
@@ -127,9 +127,10 @@ func (Element) isNode() {}
 // Prebound helpers for common tags live in [ily.dev/domi/html].
 func Tag(name string) func(...Attr) Element {
 	return func(attrs ...Attr) Element {
+		a := slices.Collect(iter.Seq[attr](Group(attrs...).(group)))
 		return func(children ...Node) Node {
 			c := slices.Collect(iter.Seq[node](Fragment(children...).(fragment)))
-			return element{tag: name, attrs: attrs, children: c}
+			return element{tag: name, attrs: a, children: c}
 		}
 	}
 }
@@ -161,6 +162,7 @@ func Text(s string) Node {
 // logical item.
 func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 	return func(attrs ...Attr) func(iter.Seq2[string, Node]) Node {
+		a := slices.Collect(iter.Seq[attr](Group(attrs...).(group)))
 		return func(seq iter.Seq2[string, Node]) Node {
 			var keys []string
 			var children []node
@@ -172,11 +174,11 @@ func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 				if !ok {
 					panic(fmt.Sprintf("domi: keyed child %q must be an element, got %T", k, n))
 				}
-				v.attrs = appendAttr(v.attrs, Attribute("data-domi-key", k))
+				v.attrs = appendAttr(v.attrs, attr{name: "data-domi-key", value: k})
 				keys = append(keys, k)
 				children = append(children, v)
 			}
-			return element{tag: name, attrs: attrs, children: children, keys: keys}
+			return element{tag: name, attrs: a, children: children, keys: keys}
 		}
 	}
 }
@@ -242,19 +244,30 @@ func lowerOne(n Node) node {
 // allocates a fresh backing array so the caller's slice can't be mutated
 // through the returned one (avoids the classic append-aliasing footgun
 // when the keyed parent injects data-domi-key into a child's attrs).
-func appendAttr(attrs []Attr, extra Attr) []Attr {
-	out := make([]Attr, len(attrs)+1)
+func appendAttr(attrs []attr, extra attr) []attr {
+	out := make([]attr, len(attrs)+1)
 	copy(out, attrs)
 	out[len(attrs)] = extra
 	return out
 }
 
 // Attr is an opaque attribute carried by an element. Construct via
-// [Attribute] for a static name/value pair or [On] for an event handler.
-type Attr struct {
+// [Attribute] for a static name/value pair, [On] for an event handler,
+// or [Group] for a collection of attrs.
+type Attr interface {
+	isAttr()
+}
+
+// attr is the lowered (canonical) form of an [Attr] — a flat name/value
+// pair that the renderer and differ walk. Public constructors lower
+// their inputs into attrs at construction time, so the attribute list
+// of an element is uniformly name/value pairs by type.
+type attr struct {
 	name  string
 	value string
 }
+
+func (attr) isAttr() {}
 
 // Attribute constructs a static HTML attribute (e.g. class="foo").
 //
@@ -264,7 +277,41 @@ type Attr struct {
 // repeated attribute keeps its first value. This lets components layer
 // classes and styles onto a host element without coordinating.
 func Attribute(name, value string) Attr {
-	return Attr{name: name, value: value}
+	return attr{name: name, value: value}
+}
+
+// group is the lowered form of a [Group]: a sequence of attrs that
+// splats into a parent's attribute list. group satisfies Attr but not
+// attr — the parent collects it into its own attrs slice rather than
+// walking it as an interior attribute. Nested groups compose by
+// chaining iter.Seqs, so flattening is lazy and adds no per-level
+// overhead.
+type group iter.Seq[attr]
+
+func (group) isAttr() {}
+
+// Group returns an Attr that, when used in an element's attribute list,
+// contributes its own attrs to that list in order, as if they had been
+// written there directly. Groups may be nested arbitrarily.
+func Group(attrs ...Attr) Attr {
+	return group(func(yield func(attr) bool) {
+		for _, a := range attrs {
+			switch v := a.(type) {
+			case attr:
+				if !yield(v) {
+					return
+				}
+			case group:
+				for inner := range v {
+					if !yield(inner) {
+						return
+					}
+				}
+			default:
+				panic(fmt.Sprintf("domi: cannot lower %T", a))
+			}
+		}
+	})
 }
 
 // combineSep returns the separator for attributes whose duplicate
@@ -291,11 +338,11 @@ func combineSep(name string) (sep string, ok bool) {
 // combineSep. First-occurrence order is preserved. The walker is a single
 // pass; each combining attribute accumulates into its own strings.Builder
 // (amortized O(N) per name, replacing the previous quadratic string concat).
-func combinedAttrs(attrs []Attr) []Attr {
+func combinedAttrs(attrs []attr) []attr {
 	if len(attrs) < 2 {
 		return attrs
 	}
-	out := make([]Attr, 0, len(attrs))
+	out := make([]attr, 0, len(attrs))
 	idx := make(map[string]int, len(attrs))
 	var bufs map[string]*strings.Builder // lazy; allocated on first duplicate
 	for _, a := range attrs {
