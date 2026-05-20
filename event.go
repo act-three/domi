@@ -7,20 +7,19 @@ import (
 	"sync"
 )
 
-// Event is the kitchen-sink payload the client sends with every event
-// dispatch. To receive it, embed a field of this type in your Msg and
-// tag it `domi:"event"`:
+// Event is the payload delivered with every event dispatch. To receive
+// it, embed a field of this type in your Msg and mark it with a
+// domi:"event" struct tag:
 //
 //	type Msg struct {
 //	    Tag   string
 //	    Event domi.Event `domi:"event"`
 //	}
 //
-// The framework zeros the tagged field at handler registration (so any
-// pre-fill in the literal doesn't affect the content hash) and unmarshals
-// the per-dispatch payload into it before calling Update.
-//
-// Cmd-produced Msgs naturally have a zero Event field.
+// On each dispatch the framework fills the tagged field with details of
+// the firing event before calling Update; any value pre-set on the field
+// in the [On] literal is ignored. Msgs delivered by a [Cmd] always have
+// a zero Event field.
 type Event struct {
 	Type    string            `json:"type"`
 	Key     string            `json:"key,omitempty"`
@@ -87,20 +86,19 @@ func scanMsgType(t reflect.Type) *msgTypeInfo {
 	return &msgTypeInfo{eventFieldPath: path}
 }
 
-// On constructs an event handler attribute. The Msg is JSON-marshaled
-// immediately and stored in a process-wide registry keyed by a content
-// hash. The attribute value is just that hash (bare hex), so the wire
-// form carries only a short opaque token rather than the full Msg JSON.
+// On binds msg to event on the resulting attribute's element: when the
+// browser fires that event on the element, the framework dispatches msg
+// to the App's Update.
 //
-// Multiple On("click", ...) attributes on the same element are combined
-// (comma-joined). The client posts the value alongside a kitchen-sink
-// event payload; the server splits on commas, resolves each hash, and
-// for Msgs that carry a `domi:"event"` field, splices the payload in
-// before dispatch.
+// Multiple On(event, ...) attributes on the same element all fire when
+// the event occurs; each msg is dispatched to Update in the order the
+// attributes were attached.
 //
-// If msg's type contains a `domi:"event"` tagged field, that field is
-// zeroed before marshaling so pre-filled values in the literal don't
-// affect the content hash.
+// If msg's type contains a field of type [Event] with a domi:"event"
+// struct tag, the framework fills that field with the firing event's
+// details before calling Update. The value of that field in the literal
+// passed to On is ignored — only the other fields contribute to the
+// Msg's identity.
 func On(event string, msg any) Attr {
 	info := msgTypeInfoFor(reflect.TypeOf(msg))
 	if info.err != nil {

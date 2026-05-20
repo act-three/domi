@@ -2,9 +2,17 @@ package domi
 
 import "context"
 
-// App is a TEA-shaped application. Implementations carry their own state
-// (typically as fields on a pointer receiver) and the framework calls Update,
-// View, Title sequentially per session — no concurrent access.
+// App is the state machine a domi application implements. Implementations
+// carry their own state (typically as fields on a pointer receiver); the
+// framework owns the instance for the lifetime of a session and calls
+// Init, Update, View, and Title sequentially, so internal state needs no
+// concurrency guard.
+//
+// Init runs once at the start of the session and may return a [Cmd] to
+// kick off initial work. Update is called for each dispatched Msg and
+// may return a [Cmd] to produce follow-up Msgs. View is called after
+// every Update; its return value is the source of truth for what the
+// browser displays. Title returns the document title.
 type App[Msg any] interface {
 	Init() Cmd[Msg]
 	Update(msg Msg) Cmd[Msg]
@@ -12,17 +20,27 @@ type App[Msg any] interface {
 	Title() string
 }
 
-// Cmd is a deferred side-effect that eventually produces a Msg.
+// Cmd is a deferred side-effect that eventually produces a Msg. Cmds
+// are returned by [App.Init] and [App.Update]; the framework runs each
+// in its own goroutine and feeds the resulting Msg back into Update.
 type Cmd[Msg any] struct {
 	fns []func(context.Context) Msg
 }
 
+// CmdNone returns a [Cmd] that does nothing. Use it from Init or Update
+// when there is no follow-up work to schedule.
 func CmdNone[Msg any]() Cmd[Msg] { return Cmd[Msg]{} }
 
+// CmdFn returns a [Cmd] that runs fn and dispatches its result back
+// into Update. The context is cancelled when the session ends; fn
+// should respect it for any blocking or long-running work.
 func CmdFn[Msg any](fn func(context.Context) Msg) Cmd[Msg] {
 	return Cmd[Msg]{fns: []func(context.Context) Msg{fn}}
 }
 
+// CmdBatch returns a [Cmd] that runs each input Cmd concurrently. The
+// produced Msgs are dispatched to Update independently in whatever
+// order they finish.
 func CmdBatch[Msg any](cmds ...Cmd[Msg]) Cmd[Msg] {
 	var out Cmd[Msg]
 	for _, c := range cmds {

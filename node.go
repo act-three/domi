@@ -1,23 +1,27 @@
-// Package domi is a TEA-shaped, server-rendered VDOM framework: apps
-// implement App[Msg], the framework drives an Update/View/diff loop per
-// session and ships patches to the browser over SSE.
+// Package domi is a server-rendered framework for building browser
+// applications in Go. An application is a state machine: it implements
+// [App], whose View method renders the current state as a [Node] tree
+// and whose Update method transitions the state in response to events.
+// The framework hosts the application behind an [http.Handler], keeps
+// the browser's view in sync with whatever View returns, and dispatches
+// user-generated events back through Update.
 //
-// The package exposes only the primitives needed to construct any
-// node or attribute (Tag, Keyed, Text, Attribute, On). Convenience
+// The package exposes only the primitives needed to build any node or
+// attribute ([Tag], [Keyed], [Text], [Attribute], [On]). Convenience
 // wrappers for common HTML tags, attributes, and events live in
-// domi/html, domi/attr, and domi/event.
+// [ily.dev/domi/html], [ily.dev/domi/attr], and [ily.dev/domi/event].
 //
-// Node is an interface: it's satisfied by text, by a finished element,
-// by Element — the function-typed builder returned by Tag(name)(attrs)
-// — and by a keyed element built via Keyed. An Element with no children
-// is itself a Node; the diff and render paths materialize it via its
-// no-children call (e()). That lets void elements like Br() and Input()
-// appear as children without a trailing empty-call for children.
+// A [Node] is anything that can appear in the tree: text, an element
+// built via [Tag], or a keyed element built via [Keyed]. [Tag] and
+// [Keyed] return curried builders — first attributes, then children.
+// An element with no children is itself a [Node], so void elements
+// (e.g. Br, Input) and other childless tags can appear in a parent's
+// child list without a trailing empty children call.
 //
-// VDOM values are Msg-erased: handler attributes carry a content hash
-// of the pre-marshaled Msg JSON. The Msg itself lives in a process-wide
-// registry; only the hash crosses the wire. Multiple handlers for the
-// same event combine via comma in the attribute value.
+// Attribute names beginning with "data-domi-" are reserved for use by
+// this package and its subpackages. Application code and third-party
+// packages should pick data attributes outside that prefix to avoid
+// collisions with framework internals — present or future.
 package domi
 
 import (
@@ -57,9 +61,9 @@ func lookupHandler(key string) ([]byte, bool) {
 	return raw, ok
 }
 
-// Node is anything that can appear in a domi tree: text, an element, or
-// an Element builder. The interface is sealed via the unexported isNode
-// marker — only types defined inside the domi package satisfy it.
+// Node is anything that can appear in a domi tree. The interface is
+// sealed — only types defined by this package satisfy it. Construct
+// values via [Text], [Tag], or [Keyed].
 type Node interface {
 	isNode()
 }
@@ -89,10 +93,10 @@ type text struct {
 
 func (text) isNode() {}
 
-// Element is the curried element builder returned by Tag(name)(attrs).
-// Calling it with children yields a finished element node; Element itself
-// also satisfies Node — equivalent to "this element with no children",
-// which is what render and diff materialize via e().
+// Element is the partially-applied builder returned by Tag(name)(attrs).
+// Calling it with children produces a finished element node; an Element
+// with no children is itself a [Node], so childless tags can appear in a
+// parent's child list without a trailing empty call.
 type Element func(...Node) element
 
 func (Element) isNode() {}
@@ -121,9 +125,13 @@ func Text(s string) Node {
 	return text{value: s}
 }
 
-// Keyed returns a curried builder for an element whose children are paired
-// with stable keys for identity-based reconciliation. The children sequence
-// yields (key, child) pairs in the desired DOM order:
+// Keyed returns a curried builder for an element whose children are
+// paired with stable keys. The framework reconciles updates to keyed
+// children by identity rather than position, so inserting, removing, or
+// reordering items in the middle of a list updates the surviving
+// children in place instead of replacing the affected suffix.
+//
+// The children sequence yields (key, child) pairs in the desired order:
 //
 //	Keyed("ul")(attr.Class("items"))(func(yield func(string, Node) bool) {
 //	    for _, it := range items {
@@ -133,14 +141,13 @@ func Text(s string) Node {
 //	    }
 //	})
 //
-// Each yielded child must be an element — text can't carry a data-domi-key
-// attribute. Keyed panics on a non-element child. The key is injected as a
-// data-domi-key attribute on the child at construction time, so render and
-// diff don't have to thread it through separately.
+// Each yielded child must be an element; text nodes cannot be keyed and
+// Keyed panics on a non-element child. Keys should be unique within the
+// sequence and stable across renders for the same logical item.
 //
-// An empty sequence is still a keyed element (distinct from an unkeyed one
-// of the same tag for diff purposes): keys is allocated to a zero-length
-// non-nil slice so the keyed-ness is preserved.
+// A keyed element and an unkeyed element of the same tag are distinct
+// shapes: switching one for the other at the same position is a
+// structural change that rebuilds the element wholesale.
 func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 	return func(attrs ...Attr) func(iter.Seq2[string, Node]) Node {
 		return func(seq iter.Seq2[string, Node]) Node {
@@ -174,13 +181,20 @@ func appendAttr(attrs []Attr, extra Attr) []Attr {
 	return out
 }
 
-// Attr is an opaque name/value attribute. Construct via Attribute or On.
+// Attr is an opaque attribute carried by an element. Construct via
+// [Attribute] for a static name/value pair or [On] for an event handler.
 type Attr struct {
 	name  string
 	value string
 }
 
 // Attribute constructs a static HTML attribute (e.g. class="foo").
+//
+// When the same attribute name appears more than once on the same
+// element, the values are combined per name: class values are joined by
+// a single space, style values are joined by a semicolon, and any other
+// repeated attribute keeps its first value. This lets components layer
+// classes and styles onto a host element without coordinating.
 func Attribute(name, value string) Attr {
 	return Attr{name: name, value: value}
 }

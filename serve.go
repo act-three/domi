@@ -25,10 +25,11 @@ var clientJSPath = func() string {
 	return fmt.Sprintf("/domi.%x.js", h[:4])
 }()
 
-// Handler returns an http.Handler that serves the domi App. The factory
-// `newApp` is called once per session to produce a fresh app instance with
-// its own state. The caller is responsible for listening (e.g. via
-// http.ListenAndServe).
+// Handler returns an [http.Handler] that serves the App. newApp is
+// invoked once per session to construct a fresh App instance, so each
+// connected browser gets its own independent state. The caller is
+// responsible for wiring the handler into a server (e.g. via
+// [http.ListenAndServe]).
 func Handler[Msg any](newApp func() App[Msg]) http.Handler {
 	store := newSessionStore[Msg]()
 	mux := http.NewServeMux()
