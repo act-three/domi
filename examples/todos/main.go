@@ -25,8 +25,8 @@ var (
 	div     = html.Div
 	h1      = html.H1
 	span    = html.Span
-	keyedUl = domi.Keyed("ul")
-	li      = html.Li
+	keyedUL = domi.Keyed("ul")
+	li      = html.LI
 	button  = html.Button
 	onClick = event.Click
 )
@@ -89,7 +89,7 @@ func (t *Todos) Update(msg Msg) domi.Cmd[Msg] {
 func (t *Todos) View() N {
 	return div(style("font-family:system-ui;padding:2rem;max-width:32rem"))(
 		h1()(text("todos")),
-		keyedUl(style("list-style:none;padding:0"))(func(yield func(string, N) bool) {
+		keyedUL(style("list-style:none;padding:0"))(func(yield func(string, N) bool) {
 			for _, it := range t.items {
 				if !yield(strconv.FormatUint(it.ID, 10), itemRow(it)) {
 					return
