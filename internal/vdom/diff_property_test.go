@@ -217,7 +217,7 @@ func TestDiffApplyProperty(t *testing.T) {
 		old := genElement(cfg, 0)
 		next := genElement(cfg, 0)
 
-		patches := Diff(old, next)
+		patches := diff(old, next)
 		gotHTML, err := a.apply(Render(old), patches)
 		if err != nil {
 			t.Fatalf("iter %d (seed=%d): bun apply: %v\nold:  %s\nnext: %s\npatches: %s",
@@ -241,30 +241,30 @@ func jsonStr(v any) string {
 	return string(b)
 }
 
-func patchDebug(patches []Patch) string {
+func patchDebug(patches []patch) string {
 	var b strings.Builder
 	for i, p := range patches {
-		fmt.Fprintf(&b, "\n  [%d] op=%s path=%v", i, p.op, p.path)
-		if p.name != "" {
-			fmt.Fprintf(&b, " name=%s", p.name)
+		fmt.Fprintf(&b, "\n  [%d] op=%s path=%v", i, p.Op, p.Path)
+		if p.Name != "" {
+			fmt.Fprintf(&b, " name=%s", p.Name)
 		}
-		if p.value != "" {
-			fmt.Fprintf(&b, " value=%q", p.value)
+		if p.Value != "" {
+			fmt.Fprintf(&b, " value=%q", p.Value)
 		}
-		if p.key != "" {
-			fmt.Fprintf(&b, " key=%s", p.key)
+		if p.Key != "" {
+			fmt.Fprintf(&b, " key=%s", p.Key)
 		}
-		if p.before != "" {
-			fmt.Fprintf(&b, " before=%s", p.before)
+		if p.Before != "" {
+			fmt.Fprintf(&b, " before=%s", p.Before)
 		}
-		if (p.op == "insert_child" || p.op == "remove_child") && !p.keyed {
-			fmt.Fprintf(&b, " idx=%d", p.idx)
+		if p.Idx != nil {
+			fmt.Fprintf(&b, " idx=%d", *p.Idx)
 		}
-		if p.op == "move_child" && !p.keyed {
-			fmt.Fprintf(&b, " from=%d to=%d", p.from, p.to)
+		if p.From != nil {
+			fmt.Fprintf(&b, " from=%d to=%d", *p.From, *p.To)
 		}
-		if p.html != "" {
-			fmt.Fprintf(&b, " html=%q", p.html)
+		if p.HTML != "" {
+			fmt.Fprintf(&b, " html=%q", p.HTML)
 		}
 	}
 	return b.String()
