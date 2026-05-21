@@ -36,9 +36,18 @@ func writeNode(n Node, b *strings.Builder) {
 	}
 }
 
+// writeAttr writes a single attribute. An empty value renders as
+// name-only (disabled instead of disabled=""), matching the
+// idiomatic HTML form for boolean attributes. The two forms are
+// indistinguishable in the DOM — the HTML5 parser maps both to an
+// attribute node with empty value — so this is purely a serialization
+// choice.
 func writeAttr(a Attr, b *strings.Builder) {
 	b.WriteByte(' ')
 	b.WriteString(a.Name)
+	if a.Value == "" {
+		return
+	}
 	b.WriteString(`="`)
 	writeEscapedAttr(a.Value, b)
 	b.WriteByte('"')
