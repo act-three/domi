@@ -51,7 +51,11 @@ export function applyPatch(root, p) {
       return root;
     }
     case 'set_attr': {
-      walk(root, p.path).setAttribute(p.name, p.value);
+      // Coerce undefined → "" so name-only / empty-valued attrs land as
+      // present-with-empty-string. The wire omits `value` when it's the
+      // empty string (omitempty on the Go side), so a missing field here
+      // means "set this attribute to empty", not "set it to undefined".
+      walk(root, p.path).setAttribute(p.name, p.value ?? '');
       return root;
     }
     case 'remove_attr': {
