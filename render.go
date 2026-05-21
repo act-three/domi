@@ -40,7 +40,7 @@ func writeNode(n node, b *strings.Builder) {
 	}
 }
 
-func writeAttr(a Attr, b *strings.Builder) {
+func writeAttr(a attr, b *strings.Builder) {
 	b.WriteByte(' ')
 	b.WriteString(a.name)
 	b.WriteString(`="`)
