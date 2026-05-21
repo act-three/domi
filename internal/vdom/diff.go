@@ -1,100 +1,79 @@
 package vdom
 
-import "encoding/json/v2"
+import (
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+)
 
-// Patch is a single mutation op the client applies to its DOM. One
-// struct, op-tagged at marshal time — Go's encoding of a tagged union.
+// Patch is a single mutation op the client applies to its DOM. The
+// outer type is opaque: the inner patch is unreachable from outside
+// this package, so a Patch can be passed to json.Marshal and nothing
+// else.
 //
 // `replace` and `insert_child` carry a pre-rendered HTML fragment
 // rather than a serialized Node — the client parses it via a
 // <template> element.
 //
-// insert_child / remove_child / move_child come in two flavours, chosen
-// by which diff function produced them:
+// insert_child / remove_child / move_child come in two flavours,
+// chosen by which diff function produced them:
 //
-//   - Positional (from diffPositional, for unkeyed children): use idx /
-//     from / to to address siblings by position.
-//   - Identity-based (from diffKeyed, for keyed children): use key /
-//     before to address siblings by their data-domi-key. The client
+//   - Positional (from diffPositional, for unkeyed children): use
+//     Idx / From / To to address siblings by position. The pointer
+//     types let the encoder distinguish "no index" (omitted) from
+//     "index 0" (emitted as 0).
+//   - Identity-based (from diffKeyed, for keyed children): use Key /
+//     Before to address siblings by their data-domi-key. The client
 //     keeps a per-parent Map<key, ChildNode> to resolve them in O(1).
-//     An empty `before` means "insert/move to the end".
-type Patch struct {
-	op   string
-	path []int
+//     An empty Before means "insert/move to the end".
+type Patch struct{ p patch }
 
-	// Op-specific fields. Only the relevant ones are emitted.
-	value  string
-	name   string
-	html   string
-	idx    int
-	from   int
-	to     int
-	key    string
-	before string
-	// keyed is set on insert_child / remove_child / move_child that
-	// came from diffKeyed; it selects the identity-based wire shape.
-	keyed bool
+// MarshalJSONTo marshals p to JSON in the vdom wire format.
+func (p Patch) MarshalJSONTo(enc *jsontext.Encoder) error {
+	return json.MarshalEncode(enc, p.p)
 }
 
-func (p Patch) MarshalJSON() ([]byte, error) {
-	out := map[string]any{"op": p.op, "path": p.path}
-	switch p.op {
-	case "set_text":
-		out["value"] = p.value
-	case "set_attr":
-		out["name"] = p.name
-		out["value"] = p.value
-	case "remove_attr":
-		out["name"] = p.name
-	case "replace":
-		out["html"] = p.html
-	case "insert_child":
-		out["html"] = p.html
-		if p.keyed {
-			out["key"] = p.key
-			if p.before != "" {
-				out["before"] = p.before
-			}
-		} else {
-			out["idx"] = p.idx
-		}
-	case "remove_child":
-		if p.keyed {
-			out["key"] = p.key
-		} else {
-			out["idx"] = p.idx
-		}
-	case "move_child":
-		if p.keyed {
-			out["key"] = p.key
-			if p.before != "" {
-				out["before"] = p.before
-			}
-		} else {
-			out["from"] = p.from
-			out["to"] = p.to
-		}
-	}
-	return json.Marshal(out)
+type patch struct {
+	Op     string `json:"op"`
+	Path   []int  `json:"path"`
+	Value  string `json:"value,omitempty"`
+	Name   string `json:"name,omitempty"`
+	HTML   string `json:"html,omitempty"`
+	Idx    *int   `json:"idx,omitempty"`
+	From   *int   `json:"from,omitempty"`
+	To     *int   `json:"to,omitempty"`
+	Key    string `json:"key,omitempty"`
+	Before string `json:"before,omitempty"`
 }
 
 // Diff produces the minimal patch list that transforms old into next.
 func Diff(old, next Node) []Patch {
-	var out []Patch
+	patches := diff(old, next)
+	out := make([]Patch, len(patches))
+	for i, p := range patches {
+		out[i] = Patch{p: p}
+	}
+	return out
+}
+
+// diff is the internal entrypoint that returns the unwrapped patch
+// slice. Tests in this package use it directly so they can read patch
+// fields without going through the Patch wrapper.
+func diff(old, next Node) []patch {
+	var out []patch
 	diffNode(old, next, []int{}, &out)
 	return out
 }
 
-func diffNode(old, next Node, path []int, out *[]Patch) {
+func diffNode(old, next Node, path []int, out *[]patch) {
 	switch o := old.(type) {
 	case Text:
 		n, isText := next.(Text)
 		if !isText {
-			*out = append(*out, Patch{op: "replace", path: clonePath(path), html: Render(next)})
+			*out = append(*out, patch{Op: "replace", Path: clonePath(path), HTML: Render(next)})
 			return
 		}
 		if o.Value != n.Value {
-			*out = append(*out, Patch{op: "set_text", path: clonePath(path), value: n.Value})
+			*out = append(*out, patch{Op: "set_text", Path: clonePath(path), Value: n.Value})
 		}
 	case Element:
 		// Replace on tag mismatch, or on keyed-vs-positional mismatch.
@@ -104,7 +83,7 @@ func diffNode(old, next Node, path []int, out *[]Patch) {
 		// is simpler than reconstructing the per-parent Map<key, child>.
 		n, isElement := next.(Element)
 		if !isElement || o.tag != n.tag || (o.keys == nil) != (n.keys == nil) {
-			*out = append(*out, Patch{op: "replace", path: clonePath(path), html: Render(next)})
+			*out = append(*out, patch{Op: "replace", Path: clonePath(path), HTML: Render(next)})
 			return
 		}
 		diffAttrs(o.attrs, n.attrs, path, out)
@@ -116,7 +95,7 @@ func diffNode(old, next Node, path []int, out *[]Patch) {
 	}
 }
 
-func diffAttrs(old, next []Attr, path []int, out *[]Patch) {
+func diffAttrs(old, next []Attr, path []int, out *[]patch) {
 	o := combinedAttrs(old)
 	n := combinedAttrs(next)
 	oldByName := make(map[string]string, len(o))
@@ -130,18 +109,18 @@ func diffAttrs(old, next []Attr, path []int, out *[]Patch) {
 	// Emit sets in next-occurrence order so patches are deterministic.
 	for _, a := range n {
 		if existing, ok := oldByName[a.Name]; !ok || existing != a.Value {
-			*out = append(*out, Patch{op: "set_attr", path: clonePath(path), name: a.Name, value: a.Value})
+			*out = append(*out, patch{Op: "set_attr", Path: clonePath(path), Name: a.Name, Value: a.Value})
 		}
 	}
 	// Emit removes in old-occurrence order.
 	for _, a := range o {
 		if _, ok := nextByName[a.Name]; !ok {
-			*out = append(*out, Patch{op: "remove_attr", path: clonePath(path), name: a.Name})
+			*out = append(*out, patch{Op: "remove_attr", Path: clonePath(path), Name: a.Name})
 		}
 	}
 }
 
-func diffChildren(old, next []Node, path []int, out *[]Patch) {
+func diffChildren(old, next []Node, path []int, out *[]patch) {
 	// Coalesce adjacent text siblings before diffing. The HTML parser
 	// merges adjacent text into one DOM Text node on round-trip, so
 	// position-indexed patches must address children using the merged
@@ -189,16 +168,16 @@ func coalesceText(children []Node) []Node {
 	return out
 }
 
-func diffPositional(old, next []Node, path []int, out *[]Patch) {
+func diffPositional(old, next []Node, path []int, out *[]patch) {
 	for i := len(old) - 1; i >= len(next); i-- {
-		*out = append(*out, Patch{op: "remove_child", path: clonePath(path), idx: i})
+		*out = append(*out, patch{Op: "remove_child", Path: clonePath(path), Idx: &i})
 	}
 	common := min(len(old), len(next))
 	for i := range common {
 		diffNode(old[i], next[i], append(path, i), out)
 	}
 	for i := len(old); i < len(next); i++ {
-		*out = append(*out, Patch{op: "insert_child", path: clonePath(path), idx: i, html: Render(next[i])})
+		*out = append(*out, patch{Op: "insert_child", Path: clonePath(path), Idx: &i, HTML: Render(next[i])})
 	}
 }
 
@@ -216,7 +195,7 @@ func diffPositional(old, next []Node, path []int, out *[]Patch) {
 // Content diffs for matched pairs are deferred until after all
 // structural patches are emitted, so paths (which use new-position
 // childNodes traversal) point at the right elements when they apply.
-func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, out *[]Patch) {
+func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, out *[]patch) {
 	oldStart, newStart := 0, 0
 	oldEnd, newEnd := len(oldKids)-1, len(newKids)-1
 
@@ -253,7 +232,7 @@ func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, o
 			// Rule 3: old head moved to new tail. Move it to land just
 			// before whatever sits past the unhandled tail.
 			k := oldKeys[oldStart]
-			*out = append(*out, Patch{op: "move_child", path: clonePath(path), keyed: true, key: k, before: beforeKey()})
+			*out = append(*out, patch{Op: "move_child", Path: clonePath(path), Key: k, Before: beforeKey()})
 			deferred = append(deferred, deferredMatch{oldKids[oldStart], newKids[newEnd], newEnd})
 			oldStart++
 			newEnd--
@@ -263,7 +242,7 @@ func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, o
 			// the key-based equivalent of Snabbdom's
 			// insertBefore(oldEnd.elm, oldStart.elm).
 			k := oldKeys[oldEnd]
-			*out = append(*out, Patch{op: "move_child", path: clonePath(path), keyed: true, key: k, before: oldKeys[oldStart]})
+			*out = append(*out, patch{Op: "move_child", Path: clonePath(path), Key: k, Before: oldKeys[oldStart]})
 			deferred = append(deferred, deferredMatch{oldKids[oldEnd], newKids[newStart], newStart})
 			oldEnd--
 			newStart++
@@ -291,7 +270,7 @@ middle:
 			if i+1 < len(newKeys) {
 				before = newKeys[i+1]
 			}
-			*out = append(*out, Patch{op: "insert_child", path: clonePath(path), keyed: true, key: newKeys[i], html: Render(newKids[i]), before: before})
+			*out = append(*out, patch{Op: "insert_child", Path: clonePath(path), Key: newKeys[i], HTML: Render(newKids[i]), Before: before})
 		}
 		emitDeferred()
 		return
@@ -299,7 +278,7 @@ middle:
 	if newStart > newEnd {
 		// Only removes left.
 		for i := oldStart; i <= oldEnd; i++ {
-			*out = append(*out, Patch{op: "remove_child", path: clonePath(path), keyed: true, key: oldKeys[i]})
+			*out = append(*out, patch{Op: "remove_child", Path: clonePath(path), Key: oldKeys[i]})
 		}
 		emitDeferred()
 		return
@@ -340,7 +319,7 @@ middle:
 	// identity-based removes don't depend on sibling positions).
 	for i := oldStart; i <= oldEnd; i++ {
 		if _, ok := keyToNewIdx[oldKeys[i]]; !ok {
-			*out = append(*out, Patch{op: "remove_child", path: clonePath(path), keyed: true, key: oldKeys[i]})
+			*out = append(*out, patch{Op: "remove_child", Path: clonePath(path), Key: oldKeys[i]})
 		}
 	}
 
@@ -361,7 +340,7 @@ middle:
 		}
 
 		if newToOld[i] == 0 {
-			*out = append(*out, Patch{op: "insert_child", path: clonePath(path), keyed: true, key: newKeys[newIdx], html: Render(newKids[newIdx]), before: before})
+			*out = append(*out, patch{Op: "insert_child", Path: clonePath(path), Key: newKeys[newIdx], HTML: Render(newKids[newIdx]), Before: before})
 			continue
 		}
 		if !moved {
@@ -371,7 +350,7 @@ middle:
 			lisIdx--
 			continue
 		}
-		*out = append(*out, Patch{op: "move_child", path: clonePath(path), keyed: true, key: newKeys[newIdx], before: before})
+		*out = append(*out, patch{Op: "move_child", Path: clonePath(path), Key: newKeys[newIdx], Before: before})
 	}
 
 	emitDeferred()
