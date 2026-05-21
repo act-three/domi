@@ -46,9 +46,9 @@ type patch struct {
 	Before string `json:"before,omitempty"`
 }
 
-// Diff produces the minimal patch list that transforms old into next.
-func Diff(old, next Node) []Patch {
-	patches := diff(old, next)
+// Diff produces the minimal patch list that transforms old into new.
+func Diff(old, new Node) []Patch {
+	patches := diff(old, new)
 	out := make([]Patch, len(patches))
 	for i, p := range patches {
 		out[i] = Patch{p: p}
@@ -59,16 +59,16 @@ func Diff(old, next Node) []Patch {
 // diff is the internal entrypoint that returns the unwrapped patch
 // slice. Tests in this package use it directly so they can read patch
 // fields without going through the Patch wrapper.
-func diff(old, next Node) []patch {
-	return diffNode(old, next, nil, nil)
+func diff(old, new Node) []patch {
+	return diffNode(old, new, nil, nil)
 }
 
-func diffNode(old, next Node, path []int, out []patch) []patch {
+func diffNode(old, new Node, path []int, out []patch) []patch {
 	switch o := old.(type) {
 	case Text:
-		n, isText := next.(Text)
+		n, isText := new.(Text)
 		if !isText {
-			return append(out, patch{Op: "replace", Path: slices.Clip(path), HTML: Render(next)})
+			return append(out, patch{Op: "replace", Path: slices.Clip(path), HTML: Render(new)})
 		}
 		if o != n {
 			out = append(out, patch{Op: "set_text", Path: slices.Clip(path), Value: string(n)})
@@ -79,9 +79,9 @@ func diffNode(old, next Node, path []int, out []patch) []patch {
 		// children would lose their key-based identities (or gain ones
 		// the client doesn't have indexes for), and a wholesale rebuild
 		// is simpler than reconstructing the per-parent Map<key, child>.
-		n, isElement := next.(Element)
+		n, isElement := new.(Element)
 		if !isElement || o.tag != n.tag || (o.keys == nil) != (n.keys == nil) {
-			return append(out, patch{Op: "replace", Path: slices.Clip(path), HTML: Render(next)})
+			return append(out, patch{Op: "replace", Path: slices.Clip(path), HTML: Render(new)})
 		}
 		out = diffAttrs(o.attrs, n.attrs, path, out)
 		if o.keys != nil {
@@ -93,9 +93,9 @@ func diffNode(old, next Node, path []int, out []patch) []patch {
 	return out
 }
 
-func diffAttrs(old, next []Attr, path []int, out []patch) []patch {
+func diffAttrs(old, new []Attr, path []int, out []patch) []patch {
 	o := combinedAttrs(old)
-	n := combinedAttrs(next)
+	n := combinedAttrs(new)
 	oldByName := make(map[string]string, len(o))
 	for _, a := range o {
 		oldByName[a.Name] = a.Value
@@ -104,7 +104,7 @@ func diffAttrs(old, next []Attr, path []int, out []patch) []patch {
 	for _, a := range n {
 		nextByName[a.Name] = a.Value
 	}
-	// Emit sets in next-occurrence order so patches are deterministic.
+	// Emit sets in new-occurrence order so patches are deterministic.
 	for _, a := range n {
 		if existing, ok := oldByName[a.Name]; !ok || existing != a.Value {
 			out = append(out, patch{Op: "set_attr", Path: slices.Clip(path), Name: a.Name, Value: a.Value})
@@ -119,15 +119,15 @@ func diffAttrs(old, next []Attr, path []int, out []patch) []patch {
 	return out
 }
 
-func diffChildren(old, next []Node, path []int, out []patch) []patch {
+func diffChildren(old, new []Node, path []int, out []patch) []patch {
 	// Coalesce adjacent text siblings before diffing. The HTML parser
 	// merges adjacent text into one DOM Text node on round-trip, so
 	// position-indexed patches must address children using the merged
 	// count — otherwise insert_child/remove_child idx would walk off
 	// the end of the parent's childNodes on the client.
 	old = coalesceText(old)
-	next = coalesceText(next)
-	return diffPositional(old, next, path, out)
+	new = coalesceText(new)
+	return diffPositional(old, new, path, out)
 }
 
 // coalesceText concatenates adjacent text-node children into a single
@@ -167,16 +167,16 @@ func coalesceText(children []Node) []Node {
 	return out
 }
 
-func diffPositional(old, next []Node, path []int, out []patch) []patch {
-	for i := len(old) - 1; i >= len(next); i-- {
+func diffPositional(old, new []Node, path []int, out []patch) []patch {
+	for i := len(old) - 1; i >= len(new); i-- {
 		out = append(out, patch{Op: "remove_child", Path: slices.Clip(path), Idx: &i})
 	}
-	common := min(len(old), len(next))
+	common := min(len(old), len(new))
 	for i := range common {
-		out = diffNode(old[i], next[i], append(path, i), out)
+		out = diffNode(old[i], new[i], append(path, i), out)
 	}
-	for i := len(old); i < len(next); i++ {
-		out = append(out, patch{Op: "insert_child", Path: slices.Clip(path), Idx: &i, HTML: Render(next[i])})
+	for i := len(old); i < len(new); i++ {
+		out = append(out, patch{Op: "insert_child", Path: slices.Clip(path), Idx: &i, HTML: Render(new[i])})
 	}
 	return out
 }
@@ -205,7 +205,7 @@ func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, o
 	}
 	var deferred []deferredMatch
 
-	// beforeKey returns the key of next[newEnd+1] (the start of the tail
+	// beforeKey returns the key of new[newEnd+1] (the start of the tail
 	// or whatever sits just past the unhandled new region); "" means the
 	// element should land at the end.
 	beforeKey := func() string {
@@ -329,7 +329,7 @@ middle:
 	lisIdx := len(lis) - 1
 
 	// Right-to-left walk: for each new position, either insert, move
-	// before its anchor (next[newIdx+1]), or leave alone if LIS-stable.
+	// before its anchor (new[newIdx+1]), or leave alone if LIS-stable.
 	for i := toPatch - 1; i >= 0; i-- {
 		newIdx := newStart + i
 
