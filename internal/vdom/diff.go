@@ -59,21 +59,18 @@ func Diff(old, next Node) []Patch {
 // slice. Tests in this package use it directly so they can read patch
 // fields without going through the Patch wrapper.
 func diff(old, next Node) []patch {
-	var out []patch
-	diffNode(old, next, []int{}, &out)
-	return out
+	return diffNode(old, next, nil, nil)
 }
 
-func diffNode(old, next Node, path []int, out *[]patch) {
+func diffNode(old, next Node, path []int, out []patch) []patch {
 	switch o := old.(type) {
 	case Text:
 		n, isText := next.(Text)
 		if !isText {
-			*out = append(*out, patch{Op: "replace", Path: clonePath(path), HTML: Render(next)})
-			return
+			return append(out, patch{Op: "replace", Path: clonePath(path), HTML: Render(next)})
 		}
 		if o.Value != n.Value {
-			*out = append(*out, patch{Op: "set_text", Path: clonePath(path), Value: n.Value})
+			out = append(out, patch{Op: "set_text", Path: clonePath(path), Value: n.Value})
 		}
 	case Element:
 		// Replace on tag mismatch, or on keyed-vs-positional mismatch.
@@ -83,19 +80,19 @@ func diffNode(old, next Node, path []int, out *[]patch) {
 		// is simpler than reconstructing the per-parent Map<key, child>.
 		n, isElement := next.(Element)
 		if !isElement || o.tag != n.tag || (o.keys == nil) != (n.keys == nil) {
-			*out = append(*out, patch{Op: "replace", Path: clonePath(path), HTML: Render(next)})
-			return
+			return append(out, patch{Op: "replace", Path: clonePath(path), HTML: Render(next)})
 		}
-		diffAttrs(o.attrs, n.attrs, path, out)
+		out = diffAttrs(o.attrs, n.attrs, path, out)
 		if o.keys != nil {
-			diffKeyed(o.children, n.children, o.keys, n.keys, path, out)
+			out = diffKeyed(o.children, n.children, o.keys, n.keys, path, out)
 		} else {
-			diffChildren(o.children, n.children, path, out)
+			out = diffChildren(o.children, n.children, path, out)
 		}
 	}
+	return out
 }
 
-func diffAttrs(old, next []Attr, path []int, out *[]patch) {
+func diffAttrs(old, next []Attr, path []int, out []patch) []patch {
 	o := combinedAttrs(old)
 	n := combinedAttrs(next)
 	oldByName := make(map[string]string, len(o))
@@ -109,18 +106,19 @@ func diffAttrs(old, next []Attr, path []int, out *[]patch) {
 	// Emit sets in next-occurrence order so patches are deterministic.
 	for _, a := range n {
 		if existing, ok := oldByName[a.Name]; !ok || existing != a.Value {
-			*out = append(*out, patch{Op: "set_attr", Path: clonePath(path), Name: a.Name, Value: a.Value})
+			out = append(out, patch{Op: "set_attr", Path: clonePath(path), Name: a.Name, Value: a.Value})
 		}
 	}
 	// Emit removes in old-occurrence order.
 	for _, a := range o {
 		if _, ok := nextByName[a.Name]; !ok {
-			*out = append(*out, patch{Op: "remove_attr", Path: clonePath(path), Name: a.Name})
+			out = append(out, patch{Op: "remove_attr", Path: clonePath(path), Name: a.Name})
 		}
 	}
+	return out
 }
 
-func diffChildren(old, next []Node, path []int, out *[]patch) {
+func diffChildren(old, next []Node, path []int, out []patch) []patch {
 	// Coalesce adjacent text siblings before diffing. The HTML parser
 	// merges adjacent text into one DOM Text node on round-trip, so
 	// position-indexed patches must address children using the merged
@@ -128,7 +126,7 @@ func diffChildren(old, next []Node, path []int, out *[]patch) {
 	// the end of the parent's childNodes on the client.
 	old = coalesceText(old)
 	next = coalesceText(next)
-	diffPositional(old, next, path, out)
+	return diffPositional(old, next, path, out)
 }
 
 // coalesceText concatenates adjacent text-node children into a single
@@ -168,17 +166,18 @@ func coalesceText(children []Node) []Node {
 	return out
 }
 
-func diffPositional(old, next []Node, path []int, out *[]patch) {
+func diffPositional(old, next []Node, path []int, out []patch) []patch {
 	for i := len(old) - 1; i >= len(next); i-- {
-		*out = append(*out, patch{Op: "remove_child", Path: clonePath(path), Idx: &i})
+		out = append(out, patch{Op: "remove_child", Path: clonePath(path), Idx: &i})
 	}
 	common := min(len(old), len(next))
 	for i := range common {
-		diffNode(old[i], next[i], append(path, i), out)
+		out = diffNode(old[i], next[i], append(path, i), out)
 	}
 	for i := len(old); i < len(next); i++ {
-		*out = append(*out, patch{Op: "insert_child", Path: clonePath(path), Idx: &i, HTML: Render(next[i])})
+		out = append(out, patch{Op: "insert_child", Path: clonePath(path), Idx: &i, HTML: Render(next[i])})
 	}
+	return out
 }
 
 // diffKeyed reconciles two keyed-children regions, given parallel slices
@@ -195,7 +194,7 @@ func diffPositional(old, next []Node, path []int, out *[]patch) {
 // Content diffs for matched pairs are deferred until after all
 // structural patches are emitted, so paths (which use new-position
 // childNodes traversal) point at the right elements when they apply.
-func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, out *[]patch) {
+func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, out []patch) []patch {
 	oldStart, newStart := 0, 0
 	oldEnd, newEnd := len(oldKids)-1, len(newKids)-1
 
@@ -232,7 +231,7 @@ func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, o
 			// Rule 3: old head moved to new tail. Move it to land just
 			// before whatever sits past the unhandled tail.
 			k := oldKeys[oldStart]
-			*out = append(*out, patch{Op: "move_child", Path: clonePath(path), Key: k, Before: beforeKey()})
+			out = append(out, patch{Op: "move_child", Path: clonePath(path), Key: k, Before: beforeKey()})
 			deferred = append(deferred, deferredMatch{oldKids[oldStart], newKids[newEnd], newEnd})
 			oldStart++
 			newEnd--
@@ -242,7 +241,7 @@ func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, o
 			// the key-based equivalent of Snabbdom's
 			// insertBefore(oldEnd.elm, oldStart.elm).
 			k := oldKeys[oldEnd]
-			*out = append(*out, patch{Op: "move_child", Path: clonePath(path), Key: k, Before: oldKeys[oldStart]})
+			out = append(out, patch{Op: "move_child", Path: clonePath(path), Key: k, Before: oldKeys[oldStart]})
 			deferred = append(deferred, deferredMatch{oldKids[oldEnd], newKids[newStart], newStart})
 			oldEnd--
 			newStart++
@@ -254,10 +253,11 @@ func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, o
 	}
 
 middle:
-	emitDeferred := func() {
+	emitDeferred := func(out []patch) []patch {
 		for _, d := range deferred {
-			diffNode(d.oldNode, d.newNode, append(path, d.newIdx), out)
+			out = diffNode(d.oldNode, d.newNode, append(path, d.newIdx), out)
 		}
+		return out
 	}
 
 	if oldStart > oldEnd {
@@ -270,18 +270,16 @@ middle:
 			if i+1 < len(newKeys) {
 				before = newKeys[i+1]
 			}
-			*out = append(*out, patch{Op: "insert_child", Path: clonePath(path), Key: newKeys[i], HTML: Render(newKids[i]), Before: before})
+			out = append(out, patch{Op: "insert_child", Path: clonePath(path), Key: newKeys[i], HTML: Render(newKids[i]), Before: before})
 		}
-		emitDeferred()
-		return
+		return emitDeferred(out)
 	}
 	if newStart > newEnd {
 		// Only removes left.
 		for i := oldStart; i <= oldEnd; i++ {
-			*out = append(*out, patch{Op: "remove_child", Path: clonePath(path), Key: oldKeys[i]})
+			out = append(out, patch{Op: "remove_child", Path: clonePath(path), Key: oldKeys[i]})
 		}
-		emitDeferred()
-		return
+		return emitDeferred(out)
 	}
 
 	// Unknown middle: LIS.
@@ -319,7 +317,7 @@ middle:
 	// identity-based removes don't depend on sibling positions).
 	for i := oldStart; i <= oldEnd; i++ {
 		if _, ok := keyToNewIdx[oldKeys[i]]; !ok {
-			*out = append(*out, patch{Op: "remove_child", Path: clonePath(path), Key: oldKeys[i]})
+			out = append(out, patch{Op: "remove_child", Path: clonePath(path), Key: oldKeys[i]})
 		}
 	}
 
@@ -340,7 +338,7 @@ middle:
 		}
 
 		if newToOld[i] == 0 {
-			*out = append(*out, patch{Op: "insert_child", Path: clonePath(path), Key: newKeys[newIdx], HTML: Render(newKids[newIdx]), Before: before})
+			out = append(out, patch{Op: "insert_child", Path: clonePath(path), Key: newKeys[newIdx], HTML: Render(newKids[newIdx]), Before: before})
 			continue
 		}
 		if !moved {
@@ -350,10 +348,10 @@ middle:
 			lisIdx--
 			continue
 		}
-		*out = append(*out, patch{Op: "move_child", Path: clonePath(path), Key: newKeys[newIdx], Before: before})
+		out = append(out, patch{Op: "move_child", Path: clonePath(path), Key: newKeys[newIdx], Before: before})
 	}
 
-	emitDeferred()
+	return emitDeferred(out)
 }
 
 func clonePath(p []int) []int {
