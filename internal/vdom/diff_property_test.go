@@ -116,7 +116,7 @@ func defaultConfig(rng *rand.Rand) *genConfig {
 		// the generator emit trees the parser rearranges.
 		tags:        []string{"div", "span", "section", "article", "header", "footer"},
 		attrNames:   []string{"class", "id", "data-x", "title"},
-		attrValues:  []string{"x", "y", "z"},
+		attrValues:  []string{"x", "y", "z", ""},
 		texts:       []string{"hi", "bye", "x", "y"},
 		keyedChance: 50,
 		textChance:  30,
@@ -233,6 +233,30 @@ func TestDiffApplyProperty(t *testing.T) {
 				len(patches), patchDebug(patches),
 			)
 		}
+	}
+}
+
+// TestSetAttrEmptyValueAppliesAsEmptyString pins the JS-side coercion
+// for set_attr patches whose value is the empty string. The Go wire
+// format omits the `value` field via omitempty when it's "", so without
+// nullish-coalescing on the JS side the applier passed `undefined` to
+// setAttribute and the DOM ended up with attr="undefined". The property
+// test exercises this randomly now that genAttrs emits ""; this fixture
+// pins the specific shape down so it can't silently regress.
+func TestSetAttrEmptyValueAppliesAsEmptyString(t *testing.T) {
+	a := startBunApplier(t)
+
+	old := NewElement("div", nil, nil, nil)
+	new := NewElement("div", []Attr{{Name: "class", Value: ""}}, nil, nil)
+
+	gotHTML, err := a.apply(Render(old), diff(old, new))
+	if err != nil {
+		t.Fatalf("bun apply: %v", err)
+	}
+	want := canonicalize(t, Render(new))
+	got := canonicalize(t, gotHTML)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %s, want %s (raw html: %s)", jsonStr(got), jsonStr(want), gotHTML)
 	}
 }
 
