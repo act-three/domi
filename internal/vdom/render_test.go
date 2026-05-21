@@ -10,7 +10,7 @@ import "testing"
 func TestRenderEmptyAttrEmitsNameOnly(t *testing.T) {
 	in := NewElement("input", []Attr{{Name: "disabled", Value: ""}}, nil, nil)
 	got := Render(in)
-	want := `<input disabled/>`
+	want := `<input disabled>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -25,7 +25,7 @@ func TestRenderMixedAttrs(t *testing.T) {
 		{Name: "name", Value: "agree"},
 	}, nil, nil)
 	got := Render(in)
-	want := `<input type="checkbox" checked name="agree"/>`
+	want := `<input type="checkbox" checked name="agree">`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
