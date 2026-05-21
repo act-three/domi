@@ -53,9 +53,7 @@ func (e Element) WithAttr(a Attr) Element {
 }
 
 // Text is a text node.
-type Text struct {
-	Value string
-}
+type Text string
 
 func (Text) vdomNode() {}
 

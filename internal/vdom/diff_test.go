@@ -11,7 +11,7 @@ func el(tag string, children ...Node) Element {
 }
 
 // tx builds a text node.
-func tx(s string) Text { return Text{Value: s} }
+func tx(s string) Text { return Text(s) }
 
 // at builds an attribute literal.
 func at(name, value string) Attr { return Attr{Name: name, Value: value} }
@@ -24,7 +24,7 @@ func keyedList(keys ...string) Element {
 	for i, k := range keys {
 		children[i] = NewElement("li",
 			[]Attr{{Name: "data-domi-key", Value: k}},
-			[]Node{Text{Value: k}},
+			[]Node{Text(k)},
 			nil)
 	}
 	return NewElement("ul", nil, children, slices.Clone(keys))
