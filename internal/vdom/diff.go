@@ -3,6 +3,7 @@ package vdom
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"slices"
 )
 
 // Patch is a single mutation op the client applies to its DOM. The
@@ -67,10 +68,10 @@ func diffNode(old, next Node, path []int, out []patch) []patch {
 	case Text:
 		n, isText := next.(Text)
 		if !isText {
-			return append(out, patch{Op: "replace", Path: clonePath(path), HTML: Render(next)})
+			return append(out, patch{Op: "replace", Path: slices.Clip(path), HTML: Render(next)})
 		}
 		if o.Value != n.Value {
-			out = append(out, patch{Op: "set_text", Path: clonePath(path), Value: n.Value})
+			out = append(out, patch{Op: "set_text", Path: slices.Clip(path), Value: n.Value})
 		}
 	case Element:
 		// Replace on tag mismatch, or on keyed-vs-positional mismatch.
@@ -80,7 +81,7 @@ func diffNode(old, next Node, path []int, out []patch) []patch {
 		// is simpler than reconstructing the per-parent Map<key, child>.
 		n, isElement := next.(Element)
 		if !isElement || o.tag != n.tag || (o.keys == nil) != (n.keys == nil) {
-			return append(out, patch{Op: "replace", Path: clonePath(path), HTML: Render(next)})
+			return append(out, patch{Op: "replace", Path: slices.Clip(path), HTML: Render(next)})
 		}
 		out = diffAttrs(o.attrs, n.attrs, path, out)
 		if o.keys != nil {
@@ -106,13 +107,13 @@ func diffAttrs(old, next []Attr, path []int, out []patch) []patch {
 	// Emit sets in next-occurrence order so patches are deterministic.
 	for _, a := range n {
 		if existing, ok := oldByName[a.Name]; !ok || existing != a.Value {
-			out = append(out, patch{Op: "set_attr", Path: clonePath(path), Name: a.Name, Value: a.Value})
+			out = append(out, patch{Op: "set_attr", Path: slices.Clip(path), Name: a.Name, Value: a.Value})
 		}
 	}
 	// Emit removes in old-occurrence order.
 	for _, a := range o {
 		if _, ok := nextByName[a.Name]; !ok {
-			out = append(out, patch{Op: "remove_attr", Path: clonePath(path), Name: a.Name})
+			out = append(out, patch{Op: "remove_attr", Path: slices.Clip(path), Name: a.Name})
 		}
 	}
 	return out
@@ -168,14 +169,14 @@ func coalesceText(children []Node) []Node {
 
 func diffPositional(old, next []Node, path []int, out []patch) []patch {
 	for i := len(old) - 1; i >= len(next); i-- {
-		out = append(out, patch{Op: "remove_child", Path: clonePath(path), Idx: &i})
+		out = append(out, patch{Op: "remove_child", Path: slices.Clip(path), Idx: &i})
 	}
 	common := min(len(old), len(next))
 	for i := range common {
 		out = diffNode(old[i], next[i], append(path, i), out)
 	}
 	for i := len(old); i < len(next); i++ {
-		out = append(out, patch{Op: "insert_child", Path: clonePath(path), Idx: &i, HTML: Render(next[i])})
+		out = append(out, patch{Op: "insert_child", Path: slices.Clip(path), Idx: &i, HTML: Render(next[i])})
 	}
 	return out
 }
@@ -231,7 +232,7 @@ func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, o
 			// Rule 3: old head moved to new tail. Move it to land just
 			// before whatever sits past the unhandled tail.
 			k := oldKeys[oldStart]
-			out = append(out, patch{Op: "move_child", Path: clonePath(path), Key: k, Before: beforeKey()})
+			out = append(out, patch{Op: "move_child", Path: slices.Clip(path), Key: k, Before: beforeKey()})
 			deferred = append(deferred, deferredMatch{oldKids[oldStart], newKids[newEnd], newEnd})
 			oldStart++
 			newEnd--
@@ -241,7 +242,7 @@ func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, o
 			// the key-based equivalent of Snabbdom's
 			// insertBefore(oldEnd.elm, oldStart.elm).
 			k := oldKeys[oldEnd]
-			out = append(out, patch{Op: "move_child", Path: clonePath(path), Key: k, Before: oldKeys[oldStart]})
+			out = append(out, patch{Op: "move_child", Path: slices.Clip(path), Key: k, Before: oldKeys[oldStart]})
 			deferred = append(deferred, deferredMatch{oldKids[oldEnd], newKids[newStart], newStart})
 			oldEnd--
 			newStart++
@@ -270,14 +271,14 @@ middle:
 			if i+1 < len(newKeys) {
 				before = newKeys[i+1]
 			}
-			out = append(out, patch{Op: "insert_child", Path: clonePath(path), Key: newKeys[i], HTML: Render(newKids[i]), Before: before})
+			out = append(out, patch{Op: "insert_child", Path: slices.Clip(path), Key: newKeys[i], HTML: Render(newKids[i]), Before: before})
 		}
 		return emitDeferred(out)
 	}
 	if newStart > newEnd {
 		// Only removes left.
 		for i := oldStart; i <= oldEnd; i++ {
-			out = append(out, patch{Op: "remove_child", Path: clonePath(path), Key: oldKeys[i]})
+			out = append(out, patch{Op: "remove_child", Path: slices.Clip(path), Key: oldKeys[i]})
 		}
 		return emitDeferred(out)
 	}
@@ -317,7 +318,7 @@ middle:
 	// identity-based removes don't depend on sibling positions).
 	for i := oldStart; i <= oldEnd; i++ {
 		if _, ok := keyToNewIdx[oldKeys[i]]; !ok {
-			out = append(out, patch{Op: "remove_child", Path: clonePath(path), Key: oldKeys[i]})
+			out = append(out, patch{Op: "remove_child", Path: slices.Clip(path), Key: oldKeys[i]})
 		}
 	}
 
@@ -338,7 +339,7 @@ middle:
 		}
 
 		if newToOld[i] == 0 {
-			out = append(out, patch{Op: "insert_child", Path: clonePath(path), Key: newKeys[newIdx], HTML: Render(newKids[newIdx]), Before: before})
+			out = append(out, patch{Op: "insert_child", Path: slices.Clip(path), Key: newKeys[newIdx], HTML: Render(newKids[newIdx]), Before: before})
 			continue
 		}
 		if !moved {
@@ -348,16 +349,10 @@ middle:
 			lisIdx--
 			continue
 		}
-		out = append(out, patch{Op: "move_child", Path: clonePath(path), Key: newKeys[newIdx], Before: before})
+		out = append(out, patch{Op: "move_child", Path: slices.Clip(path), Key: newKeys[newIdx], Before: before})
 	}
 
 	return emitDeferred(out)
-}
-
-func clonePath(p []int) []int {
-	out := make([]int, len(p))
-	copy(out, p)
-	return out
 }
 
 // longestIncreasingSubseq returns the indices into arr (in ascending order)
