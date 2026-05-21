@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"ily.dev/domi/internal/vdom"
 )
 
 // counterApp is a minimal App used in lifecycle tests. Each Update bumps n
@@ -20,10 +22,10 @@ func (a *counterApp) Title() string       { return "" }
 func TestSessionLoopExitsOnCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	msgChan := make(chan int, 1)
-	patchChan := make(chan []patch, 1)
+	patchChan := make(chan []vdom.Patch, 1)
 	done := make(chan struct{})
 	go func() {
-		sessionLoop(ctx, &counterApp{}, Tag("div")()().(node), msgChan, patchChan)
+		sessionLoop(ctx, &counterApp{}, lowerOne(Tag("div")()()), msgChan, patchChan)
 		close(done)
 	}()
 	cancel()
@@ -40,11 +42,11 @@ func TestSessionLoopExitsOnCancel(t *testing.T) {
 func TestSessionLoopPatchSendInterruptible(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	msgChan := make(chan int, 1)
-	patchChan := make(chan []patch) // unbuffered, no reader
+	patchChan := make(chan []vdom.Patch) // unbuffered, no reader
 	msgChan <- 1
 	done := make(chan struct{})
 	go func() {
-		sessionLoop(ctx, &counterApp{}, Tag("div")()().(node), msgChan, patchChan)
+		sessionLoop(ctx, &counterApp{}, lowerOne(Tag("div")()()), msgChan, patchChan)
 		close(done)
 	}()
 	// Give the loop time to consume the message and block on the send.

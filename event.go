@@ -108,7 +108,7 @@ func On(event string, msg any) Attr {
 	if err != nil {
 		raw = []byte("null")
 	}
-	return attr{name: "data-msg-" + event, value: registerHandler(raw)}
+	return attr{Name: "data-msg-" + event, Value: registerHandler(raw)}
 }
 
 // zeroEventField returns msg with the field at fieldPath set to its zero

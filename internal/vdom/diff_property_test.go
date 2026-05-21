@@ -1,4 +1,4 @@
-package domi
+package vdom
 
 import (
 	"encoding/json/jsontext"
@@ -18,7 +18,7 @@ import (
 )
 
 // canonNode is the canonical form of an element tree used for diff/apply
-// comparison. Both the Go-side render(next) and the bun-side post-apply
+// comparison. Both the Go-side Render(next) and the bun-side post-apply
 // HTML pass through golang.org/x/net/html.ParseFragment + walkParsed,
 // so the comparison sees only what the HTML5 parser sees — attribute
 // order, void-element slash, whitespace quirks, and adjacent-text
@@ -124,7 +124,7 @@ func defaultConfig(rng *rand.Rand) *genConfig {
 	}
 }
 
-func genElement(cfg *genConfig, depth int) Node {
+func genElement(cfg *genConfig, depth int) Element {
 	tag := cfg.tags[cfg.rng.IntN(len(cfg.tags))]
 	attrs := genAttrs(cfg)
 	n := 0
@@ -132,7 +132,7 @@ func genElement(cfg *genConfig, depth int) Node {
 		n = cfg.rng.IntN(cfg.maxChildren + 1)
 	}
 	if n == 0 {
-		return Tag(tag)(attrs...)()
+		return NewElement(tag, attrs, nil, nil)
 	}
 
 	// Decide whether this is a keyed parent. Keyed children must all be
@@ -141,24 +141,26 @@ func genElement(cfg *genConfig, depth int) Node {
 	if keyed {
 		keys := slices.Clone(cfg.keys)
 		cfg.rng.Shuffle(len(keys), func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
-		return Keyed(tag)(attrs...)(func(yield func(string, Node) bool) {
-			for i := range n {
-				if !yield(keys[i], genElement(cfg, depth+1)) {
-					return
-				}
-			}
-		})
+		keys = keys[:n]
+		children := make([]Node, n)
+		for i := range n {
+			// Mirror what domi.Keyed does at construction: append the
+			// data-domi-key attribute so the rendered HTML carries the
+			// identity the diff/apply round-trip needs.
+			children[i] = genElement(cfg, depth+1).WithAttr(Attr{Name: "data-domi-key", Value: keys[i]})
+		}
+		return NewElement(tag, attrs, children, keys)
 	}
 	children := make([]Node, 0, n)
 	for range n {
 		children = append(children, genNode(cfg, depth+1))
 	}
-	return Tag(tag)(attrs...)(children...)
+	return NewElement(tag, attrs, children, nil)
 }
 
 func genNode(cfg *genConfig, depth int) Node {
 	if depth >= cfg.maxDepth || cfg.rng.IntN(100) < cfg.textChance {
-		return Text(cfg.texts[cfg.rng.IntN(len(cfg.texts))])
+		return Text{Value: cfg.texts[cfg.rng.IntN(len(cfg.texts))]}
 	}
 	return genElement(cfg, depth)
 }
@@ -177,7 +179,7 @@ func genAttrs(cfg *genConfig) []Attr {
 		}
 		used[name] = true
 		value := cfg.attrValues[cfg.rng.IntN(len(cfg.attrValues))]
-		out = append(out, Attribute(name, value))
+		out = append(out, Attr{Name: name, Value: value})
 	}
 	return out
 }
@@ -186,7 +188,7 @@ func genAttrs(cfg *genConfig) []Attr {
 
 // TestDiffApplyProperty: for each (old, next) the production differ
 // emits patches; the production JS applier (running in jsdom under
-// bun) applies them to render(old). Both render(next) and the bun-
+// bun) applies them to Render(old). Both Render(next) and the bun-
 // emitted result get parsed by golang.org/x/net/html and compared
 // structurally — the parser's view is the ground truth, so any
 // difference in HTML serialization (attr order, void slashes,
@@ -212,21 +214,21 @@ func TestDiffApplyProperty(t *testing.T) {
 
 	const iterations = 2000
 	for i := range iterations {
-		old := lowerOne(genElement(cfg, 0))
-		next := lowerOne(genElement(cfg, 0))
+		old := genElement(cfg, 0)
+		next := genElement(cfg, 0)
 
-		patches := diff(old, next)
-		gotHTML, err := a.apply(render(old), patches)
+		patches := Diff(old, next)
+		gotHTML, err := a.apply(Render(old), patches)
 		if err != nil {
 			t.Fatalf("iter %d (seed=%d): bun apply: %v\nold:  %s\nnext: %s\npatches: %s",
-				i, seed, err, render(old), render(next), patchDebug(patches))
+				i, seed, err, Render(old), Render(next), patchDebug(patches))
 		}
-		want := canonicalize(t, render(next))
+		want := canonicalize(t, Render(next))
 		got := canonicalize(t, gotHTML)
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("iter %d (seed=%d): diff/apply mismatch\nold:  %s\nnext: %s\ngot html: %s\nwant: %s\ngot:  %s\npatches (%d): %s",
 				i, seed,
-				render(old), render(next), gotHTML,
+				Render(old), Render(next), gotHTML,
 				jsonStr(want), jsonStr(got),
 				len(patches), patchDebug(patches),
 			)
@@ -239,7 +241,7 @@ func jsonStr(v any) string {
 	return string(b)
 }
 
-func patchDebug(patches []patch) string {
+func patchDebug(patches []Patch) string {
 	var b strings.Builder
 	for i, p := range patches {
 		fmt.Fprintf(&b, "\n  [%d] op=%s path=%v", i, p.op, p.path)

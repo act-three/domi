@@ -31,8 +31,9 @@ import (
 	"iter"
 	"slices"
 	"strconv"
-	"strings"
 	"sync"
+
+	"ily.dev/domi/internal/vdom"
 )
 
 // Process-wide registry of event-handler messages, keyed by a content
@@ -70,41 +71,28 @@ type Node interface {
 	isNode()
 }
 
-// node is the lowered (canonical) form of a Node — what the renderer
-// and differ actually walk. Public constructors lower their inputs
-// into nodes at construction time, so the interior of an element tree
-// is uniformly element-or-text by type. New public node types compose
-// by lowering to existing nodes, not by adding cases to the walk.
+// node is the lowered form of a Node, satisfied only by element and
+// text. Public constructors lower their inputs to nodes at construction
+// time; the lowered() method then yields the corresponding vdom.Node
+// so the renderer and differ can operate on a tree they own.
 type node interface {
 	Node
-	lowered()
+	lowered() vdom.Node
 }
 
-// element is a fully-realized element node.
-//
-// keys is the discriminator between positional and keyed elements: nil
-// means the element is positional (Tag); non-nil (even empty) means it
-// was built via Keyed and its children are paired with these keys for
-// identity-based reconciliation. When non-nil, keys is the same length
-// as children, and each child is an element (text can't carry a
-// data-domi-key attribute).
-type element struct {
-	tag      string
-	attrs    []attr
-	children []node
-	keys     []string
-}
+// element is the domi-side wrapper around [vdom.Element]: a zero-cost
+// type def that adds isNode and lowered. Construction uses struct
+// literals with vdom.Element's field names; lowering is a free cast.
+type element vdom.Element
 
-func (element) isNode()  {}
-func (element) lowered() {}
+func (element) isNode()              {}
+func (e element) lowered() vdom.Node { return vdom.Element(e) }
 
-// text is a text node.
-type text struct {
-	value string
-}
+// text is the domi-side wrapper around [vdom.Text].
+type text vdom.Text
 
-func (text) isNode()  {}
-func (text) lowered() {}
+func (text) isNode()              {}
+func (t text) lowered() vdom.Node { return vdom.Text(t) }
 
 // Element is the partially-applied builder returned by Tag(name)(attrs).
 // Calling it with children produces a finished element node; an Element
@@ -127,17 +115,17 @@ func (Element) isNode() {}
 // Prebound helpers for common tags live in [ily.dev/domi/html].
 func Tag(name string) func(...Attr) Element {
 	return func(attrs ...Attr) Element {
-		a := slices.Collect(iter.Seq[attr](Group(attrs...).(group)))
+		a := slices.Collect(iter.Seq[vdom.Attr](Group(attrs...).(group)))
 		return func(children ...Node) Node {
-			c := slices.Collect(iter.Seq[node](Fragment(children...).(fragment)))
-			return element{tag: name, attrs: a, children: c}
+			c := slices.Collect(iter.Seq[vdom.Node](Fragment(children...).(fragment)))
+			return element(vdom.NewElement(name, a, c, nil))
 		}
 	}
 }
 
 // Text constructs a text node.
 func Text(s string) Node {
-	return text{value: s}
+	return text{Value: s}
 }
 
 // Keyed returns a curried builder for an element whose children are
@@ -162,10 +150,10 @@ func Text(s string) Node {
 // logical item.
 func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 	return func(attrs ...Attr) func(iter.Seq2[string, Node]) Node {
-		a := slices.Collect(iter.Seq[attr](Group(attrs...).(group)))
+		a := slices.Collect(iter.Seq[vdom.Attr](Group(attrs...).(group)))
 		return func(seq iter.Seq2[string, Node]) Node {
 			var keys []string
-			var children []node
+			var children []vdom.Node
 			for k, n := range seq {
 				if e, ok := n.(Element); ok {
 					n = e()
@@ -174,22 +162,22 @@ func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 				if !ok {
 					panic(fmt.Sprintf("domi: keyed child %q must be an element, got %T", k, n))
 				}
-				v.attrs = appendAttr(v.attrs, attr{name: "data-domi-key", value: k})
+				keyed := vdom.Element(v).WithAttr(vdom.Attr{Name: "data-domi-key", Value: k})
 				keys = append(keys, k)
-				children = append(children, v)
+				children = append(children, keyed)
 			}
-			return element{tag: name, attrs: a, children: children, keys: keys}
+			return element(vdom.NewElement(name, a, children, keys))
 		}
 	}
 }
 
-// fragment is the lowered form of a [Fragment]: a sequence of nodes that
-// splats into a parent's child list. fragment satisfies Node but not
-// node — the parent collects it into its own children slice rather
+// fragment is the lowered form of a [Fragment]: a sequence of vdom.Nodes
+// that splats into a parent's child list. fragment satisfies Node but
+// not node — the parent collects it into its own children slice rather
 // than walking it as an interior node. Nested fragments compose by
 // chaining iter.Seqs, so flattening is lazy and adds no per-level
 // overhead.
-type fragment iter.Seq[node]
+type fragment iter.Seq[vdom.Node]
 
 func (fragment) isNode() {}
 
@@ -201,11 +189,11 @@ func (fragment) isNode() {}
 // element with an identity — and cannot stand at the root of the tree
 // returned by [App.View]. Wrap it in an element first.
 func Fragment(children ...Node) Node {
-	return fragment(func(yield func(node) bool) {
+	return fragment(func(yield func(vdom.Node) bool) {
 		for _, c := range children {
 			switch v := c.(type) {
 			case Element:
-				if !yield(v().(node)) {
+				if !yield(v().(node).lowered()) {
 					return
 				}
 			case fragment:
@@ -215,7 +203,7 @@ func Fragment(children ...Node) Node {
 					}
 				}
 			case node:
-				if !yield(v) {
+				if !yield(v.lowered()) {
 					return
 				}
 			default:
@@ -225,30 +213,19 @@ func Fragment(children ...Node) Node {
 	})
 }
 
-// lowerOne narrows a single Node to its canonical form. Called by
-// the server on each [App.View] result. A Fragment is only valid
+// lowerOne narrows a single Node to its lowered vdom.Node form. Called
+// by the server on each [App.View] result. A Fragment is only valid
 // inside an element; using one as the tree root panics.
-func lowerOne(n Node) node {
+func lowerOne(n Node) vdom.Node {
 	switch v := n.(type) {
 	case Element:
-		return v().(node)
+		return v().(node).lowered()
 	case node:
-		return v
+		return v.lowered()
 	case fragment:
 		panic("domi: Fragment cannot stand alone; wrap it in an element")
 	}
 	panic(fmt.Sprintf("domi: cannot lower %T", n))
-}
-
-// appendAttr returns attrs with a single additional attribute. It always
-// allocates a fresh backing array so the caller's slice can't be mutated
-// through the returned one (avoids the classic append-aliasing footgun
-// when the keyed parent injects data-domi-key into a child's attrs).
-func appendAttr(attrs []attr, extra attr) []attr {
-	out := make([]attr, len(attrs)+1)
-	copy(out, attrs)
-	out[len(attrs)] = extra
-	return out
 }
 
 // Attr is an opaque attribute carried by an element. Construct via
@@ -258,14 +235,10 @@ type Attr interface {
 	isAttr()
 }
 
-// attr is the lowered (canonical) form of an [Attr] — a flat name/value
-// pair that the renderer and differ walk. Public constructors lower
-// their inputs into attrs at construction time, so the attribute list
-// of an element is uniformly name/value pairs by type.
-type attr struct {
-	name  string
-	value string
-}
+// attr is the domi-side wrapper around [vdom.Attr]: a zero-cost type
+// def that adds isAttr. Construction uses struct literals with
+// vdom.Attr's field names; lowering is a free cast.
+type attr vdom.Attr
 
 func (attr) isAttr() {}
 
@@ -277,16 +250,16 @@ func (attr) isAttr() {}
 // repeated attribute keeps its first value. This lets components layer
 // classes and styles onto a host element without coordinating.
 func Attribute(name, value string) Attr {
-	return attr{name: name, value: value}
+	return attr{Name: name, Value: value}
 }
 
-// group is the lowered form of a [Group]: a sequence of attrs that
+// group is the lowered form of a [Group]: a sequence of vdom.Attrs that
 // splats into a parent's attribute list. group satisfies Attr but not
-// attr — the parent collects it into its own attrs slice rather than
+// attr — the parent collects it into its own Attrs slice rather than
 // walking it as an interior attribute. Nested groups compose by
 // chaining iter.Seqs, so flattening is lazy and adds no per-level
 // overhead.
-type group iter.Seq[attr]
+type group iter.Seq[vdom.Attr]
 
 func (group) isAttr() {}
 
@@ -294,11 +267,11 @@ func (group) isAttr() {}
 // contributes its own attrs to that list in order, as if they had been
 // written there directly. Groups may be nested arbitrarily.
 func Group(attrs ...Attr) Attr {
-	return group(func(yield func(attr) bool) {
+	return group(func(yield func(vdom.Attr) bool) {
 		for _, a := range attrs {
 			switch v := a.(type) {
 			case attr:
-				if !yield(v) {
+				if !yield(vdom.Attr(v)) {
 					return
 				}
 			case group:
@@ -312,68 +285,4 @@ func Group(attrs ...Attr) Attr {
 			}
 		}
 	})
-}
-
-// combineSep returns the separator for attributes whose duplicate
-// occurrences should be combined. Non-combining attributes are first-wins.
-//
-//   - class:      single space
-//   - style:      semicolon
-//   - data-msg-*: comma (the server splits on commas to recover the
-//     individual handler hashes)
-func combineSep(name string) (sep string, ok bool) {
-	switch name {
-	case "class":
-		return " ", true
-	case "style":
-		return ";", true
-	}
-	if strings.HasPrefix(name, "data-msg-") {
-		return ",", true
-	}
-	return "", false
-}
-
-// combinedAttrs returns attrs with duplicates resolved per the rules in
-// combineSep. First-occurrence order is preserved. The walker is a single
-// pass; each combining attribute accumulates into its own strings.Builder
-// (amortized O(N) per name, replacing the previous quadratic string concat).
-func combinedAttrs(attrs []attr) []attr {
-	if len(attrs) < 2 {
-		return attrs
-	}
-	out := make([]attr, 0, len(attrs))
-	idx := make(map[string]int, len(attrs))
-	var bufs map[string]*strings.Builder // lazy; allocated on first duplicate
-	for _, a := range attrs {
-		i, dup := idx[a.name]
-		if !dup {
-			idx[a.name] = len(out)
-			out = append(out, a)
-			continue
-		}
-		sep, isComb := combineSep(a.name)
-		if !isComb {
-			continue // first-wins
-		}
-		if bufs == nil {
-			bufs = map[string]*strings.Builder{}
-		}
-		buf, ok := bufs[a.name]
-		if !ok {
-			buf = &strings.Builder{}
-			buf.WriteString(out[i].value)
-			bufs[a.name] = buf
-		}
-		if a.value != "" {
-			if buf.Len() > 0 {
-				buf.WriteString(sep)
-			}
-			buf.WriteString(a.value)
-		}
-	}
-	for name, buf := range bufs {
-		out[idx[name]].value = buf.String()
-	}
-	return out
 }

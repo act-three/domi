@@ -1,4 +1,4 @@
-package domi
+package vdom
 
 import (
 	"bufio"
@@ -100,12 +100,12 @@ type bunResp struct {
 // means stdin/stdout got out of sync — the test harness is broken and
 // any further results would be meaningless, so we panic rather than
 // return an error.
-func (a *bunApplier) apply(initial string, patches []patch) (string, error) {
+func (a *bunApplier) apply(initial string, patches []Patch) (string, error) {
 	tag := rand.Text()
 	req := struct {
 		Tag     string  `json:"tag"`
 		Initial string  `json:"initial"`
-		Patches []patch `json:"patches"`
+		Patches []Patch `json:"patches"`
 	}{tag, initial, patches}
 	body, err := json.Marshal(req)
 	if err != nil {

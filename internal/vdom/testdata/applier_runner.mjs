@@ -29,7 +29,7 @@ globalThis.Node = dom.window.Node;
 globalThis.NodeFilter = dom.window.NodeFilter;
 globalThis.DocumentFragment = dom.window.DocumentFragment;
 
-const { applyPatch } = await import('../client.js');
+const { applyPatch } = await import('../../../client.js');
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 for await (const line of rl) {
