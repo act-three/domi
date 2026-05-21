@@ -15,7 +15,7 @@ func Render(n Node) string {
 func writeNode(n Node, b *strings.Builder) {
 	switch v := n.(type) {
 	case Text:
-		writeEscapedText(v.Value, b)
+		writeEscapedText(string(v), b)
 	case Element:
 		b.WriteByte('<')
 		b.WriteString(v.tag)

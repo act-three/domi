@@ -160,7 +160,7 @@ func genElement(cfg *genConfig, depth int) Element {
 
 func genNode(cfg *genConfig, depth int) Node {
 	if depth >= cfg.maxDepth || cfg.rng.IntN(100) < cfg.textChance {
-		return Text{Value: cfg.texts[cfg.rng.IntN(len(cfg.texts))]}
+		return Text(cfg.texts[cfg.rng.IntN(len(cfg.texts))])
 	}
 	return genElement(cfg, depth)
 }

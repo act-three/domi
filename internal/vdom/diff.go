@@ -70,8 +70,8 @@ func diffNode(old, next Node, path []int, out []patch) []patch {
 		if !isText {
 			return append(out, patch{Op: "replace", Path: slices.Clip(path), HTML: Render(next)})
 		}
-		if o.Value != n.Value {
-			out = append(out, patch{Op: "set_text", Path: slices.Clip(path), Value: n.Value})
+		if o != n {
+			out = append(out, patch{Op: "set_text", Path: slices.Clip(path), Value: string(n)})
 		}
 	case Element:
 		// Replace on tag mismatch, or on keyed-vs-positional mismatch.
@@ -151,13 +151,13 @@ func coalesceText(children []Node) []Node {
 	var buf string
 	flush := func() {
 		if buf != "" {
-			out = append(out, Text{Value: buf})
+			out = append(out, Text(buf))
 			buf = ""
 		}
 	}
 	for _, c := range children {
 		if t, ok := c.(Text); ok {
-			buf += t.Value
+			buf += string(t)
 			continue
 		}
 		flush()

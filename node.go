@@ -125,7 +125,7 @@ func Tag(name string) func(...Attr) Element {
 
 // Text constructs a text node.
 func Text(s string) Node {
-	return text{Value: s}
+	return text(s)
 }
 
 // Keyed returns a curried builder for an element whose children are
