@@ -22,11 +22,10 @@ func writeNode(n Node, b *strings.Builder) {
 		for _, a := range combinedAttrs(v.attrs) {
 			writeAttr(a, b)
 		}
+		b.WriteByte('>')
 		if isVoid(v.tag) {
-			b.WriteString("/>")
 			return
 		}
-		b.WriteByte('>')
 		for _, c := range v.children {
 			writeNode(c, b)
 		}
