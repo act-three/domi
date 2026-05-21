@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"ily.dev/domi/internal/vdom"
 )
 
 //go:embed client.js
@@ -54,7 +56,7 @@ type sessionState[Msg any] struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	msgChan chan Msg
-	patchRx chan []patch
+	patchRx chan []vdom.Patch
 	mu      sync.Mutex
 	taken   bool // true after an SSE consumer has been attached
 }
@@ -101,9 +103,9 @@ func newSessionID() string {
 func sessionLoop[Msg any](
 	ctx context.Context,
 	app App[Msg],
-	prev node,
+	prev vdom.Node,
 	msgChan chan Msg,
-	patchTx chan<- []patch,
+	patchTx chan<- []vdom.Patch,
 ) {
 	for {
 		select {
@@ -112,7 +114,7 @@ func sessionLoop[Msg any](
 		case msg := <-msgChan:
 			cmd := app.Update(msg)
 			next := lowerOne(app.View())
-			if patches := diff(prev, next); len(patches) > 0 {
+			if patches := vdom.Diff(prev, next); len(patches) > 0 {
 				select {
 				case patchTx <- patches:
 				case <-ctx.Done():
@@ -150,14 +152,14 @@ func handleRoot[Msg any](newApp func() App[Msg], store *sessionStore[Msg]) http.
 		cmd := app.Init()
 		initial := lowerOne(app.View())
 		title := app.Title()
-		body := render(initial)
+		body := vdom.Render(initial)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		st := &sessionState[Msg]{
 			ctx:     ctx,
 			cancel:  cancel,
 			msgChan: make(chan Msg, 64),
-			patchRx: make(chan []patch, 64),
+			patchRx: make(chan []vdom.Patch, 64),
 		}
 		store.put(id, st)
 		// Auto-remove from the store when the session is torn down
@@ -277,4 +279,19 @@ func handleSSE[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 			}
 		}
 	}
+}
+
+// page wraps body content in a minimal HTML document and embeds the session ID.
+func page(title, bodyHTML, sessionID string) string {
+	return fmt.Sprintf(
+		`<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<title>%s</title>
+</head><body>
+<div id="domi-root" data-domi-session="%s">%s</div>
+<script type="module" src="%s"></script>
+</body></html>`,
+		vdom.EscapeText(title), vdom.EscapeAttr(sessionID), bodyHTML, clientJSPath,
+	)
 }

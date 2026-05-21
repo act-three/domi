@@ -1,20 +1,37 @@
-package domi
+package vdom
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
+
+// el builds an element with no attrs from a tag and child list.
+func el(tag string, children ...Node) Element {
+	return NewElement(tag, nil, children, nil)
+}
+
+// tx builds a text node.
+func tx(s string) Text { return Text{Value: s} }
+
+// at builds an attribute literal.
+func at(name, value string) Attr { return Attr{Name: name, Value: value} }
 
 // keyedList builds a keyed <ul> whose children are <li>s named for each key.
-func keyedList(keys ...string) node {
-	return lowerOne(Keyed("ul")()(func(yield func(string, Node) bool) {
-		for _, k := range keys {
-			if !yield(k, Tag("li")()(Text(k))) {
-				return
-			}
-		}
-	}))
+// Each <li> carries a data-domi-key attribute matching its key — what the
+// domi-side Keyed constructor injects at construction time.
+func keyedList(keys ...string) Element {
+	children := make([]Node, len(keys))
+	for i, k := range keys {
+		children[i] = NewElement("li",
+			[]Attr{{Name: "data-domi-key", Value: k}},
+			[]Node{Text{Value: k}},
+			nil)
+	}
+	return NewElement("ul", nil, children, slices.Clone(keys))
 }
 
 // countOps returns counts of structural patch ops in `patches`.
-func countOps(patches []patch) (inserts, removes, moves int) {
+func countOps(patches []Patch) (inserts, removes, moves int) {
 	for _, p := range patches {
 		switch p.op {
 		case "insert_child":
@@ -29,25 +46,25 @@ func countOps(patches []patch) (inserts, removes, moves int) {
 }
 
 func TestNoChange(t *testing.T) {
-	a := Tag("div")()(Text("hi")).(node)
-	if got := diff(a, a); len(got) != 0 {
+	a := el("div", tx("hi"))
+	if got := Diff(a, a); len(got) != 0 {
 		t.Fatalf("want no patches, got %+v", got)
 	}
 }
 
 func TestTextChange(t *testing.T) {
-	a := Tag("div")()(Text("hi")).(node)
-	b := Tag("div")()(Text("bye")).(node)
-	got := diff(a, b)
+	a := el("div", tx("hi"))
+	b := el("div", tx("bye"))
+	got := Diff(a, b)
 	if len(got) != 1 || got[0].op != "set_text" || got[0].value != "bye" {
 		t.Fatalf("unexpected: %+v", got)
 	}
 }
 
 func TestTagChangeReplaces(t *testing.T) {
-	a := Tag("div")()().(node)
-	b := Tag("span")()().(node)
-	got := diff(a, b)
+	a := el("div")
+	b := el("span")
+	got := Diff(a, b)
 	if len(got) != 1 || got[0].op != "replace" {
 		t.Fatalf("unexpected: %+v", got)
 	}
@@ -56,7 +73,7 @@ func TestTagChangeReplaces(t *testing.T) {
 func TestKeyedReorder(t *testing.T) {
 	a := keyedList("a", "b", "c")
 	b := keyedList("c", "a", "b")
-	got := diff(a, b)
+	got := Diff(a, b)
 	for _, p := range got {
 		if p.op == "move_child" {
 			return
@@ -68,7 +85,7 @@ func TestKeyedReorder(t *testing.T) {
 func TestKeyedInsertMiddle(t *testing.T) {
 	a := keyedList("a", "c")
 	b := keyedList("a", "b", "c")
-	got := diff(a, b)
+	got := Diff(a, b)
 	for _, p := range got {
 		if p.op == "insert_child" && p.key == "b" && p.before == "c" {
 			return
@@ -80,7 +97,7 @@ func TestKeyedInsertMiddle(t *testing.T) {
 func TestKeyedRemove(t *testing.T) {
 	a := keyedList("a", "b", "c")
 	b := keyedList("a", "c")
-	got := diff(a, b)
+	got := Diff(a, b)
 	for _, p := range got {
 		if p.op == "remove_child" && p.key == "b" {
 			return
@@ -90,36 +107,36 @@ func TestKeyedRemove(t *testing.T) {
 }
 
 func TestAttrAdded(t *testing.T) {
-	a := Tag("div")()().(node)
-	b := Tag("div")(Attribute("class", "x"))().(node)
-	got := diff(a, b)
+	a := el("div")
+	b := NewElement("div", []Attr{at("class", "x")}, nil, nil)
+	got := Diff(a, b)
 	if len(got) != 1 || got[0].op != "set_attr" || got[0].name != "class" || got[0].value != "x" {
 		t.Fatalf("expected single set_attr, got %+v", got)
 	}
 }
 
 func TestAttrChanged(t *testing.T) {
-	a := Tag("div")(Attribute("class", "x"))().(node)
-	b := Tag("div")(Attribute("class", "y"))().(node)
-	got := diff(a, b)
+	a := NewElement("div", []Attr{at("class", "x")}, nil, nil)
+	b := NewElement("div", []Attr{at("class", "y")}, nil, nil)
+	got := Diff(a, b)
 	if len(got) != 1 || got[0].op != "set_attr" || got[0].value != "y" {
 		t.Fatalf("expected set_attr to y, got %+v", got)
 	}
 }
 
 func TestAttrRemoved(t *testing.T) {
-	a := Tag("div")(Attribute("class", "x"))().(node)
-	b := Tag("div")()().(node)
-	got := diff(a, b)
+	a := NewElement("div", []Attr{at("class", "x")}, nil, nil)
+	b := el("div")
+	got := Diff(a, b)
 	if len(got) != 1 || got[0].op != "remove_attr" || got[0].name != "class" {
 		t.Fatalf("expected remove_attr, got %+v", got)
 	}
 }
 
 func TestReplacePatchCarriesHTML(t *testing.T) {
-	a := Tag("div")()().(node)
-	b := Tag("span")()(Text("hi")).(node)
-	got := diff(a, b)
+	a := el("div")
+	b := el("span", tx("hi"))
+	got := Diff(a, b)
 	if len(got) != 1 || got[0].op != "replace" {
 		t.Fatalf("expected single replace, got %+v", got)
 	}
@@ -129,9 +146,9 @@ func TestReplacePatchCarriesHTML(t *testing.T) {
 }
 
 func TestInsertChildPatchCarriesHTML(t *testing.T) {
-	a := Tag("ul")()().(node)
-	b := Tag("ul")()(Tag("li")()(Text("one"))).(node)
-	got := diff(a, b)
+	a := el("ul")
+	b := el("ul", el("li", tx("one")))
+	got := Diff(a, b)
 	if len(got) != 1 || got[0].op != "insert_child" {
 		t.Fatalf("expected single insert_child, got %+v", got)
 	}
@@ -179,7 +196,7 @@ func TestLISEmpty(t *testing.T) {
 func TestKeyedAppendOnlyInserts(t *testing.T) {
 	a := keyedList("a", "b", "c")
 	b := keyedList("a", "b", "c", "d", "e")
-	got := diff(a, b)
+	got := Diff(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 2 || rm != 0 || mv != 0 {
 		t.Fatalf("want 2 inserts, 0 removes, 0 moves; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -190,7 +207,7 @@ func TestKeyedAppendOnlyInserts(t *testing.T) {
 func TestKeyedPrependOnlyInserts(t *testing.T) {
 	a := keyedList("c", "d", "e")
 	b := keyedList("a", "b", "c", "d", "e")
-	got := diff(a, b)
+	got := Diff(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 2 || rm != 0 || mv != 0 {
 		t.Fatalf("want 2 inserts, 0 removes, 0 moves; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -201,7 +218,7 @@ func TestKeyedPrependOnlyInserts(t *testing.T) {
 func TestKeyedMiddleInsertOnePatch(t *testing.T) {
 	a := keyedList("a", "b", "d")
 	b := keyedList("a", "b", "c", "d")
-	got := diff(a, b)
+	got := Diff(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 1 || rm != 0 || mv != 0 {
 		t.Fatalf("want 1 insert only; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -212,7 +229,7 @@ func TestKeyedMiddleInsertOnePatch(t *testing.T) {
 func TestKeyedMiddleDeleteOnePatch(t *testing.T) {
 	a := keyedList("a", "b", "c", "d")
 	b := keyedList("a", "b", "d")
-	got := diff(a, b)
+	got := Diff(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 0 || rm != 1 || mv != 0 {
 		t.Fatalf("want 1 remove only; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -223,7 +240,7 @@ func TestKeyedMiddleDeleteOnePatch(t *testing.T) {
 func TestKeyedAdjacentSwapOneMove(t *testing.T) {
 	a := keyedList("a", "b", "c", "d")
 	b := keyedList("a", "c", "b", "d")
-	got := diff(a, b)
+	got := Diff(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 0 || rm != 0 || mv != 1 {
 		t.Fatalf("want exactly 1 move; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -235,7 +252,7 @@ func TestKeyedAdjacentSwapOneMove(t *testing.T) {
 func TestKeyedReverseMinimalMoves(t *testing.T) {
 	a := keyedList("a", "b", "c", "d", "e")
 	b := keyedList("e", "d", "c", "b", "a")
-	got := diff(a, b)
+	got := Diff(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 0 || rm != 0 || mv != 4 {
 		t.Fatalf("want 4 moves; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -252,7 +269,7 @@ func TestKeyedReverseMinimalMoves(t *testing.T) {
 func TestKeyedRule4TailToHead(t *testing.T) {
 	a := keyedList("a", "b", "c", "d")
 	b := keyedList("d", "a", "b", "c")
-	got := diff(a, b)
+	got := Diff(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 0 || rm != 0 || mv != 1 {
 		t.Fatalf("want exactly 1 move; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -269,7 +286,7 @@ func TestKeyedRule4TailToHead(t *testing.T) {
 // Identical: no patches at all.
 func TestKeyedIdenticalNoOps(t *testing.T) {
 	a := keyedList("a", "b", "c", "d")
-	got := diff(a, a)
+	got := Diff(a, a)
 	if len(got) != 0 {
 		t.Fatalf("want no patches, got %+v", got)
 	}
@@ -280,19 +297,20 @@ func TestKeyedIdenticalNoOps(t *testing.T) {
 func TestKeyedMixedRemoveInsertMove(t *testing.T) {
 	a := keyedList("a", "b", "c", "d", "e") // remove c, insert x, swap d/b
 	b := keyedList("a", "d", "x", "b", "e")
-	got := diff(a, b)
+	got := Diff(a, b)
 	ins, rm, _ := countOps(got)
 	if ins != 1 || rm != 1 {
 		t.Fatalf("want 1 insert and 1 remove; got %+v", got)
 	}
 }
 
-// Diff also runs combining: two `class` attrs at construction produce a single
-// canonical "a b" value that the diff sees.
+// Diff runs combinedAttrs on both sides, so duplicate-attr combining
+// is part of what the diff sees: two `class` attrs collapse to one
+// canonical "a b" value.
 func TestAttrCombiningBeforeDiff(t *testing.T) {
-	a := Tag("div")(Attribute("class", "a"))().(node)
-	b := Tag("div")(Attribute("class", "a"), Attribute("class", "b"))().(node)
-	got := diff(a, b)
+	a := NewElement("div", []Attr{at("class", "a")}, nil, nil)
+	b := NewElement("div", []Attr{at("class", "a"), at("class", "b")}, nil, nil)
+	got := Diff(a, b)
 	if len(got) != 1 || got[0].op != "set_attr" || got[0].value != "a b" {
 		t.Fatalf("expected class to combine to \"a b\", got %+v", got)
 	}
@@ -317,8 +335,8 @@ func TestAttrCombiningBeforeDiff(t *testing.T) {
 func TestKeyedOnlyInsertsAnchorOrder(t *testing.T) {
 	old := keyedList("a")
 	next := keyedList("b", "c", "a")
-	got := diff(old, next)
-	var inserts []patch
+	got := Diff(old, next)
+	var inserts []Patch
 	for _, p := range got {
 		if p.op == "insert_child" {
 			inserts = append(inserts, p)
@@ -346,9 +364,9 @@ func TestKeyedOnlyInsertsAnchorOrder(t *testing.T) {
 // next = div containing just [span]. Coalesce should normalize old to
 // 2 children, yielding remove_child idx=1 + replace at [0].
 func TestAdjacentTextCoalescesBeforePositionalDiff(t *testing.T) {
-	old := Tag("div")()(Text("a"), Text("b"), Tag("span")()()).(node)
-	next := Tag("div")()(Tag("span")()()).(node)
-	got := diff(old, next)
+	old := el("div", tx("a"), tx("b"), el("span"))
+	next := el("div", el("span"))
+	got := Diff(old, next)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 patches (one remove + one replace), got %d: %+v", len(got), got)
 	}
