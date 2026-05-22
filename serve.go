@@ -10,6 +10,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"strings"
@@ -292,6 +293,6 @@ func page(title, bodyHTML, sessionID string) string {
 <div id="domi-root" data-domi-session="%s">%s</div>
 <script type="module" src="%s"></script>
 </body></html>`,
-		vdom.EscapeText(title), vdom.EscapeAttr(sessionID), bodyHTML, clientJSPath,
+		html.EscapeString(title), html.EscapeString(sessionID), bodyHTML, clientJSPath,
 	)
 }
