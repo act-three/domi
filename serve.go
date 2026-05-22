@@ -10,7 +10,6 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
-	"html"
 	"io"
 	"net/http"
 	"strings"
@@ -162,9 +161,8 @@ func handleRoot[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), store *sessionStore
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := newSessionID()
 		app, cmd := f()
-		title, node := app.View()
-		initial := lowerOne(node)
-		body := vdom.Render(initial)
+		title, view := app.View()
+		initial := lowerOne(view)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		st := &sessionState[Msg]{
@@ -186,7 +184,8 @@ func handleRoot[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), store *sessionStore
 		spawnCmd(ctx, cmd, st.msgChan)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = io.WriteString(w, page(title, body, id))
+		_, _ = io.WriteString(w, "<!doctype html>")
+		_, _ = io.WriteString(w, vdom.Render(document(title, id, view)))
 	}
 }
 
@@ -293,17 +292,26 @@ func handleSSE[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 	}
 }
 
-// page wraps body content in a minimal HTML document and embeds the session ID.
-func page(title, bodyHTML, sessionID string) string {
-	return fmt.Sprintf(
-		`<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<title>%s</title>
-</head><body>
-<div id="domi-root" data-domi-session="%s">%s</div>
-<script type="module" src="%s"></script>
-</body></html>`,
-		html.EscapeString(title), html.EscapeString(sessionID), bodyHTML, clientJSPath,
-	)
+// document builds the HTML shell wrapping body — head with title, body
+// with the session-marked mount div and the bootstrap script tag.
+// Constructed with the public Tag builders so future moves (e.g.
+// accepting an App-supplied head) slot in without reshaping the
+// construction.
+func document(title, sessionID string, body Node) vdom.Node {
+	return vdom.Element(Tag("html")()(
+		Tag("head")()(
+			Tag("meta")(Attribute("charset", "utf-8")),
+			Tag("title")()(Text(title)),
+		),
+		Tag("body")()(
+			Tag("div")(
+				Attribute("id", "domi-root"),
+				Attribute("data-domi-session", sessionID),
+			)(body),
+			Tag("script")(
+				Attribute("type", "module"),
+				Attribute("src", clientJSPath),
+			),
+		),
+	).(element))
 }
