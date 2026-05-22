@@ -84,18 +84,19 @@ func (t *Todos) Update(msg Msg) domi.Cmd[Msg] {
 	return domi.CmdNone[Msg]()
 }
 
-func (t *Todos) View() N {
-	return div(style("font-family:system-ui;padding:2rem;max-width:32rem"))(
-		h1()(text("todos")),
-		keyedUL(style("list-style:none;padding:0"))(func(yield func(string, N) bool) {
-			for _, it := range t.items {
-				if !yield(strconv.FormatUint(it.ID, 10), itemRow(it)) {
-					return
+func (t *Todos) View() (string, N) {
+	return "todos",
+		div(style("font-family:system-ui;padding:2rem;max-width:32rem"))(
+			h1()(text("todos")),
+			keyedUL(style("list-style:none;padding:0"))(func(yield func(string, N) bool) {
+				for _, it := range t.items {
+					if !yield(strconv.FormatUint(it.ID, 10), itemRow(it)) {
+						return
+					}
 				}
-			}
-		}),
-		button(onClick(Msg{Tag: "Add"}))(text("+ add item")),
-	)
+			}),
+			button(onClick(Msg{Tag: "Add"}))(text("+ add item")),
+		)
 }
 
 func itemRow(it Item) N {
@@ -112,8 +113,6 @@ func itemRow(it Item) N {
 		button(onClick(Msg{Tag: "Remove", ID: it.ID}))(text("×")),
 	)
 }
-
-func (t *Todos) Title() string { return "todos" }
 
 func main() {
 	h := domi.Handler(newTodos)

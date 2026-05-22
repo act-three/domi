@@ -45,17 +45,14 @@ func (c *Counter) Update(msg Msg) domi.Cmd[Msg] {
 	return domi.CmdNone[Msg]()
 }
 
-func (c *Counter) View() N {
-	return div(style("font-family:system-ui;padding:2rem"))(
-		h1()(text(fmt.Sprintf("Count: %d", c.count))),
-		button(event.Click(Msg{"Decrement"}))(text("-")),
-		button(event.Click(Msg{"Increment"}))(text("+")),
-		button(event.Click(Msg{"Reset"}))(text("reset")),
-	)
-}
-
-func (c *Counter) Title() string {
-	return fmt.Sprintf("Counter (%d)", c.count)
+func (c *Counter) View() (string, N) {
+	return fmt.Sprintf("Counter (%d)", c.count),
+		div(style("font-family:system-ui;padding:2rem"))(
+			h1()(text(fmt.Sprintf("Count: %d", c.count))),
+			button(event.Click(Msg{"Decrement"}))(text("-")),
+			button(event.Click(Msg{"Increment"}))(text("+")),
+			button(event.Click(Msg{"Reset"}))(text("reset")),
+		)
 }
 
 func main() {

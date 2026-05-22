@@ -15,6 +15,9 @@ import (
 // rather than a serialized Node — the client parses it via a
 // <template> element.
 //
+// `set_title` is the lone non-DOM op: it sets document.title and
+// carries no path. Produced by [SetTitle].
+//
 // insert_child / remove_child / move_child come in two flavours,
 // chosen by which diff function produced them:
 //
@@ -54,6 +57,13 @@ func Diff(old, new Node) []Patch {
 		out[i] = Patch{p: p}
 	}
 	return out
+}
+
+// SetTitle returns a Patch that sets document.title on the client.
+// Apply order matches the surrounding patch list, so callers can place
+// it before or after DOM patches as needed.
+func SetTitle(title string) Patch {
+	return Patch{p: patch{Op: "set_title", Value: title}}
 }
 
 // diff is the internal entrypoint that returns the unwrapped patch

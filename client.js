@@ -50,6 +50,10 @@ export function applyPatch(root, p) {
       walk(root, p.path).nodeValue = p.value;
       return root;
     }
+    case 'set_title': {
+      document.title = p.value;
+      return root;
+    }
     case 'set_attr': {
       // Coerce undefined → "" so name-only / empty-valued attrs land as
       // present-with-empty-string. The wire omits `value` when it's the
