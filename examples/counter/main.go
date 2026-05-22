@@ -29,7 +29,9 @@ type Counter struct {
 	count int
 }
 
-func (c *Counter) Init() domi.Cmd[Msg] { return domi.CmdNone[Msg]() }
+func newCounter() (*Counter, domi.Cmd[Msg]) {
+	return &Counter{}, domi.CmdNone[Msg]()
+}
 
 func (c *Counter) Update(msg Msg) domi.Cmd[Msg] {
 	switch msg.Tag {
@@ -57,7 +59,7 @@ func (c *Counter) Title() string {
 }
 
 func main() {
-	h := domi.Handler(func() domi.App[Msg] { return &Counter{} })
+	h := domi.Handler(newCounter)
 	addr := "127.0.0.1:3010"
 	log.Printf("counter listening on http://%s", addr)
 	log.Fatal(http.ListenAndServe(addr, h))

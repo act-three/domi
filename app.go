@@ -5,30 +5,32 @@ import "context"
 // App is the state machine a domi application implements. Implementations
 // carry their own state (typically as fields on a pointer receiver); the
 // framework owns the instance for the lifetime of a session and calls
-// Init, Update, View, and Title sequentially, so internal state needs no
+// Update, View, and Title sequentially, so internal state needs no
 // concurrency guard.
 //
-// Init runs once at the start of the session and may return a [Cmd] to
-// kick off initial work. Update is called for each dispatched Msg and
-// may return a [Cmd] to produce follow-up Msgs. View is called after
-// every Update; its return value is the source of truth for what the
-// browser displays. Title returns the document title.
+// Update is called for each dispatched Msg and may return a [Cmd] to
+// produce follow-up Msgs. View is called after every Update; its return
+// value is the source of truth for what the browser displays. Title
+// returns the document title.
+//
+// Sessions are bootstrapped by the constructor passed to [Handler],
+// which returns the initial App together with an initial [Cmd].
 type App[Msg any] interface {
-	Init() Cmd[Msg]
 	Update(msg Msg) Cmd[Msg]
 	View() Node
 	Title() string
 }
 
 // Cmd is a deferred side-effect that eventually produces a Msg. Cmds
-// are returned by [App.Init] and [App.Update]; the framework runs each
-// in its own goroutine and feeds the resulting Msg back into Update.
+// are returned by an App's constructor and by [App.Update]; the
+// framework runs each in its own goroutine and feeds the resulting Msg
+// back into Update.
 type Cmd[Msg any] struct {
 	fns []func(context.Context) Msg
 }
 
-// CmdNone returns a [Cmd] that does nothing. Use it from Init or Update
-// when there is no follow-up work to schedule.
+// CmdNone returns a [Cmd] that does nothing. Use it when there is no
+// follow-up work to schedule.
 func CmdNone[Msg any]() Cmd[Msg] { return Cmd[Msg]{} }
 
 // CmdFn returns a [Cmd] that runs fn and dispatches its result back

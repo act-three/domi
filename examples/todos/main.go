@@ -42,16 +42,14 @@ type Todos struct {
 	nextID uint64
 }
 
-func newTodos() *Todos {
+func newTodos() (*Todos, domi.Cmd[Msg]) {
 	t := &Todos{}
 	for _, s := range []string{"learn go generics", "spike domi", "ship something"} {
 		t.nextID++
 		t.items = append(t.items, Item{ID: t.nextID, Text: s})
 	}
-	return t
+	return t, domi.CmdNone[Msg]()
 }
-
-func (t *Todos) Init() domi.Cmd[Msg] { return domi.CmdNone[Msg]() }
 
 func (t *Todos) Update(msg Msg) domi.Cmd[Msg] {
 	switch msg.Tag {
@@ -118,7 +116,7 @@ func itemRow(it Item) N {
 func (t *Todos) Title() string { return "todos" }
 
 func main() {
-	h := domi.Handler(func() domi.App[Msg] { return newTodos() })
+	h := domi.Handler(newTodos)
 	addr := "127.0.0.1:3011"
 	log.Printf("todos listening on http://%s", addr)
 	log.Fatal(http.ListenAndServe(addr, h))
