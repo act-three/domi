@@ -102,9 +102,14 @@ func newSessionID() string {
 // sessionLoop drains msgChan, applies Update/View/diff, and ships patches
 // to patchTx. Exits when ctx is cancelled; in-flight patches that can't
 // be delivered are dropped (the SSE consumer is also going away).
+//
+// Title changes ride along in the same patch list as a [vdom.SetTitle]
+// op, prepended when the App's reported title differs from the previous
+// frame's.
 func sessionLoop[Msg any](
 	ctx context.Context,
 	app App[Msg],
+	prevTitle string,
 	prev vdom.Node,
 	msgChan chan Msg,
 	patchTx chan<- []vdom.Patch,
@@ -115,8 +120,13 @@ func sessionLoop[Msg any](
 			return
 		case msg := <-msgChan:
 			cmd := app.Update(msg)
-			next := lowerOne(app.View())
-			if patches := vdom.Diff(prev, next); len(patches) > 0 {
+			title, node := app.View()
+			next := lowerOne(node)
+			patches := vdom.Diff(prev, next)
+			if title != prevTitle {
+				patches = append([]vdom.Patch{vdom.SetTitle(title)}, patches...)
+			}
+			if len(patches) > 0 {
 				select {
 				case patchTx <- patches:
 				case <-ctx.Done():
@@ -124,6 +134,7 @@ func sessionLoop[Msg any](
 				}
 			}
 			prev = next
+			prevTitle = title
 			spawnCmd(ctx, cmd, msgChan)
 		}
 	}
@@ -151,8 +162,8 @@ func handleRoot[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), store *sessionStore
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := newSessionID()
 		app, cmd := f()
-		initial := lowerOne(app.View())
-		title := app.Title()
+		title, node := app.View()
+		initial := lowerOne(node)
 		body := vdom.Render(initial)
 
 		ctx, cancel := context.WithCancel(context.Background())
@@ -171,7 +182,7 @@ func handleRoot[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), store *sessionStore
 			store.delete(id)
 		}()
 
-		go sessionLoop(ctx, app, initial, st.msgChan, st.patchRx)
+		go sessionLoop(ctx, app, title, initial, st.msgChan, st.patchRx)
 		spawnCmd(ctx, cmd, st.msgChan)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

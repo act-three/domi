@@ -13,10 +13,10 @@ import (
 // so View produces a different tree (and the diff produces real patches).
 type counterApp struct{ n int }
 
-func (a *counterApp) Init() Cmd[int]      { return CmdNone[int]() }
 func (a *counterApp) Update(int) Cmd[int] { a.n++; return CmdNone[int]() }
-func (a *counterApp) View() Node          { return Tag("div")()(Text(fmt.Sprintf("%d", a.n))) }
-func (a *counterApp) Title() string       { return "" }
+func (a *counterApp) View() (string, Node) {
+	return "", Tag("div")()(Text(fmt.Sprintf("%d", a.n)))
+}
 
 // sessionLoop exits promptly when its ctx is cancelled.
 func TestSessionLoopExitsOnCancel(t *testing.T) {
@@ -25,7 +25,7 @@ func TestSessionLoopExitsOnCancel(t *testing.T) {
 	patchChan := make(chan []vdom.Patch, 1)
 	done := make(chan struct{})
 	go func() {
-		sessionLoop(ctx, &counterApp{}, lowerOne(Tag("div")()()), msgChan, patchChan)
+		sessionLoop(ctx, &counterApp{}, "", lowerOne(Tag("div")()()), msgChan, patchChan)
 		close(done)
 	}()
 	cancel()
@@ -46,7 +46,7 @@ func TestSessionLoopPatchSendInterruptible(t *testing.T) {
 	msgChan <- 1
 	done := make(chan struct{})
 	go func() {
-		sessionLoop(ctx, &counterApp{}, lowerOne(Tag("div")()()), msgChan, patchChan)
+		sessionLoop(ctx, &counterApp{}, "", lowerOne(Tag("div")()()), msgChan, patchChan)
 		close(done)
 	}()
 	// Give the loop time to consume the message and block on the send.

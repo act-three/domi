@@ -5,20 +5,19 @@ import "context"
 // App is the state machine a domi application implements. Implementations
 // carry their own state (typically as fields on a pointer receiver); the
 // framework owns the instance for the lifetime of a session and calls
-// Update, View, and Title sequentially, so internal state needs no
-// concurrency guard.
+// Update and View sequentially, so internal state needs no concurrency
+// guard.
 //
 // Update is called for each dispatched Msg and may return a [Cmd] to
-// produce follow-up Msgs. View is called after every Update; its return
-// value is the source of truth for what the browser displays. Title
-// returns the document title.
+// produce follow-up Msgs. View is called after every Update and returns
+// the document title together with the body tree; both are the source
+// of truth for what the browser displays.
 //
 // Sessions are bootstrapped by the constructor passed to [Handler],
 // which returns the initial App together with an initial [Cmd].
 type App[Msg any] interface {
 	Update(msg Msg) Cmd[Msg]
-	View() Node
-	Title() string
+	View() (title string, n Node)
 }
 
 // Cmd is a deferred side-effect that eventually produces a Msg. Cmds
