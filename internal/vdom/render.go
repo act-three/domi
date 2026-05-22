@@ -52,23 +52,6 @@ func writeAttr(a Attr, b *strings.Builder) {
 	b.WriteByte('"')
 }
 
-// EscapeText returns s with the characters that have special meaning
-// in HTML text content (&, <, >) replaced by their entity references.
-func EscapeText(s string) string {
-	var b strings.Builder
-	writeEscapedText(s, &b)
-	return b.String()
-}
-
-// EscapeAttr returns s with the characters that have special meaning
-// in an HTML attribute value (&, <, >, ", ') replaced by their entity
-// references.
-func EscapeAttr(s string) string {
-	var b strings.Builder
-	writeEscapedAttr(s, &b)
-	return b.String()
-}
-
 func writeEscapedText(s string, b *strings.Builder) {
 	for _, r := range s {
 		switch r {
