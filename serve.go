@@ -28,15 +28,16 @@ var clientJSPath = func() string {
 	return fmt.Sprintf("/domi.%x.js", h[:4])
 }()
 
-// Handler returns an [http.Handler] that serves the App. newApp is
-// invoked once per session to construct a fresh App instance, so each
-// connected browser gets its own independent state. The caller is
-// responsible for wiring the handler into a server (e.g. via
-// [http.ListenAndServe]).
-func Handler[Msg any](newApp func() App[Msg]) http.Handler {
+// Handler serves an [App].
+// At the start of a session,
+// the returned Handler calls f
+// to obtain a fresh App instance plus an initial [Cmd].
+// This instance is associated with the session,
+// so each browser gets its own independent state.
+func Handler[Msg any, A App[Msg]](f func() (A, Cmd[Msg])) http.Handler {
 	store := newSessionStore[Msg]()
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", handleRoot(newApp, store))
+	mux.HandleFunc("GET /{$}", handleRoot(f, store))
 	mux.HandleFunc("GET /sse/{id}", handleSSE(store))
 	mux.HandleFunc("POST /event/{id}", handleEvent(store))
 	mux.HandleFunc("GET "+clientJSPath, func(w http.ResponseWriter, req *http.Request) {
@@ -146,11 +147,10 @@ func spawnCmd[Msg any](ctx context.Context, cmd Cmd[Msg], msgTx chan<- Msg) {
 
 // ---- HTTP handlers ----
 
-func handleRoot[Msg any](newApp func() App[Msg], store *sessionStore[Msg]) http.HandlerFunc {
+func handleRoot[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), store *sessionStore[Msg]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := newSessionID()
-		app := newApp()
-		cmd := app.Init()
+		app, cmd := f()
 		initial := lowerOne(app.View())
 		title := app.Title()
 		body := vdom.Render(initial)
