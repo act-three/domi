@@ -292,13 +292,18 @@ func handleSSE[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 	}
 }
 
-// document returns the HTML shell that wraps body.
+// document returns the HTML shell that wraps body. The inline module
+// script mirrors what a bundled app would do.
+//
+//	`import * as Domi from <hashed path>; Domi.run()`
 func document(title, sessionID string, body Node) vdom.Node {
 	return vdom.Element(Tag("html")()(
 		Tag("head")()(
 			Tag("meta")(Name("charset", "utf-8")),
 			Tag("title")()(Text(title)),
-			Tag("script")(Name("type", "module"), Name("src", clientJSPath)),
+			Tag("script")(Name("type", "module"))(
+				Text(fmt.Sprintf(`import * as Domi from %q; Domi.run();`, clientJSPath)),
+			),
 		),
 		Tag("body")(Name("data-domi-session", sessionID))(body),
 	).(element))

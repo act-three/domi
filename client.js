@@ -1,7 +1,7 @@
-// domi client — ES module. Exports the patch applier and event-payload
-// builder so test harnesses can drive them in jsdom/headless. Auto-runs
-// initSession() at module load when a #domi-root container is present,
-// which is the only mode the production server uses.
+// domi client — ES module. Exports [run] (the session bootstrap),
+// [applyPatch], and [eventPayload]. Importing the module has no side
+// effects; callers invoke [run] explicitly. The framework's HTML
+// renderer emits an inline module script that does exactly that.
 
 // fragmentFromHTML parses an HTML string into a DocumentFragment using a
 // <template> element. Template parsing context is permissive — <tr>, <td>,
@@ -156,10 +156,6 @@ export function eventPayload(e, el) {
 }
 
 // ---- session initialization ----
-//
-// Runs at module load when document.body carries a data-domi-session
-// attribute. Tests import the module to use applyPatch / eventPayload
-// directly and don't render that markup, so this no-ops there.
 
 const EVENTS = ['click', 'submit', 'input', 'change', 'keydown', 'keyup'];
 
@@ -176,8 +172,18 @@ function postEnvelope(sessionId, h, e) {
   }).catch((err) => console.error('domi: event POST failed', err));
 }
 
-function initSession(container) {
+// run wires up the domi session on document.body and starts the SSE
+// patch stream. Reads the session ID from body[data-domi-session=…]
+// (which the server emits on initial render) and removes the
+// attribute on its way out — so calling run() twice is a safe no-op,
+// and calling it in a non-domi context (no body, no attribute) does
+// nothing.
+export function run() {
+  if (typeof document === 'undefined' || !document.body) return;
+  const container = document.body;
   const sessionId = container.dataset.domiSession;
+  if (!sessionId) return;
+  delete container.dataset.domiSession;
   // The container is document.body. The framework treats it as the
   // patch root. App content becomes its children, addressed by patches
   // at [0], [1], …
@@ -218,6 +224,3 @@ function initSession(container) {
   sse.onerror = (e) => console.warn('domi: SSE error', e);
 }
 
-if (typeof document !== 'undefined' && document.body.dataset.domiSession) {
-  initSession(document.body);
-}
