@@ -157,9 +157,9 @@ export function eventPayload(e, el) {
 
 // ---- session initialization ----
 //
-// Runs at module load when a #domi-root container is present. Tests
-// import the module to use applyPatch / eventPayload directly and don't
-// set up that container, so this no-ops in test environments.
+// Runs at module load when document.body carries a data-domi-session
+// attribute. Tests import the module to use applyPatch / eventPayload
+// directly and don't render that markup, so this no-ops there.
 
 const EVENTS = ['click', 'submit', 'input', 'change', 'keydown', 'keyup'];
 
@@ -178,13 +178,14 @@ function postEnvelope(sessionId, h, e) {
 
 function initSession(container) {
   const sessionId = container.dataset.domiSession;
-  // The container is the mount div — framework territory, constructed
-  // with stable tag + attrs, so it's never the target of a patch. App
-  // content sits as its children, addressed by patches at [0], [1], …
+  // The container is document.body. The framework treats it as the
+  // patch root. App content becomes its children, addressed by patches
+  // at [0], [1], …
   let root = container;
 
-  // Delegated listeners on the container: it stays put for the session,
-  // so listeners don't have to migrate when patches mutate its subtree.
+  // Delegated listeners on the container: body stays put for the
+  // session, so listeners don't have to migrate when patches mutate
+  // its subtree.
   for (const ev of EVENTS) {
     container.addEventListener(ev, (e) => {
       let el = e.target;
@@ -217,7 +218,6 @@ function initSession(container) {
   sse.onerror = (e) => console.warn('domi: SSE error', e);
 }
 
-if (typeof document !== 'undefined') {
-  const container = document.getElementById('domi-root');
-  if (container) initSession(container);
+if (typeof document !== 'undefined' && document.body.dataset.domiSession) {
+  initSession(document.body);
 }

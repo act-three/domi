@@ -292,25 +292,14 @@ func handleSSE[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 	}
 }
 
-// document builds the HTML shell wrapping body — head with title, body
-// with the session-marked mount div and the bootstrap script tag. The
-// mount div anchors the patch session on the client; its children are
-// the App's View tree (a Fragment expanding into multiple siblings).
+// document returns the HTML shell that wraps body.
 func document(title, sessionID string, body Node) vdom.Node {
 	return vdom.Element(Tag("html")()(
 		Tag("head")()(
 			Tag("meta")(Name("charset", "utf-8")),
 			Tag("title")()(Text(title)),
+			Tag("script")(Name("type", "module"), Name("src", clientJSPath)),
 		),
-		Tag("body")()(
-			Tag("div")(
-				Name("id", "domi-root"),
-				Name("data-domi-session", sessionID),
-			)(body),
-			Tag("script")(
-				Name("type", "module"),
-				Name("src", clientJSPath),
-			),
-		),
+		Tag("body")(Name("data-domi-session", sessionID))(body),
 	).(element))
 }
