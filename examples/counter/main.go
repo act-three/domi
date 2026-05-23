@@ -30,7 +30,7 @@ type Counter struct {
 }
 
 func newCounter() (*Counter, domi.Cmd[Msg]) {
-	return &Counter{}, domi.CmdNone[Msg]()
+	return &Counter{}, domi.Batch[Msg]()
 }
 
 func (c *Counter) Update(msg Msg) domi.Cmd[Msg] {
@@ -42,7 +42,7 @@ func (c *Counter) Update(msg Msg) domi.Cmd[Msg] {
 	case "Reset":
 		c.count = 0
 	}
-	return domi.CmdNone[Msg]()
+	return domi.Batch[Msg]()
 }
 
 func (c *Counter) View() (string, N) {

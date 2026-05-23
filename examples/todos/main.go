@@ -48,7 +48,7 @@ func newTodos() (*Todos, domi.Cmd[Msg]) {
 		t.nextID++
 		t.items = append(t.items, Item{ID: t.nextID, Text: s})
 	}
-	return t, domi.CmdNone[Msg]()
+	return t, domi.Batch[Msg]()
 }
 
 func (t *Todos) Update(msg Msg) domi.Cmd[Msg] {
@@ -81,7 +81,7 @@ func (t *Todos) Update(msg Msg) domi.Cmd[Msg] {
 			}
 		}
 	}
-	return domi.CmdNone[Msg]()
+	return domi.Batch[Msg]()
 }
 
 func (t *Todos) View() (string, N) {

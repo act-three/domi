@@ -1,51 +1,53 @@
 package domi
 
-import "context"
+import (
+	"context"
+	"iter"
+	"slices"
+)
 
-// App is the state machine a domi application implements. Implementations
-// carry their own state (typically as fields on a pointer receiver); the
-// framework owns the instance for the lifetime of a session and calls
-// Update and View sequentially, so internal state needs no concurrency
-// guard.
-//
-// Update is called for each dispatched Msg and may return a [Cmd] to
-// produce follow-up Msgs. View is called after every Update and returns
-// the document title together with the body tree; both are the source
-// of truth for what the browser displays.
-//
-// Sessions are bootstrapped by the constructor passed to [Handler],
-// which returns the initial App together with an initial [Cmd].
+// App is the state machine provided by a domi application.
+// One instance holds the state for a single browser sesssion.
+// See [Handler] for session lifecycle.
 type App[Msg any] interface {
-	Update(msg Msg) Cmd[Msg]
+	// Update is responsible for updating the App state
+	// in response to each Msg. It must not produce external
+	// side-effects, only update its internal state.
+	//
+	// For external side-effects, such as database writes,
+	// Update should return a [Cmd].
+	Update(Msg) Cmd[Msg]
+
+	// View returns the document title and body tree
+	// to be displayed in the browser.
 	View() (title string, n Node)
 }
 
-// Cmd is a deferred side-effect that eventually produces a Msg. Cmds
-// are returned by an App's constructor and by [App.Update]; the
-// framework runs each in its own goroutine and feeds the resulting Msg
-// back into Update.
+// A Cmd is a deferred side-effect that eventually produces a Msg.
+// The framework runs each in Cmd its own goroutine
+// and passes the resulting Msg back into Update.
 type Cmd[Msg any] struct {
-	fns []func(context.Context) Msg
+	s iter.Seq[func(context.Context) Msg]
 }
 
-// CmdNone returns a [Cmd] that does nothing. Use it when there is no
-// follow-up work to schedule.
-func CmdNone[Msg any]() Cmd[Msg] { return Cmd[Msg]{} }
-
-// CmdFn returns a [Cmd] that runs fn and dispatches its result back
-// into Update. The context is cancelled when the session ends; fn
-// should respect it for any blocking or long-running work.
-func CmdFn[Msg any](fn func(context.Context) Msg) Cmd[Msg] {
-	return Cmd[Msg]{fns: []func(context.Context) Msg{fn}}
+// Func returns a [Cmd] that runs fn and dispatches its result back
+// into Update.
+func Func[Msg any](f func(context.Context) Msg) Cmd[Msg] {
+	return Cmd[Msg]{slices.Values([]func(context.Context) Msg{f})}
 }
 
-// CmdBatch returns a [Cmd] that runs each input Cmd concurrently. The
-// produced Msgs are dispatched to Update independently in whatever
-// order they finish.
-func CmdBatch[Msg any](cmds ...Cmd[Msg]) Cmd[Msg] {
-	var out Cmd[Msg]
-	for _, c := range cmds {
-		out.fns = append(out.fns, c.fns...)
+// Batch returns a [Cmd] that runs each item in c concurrently.
+// The resulting [Msg] values are dispatched to Update serially.
+func Batch[Msg any](c ...Cmd[Msg]) Cmd[Msg] {
+	return Cmd[Msg]{
+		func(yield func(func(context.Context) Msg) bool) {
+			for _, c := range c {
+				for c := range c.s {
+					if !yield(c) {
+						return
+					}
+				}
+			}
+		},
 	}
-	return out
 }

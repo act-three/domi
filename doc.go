@@ -7,7 +7,7 @@
 // user-generated events back through Update.
 //
 // The package exposes only the primitives needed to build any node or
-// attribute ([Tag], [Keyed], [Fragment], [Text], [Attribute], [Group],
+// attribute ([Tag], [Keyed], [Fragment], [Text], [Name], [Group],
 // [On]). Convenience wrappers for common HTML tags, attributes, and
 // events live in [ily.dev/domi/html], [ily.dev/domi/attr], and
 // [ily.dev/domi/event].

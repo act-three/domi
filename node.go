@@ -39,9 +39,8 @@ func lookupHandler(key string) ([]byte, bool) {
 	return raw, ok
 }
 
-// Node is anything that can appear in a domi tree. The interface is
-// sealed — only types defined by this package satisfy it. Construct
-// values via [Text], [Tag], or [Keyed].
+// A Node is an HTML node,
+// a [Text], [Tag], [Keyed], or a [Fragment].
 type Node interface {
 	isNode()
 }
@@ -77,17 +76,17 @@ type Element func(...Node) Node
 
 func (Element) isNode() {}
 
-// Tag returns a curried builder for an HTML element with the given name:
-// the first call takes attributes, the second takes children.
+// Tag returns a curried builder for an HTML element with the given name.
+// Its first call takes attributes, and the second takes children.
 //
 //	Tag("div")(attr.Class("x"))(Text("hi"))
 //
 // Void elements (and any other "no children" case) can skip the trailing
-// empty children call — Element is itself a Node:
+// empty children call. Element is itself a Node.
 //
 //	Div()(Text("a"), Br(), Text("b"))
 //
-// Prebound helpers for common tags live in [ily.dev/domi/html].
+// Helpers for common tags can be found in [ily.dev/domi/html].
 func Tag(name string) func(...Attr) Element {
 	return func(attrs ...Attr) Element {
 		a := slices.Collect(iter.Seq[vdom.Attr](Group(attrs...).(group)))
@@ -97,7 +96,7 @@ func Tag(name string) func(...Attr) Element {
 	}
 }
 
-// Text constructs a text node.
+// Text returns a text node.
 func Text(s string) Node {
 	return text(s)
 }
@@ -106,7 +105,7 @@ func Text(s string) Node {
 // paired with stable keys. The framework reconciles updates to keyed
 // children by identity rather than position, so inserting, removing, or
 // reordering items in the middle of a list updates the surviving
-// children in place instead of replacing the affected suffix.
+// children in place instead of replacing the entire affected suffix.
 //
 // The children sequence yields (key, child) pairs in the desired order:
 //
@@ -119,7 +118,7 @@ func Text(s string) Node {
 //	})
 //
 // Each yielded child must be an element; text and [Fragment] children
-// cannot be keyed, and Keyed panics on a non-element child. Keys should
+// cannot be keyed, and Keyed panics on a non-element child. Keys must
 // be unique within the sequence and stable across renders for the same
 // logical item.
 func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
@@ -155,14 +154,17 @@ type fragment iter.Seq[vdom.Node]
 
 func (fragment) isNode() {}
 
-// Fragment returns a Node that contributes its children to its parent's
-// child list in order, as if they had been written there directly.
+// A Fragment is a sequence of HTML nodes.
+// It contributes its contents
+// to its parent's child list in order,
+// as if they had been written there directly.
 //
-// A Fragment cannot be keyed — [Keyed] children must each be a single
-// element with an identity.
-func Fragment(children ...Node) Node {
+// Fragments may be nested arbitrarily.
+// A Fragment cannot be keyed.
+// [Keyed] children must each be a single element with an identity.
+func Fragment(n ...Node) Node {
 	return fragment(func(yield func(vdom.Node) bool) {
-		for _, c := range children {
+		for _, c := range n {
 			switch v := c.(type) {
 			case Element:
 				if !yield(v().(node).lowered()) {
@@ -192,9 +194,23 @@ func lower(nodes ...Node) []vdom.Node {
 	return slices.Collect(iter.Seq[vdom.Node](Fragment(nodes...).(fragment)))
 }
 
-// Attr is an opaque attribute carried by an element. Construct via
-// [Attribute] for a static name/value pair, [On] for an event handler,
-// or [Group] for a collection of attrs.
+// An Attr is an HTML attribute.
+//
+// In rendered output,
+// a single attribute name does not appear more than once
+// on any given element:
+//
+//  1. For each combining attribute,
+//     it concatenates the values according to the table below.
+//  2. Event handlers are combined internally.
+//  3. For all other attributes,
+//     only the first occurrence appears.
+//
+// The combining attributes are:
+//
+//	name  sep
+//	class " "
+//	style ";"
 type Attr interface {
 	isAttr()
 }
@@ -206,14 +222,9 @@ type attr vdom.Attr
 
 func (attr) isAttr() {}
 
-// Attribute constructs a static HTML attribute (e.g. class="foo").
-//
-// When the same attribute name appears more than once on the same
-// element, the values are combined per name: class values are joined by
-// a single space, style values are joined by a semicolon, and any other
-// repeated attribute keeps its first value. This lets components layer
-// classes and styles onto a host element without coordinating.
-func Attribute(name, value string) Attr {
+// Name returns an HTML attribute with the given name and value
+// (e.g. class="foo").
+func Name(name, value string) Attr {
 	return attr{Name: name, Value: value}
 }
 
@@ -227,12 +238,15 @@ type group iter.Seq[vdom.Attr]
 
 func (group) isAttr() {}
 
-// Group returns an Attr that, when used in an element's attribute list,
-// contributes its own attrs to that list in order, as if they had been
-// written there directly. Groups may be nested arbitrarily.
-func Group(attrs ...Attr) Attr {
+// A Group is a sequence of HTML attributes.
+// It contributes its contents
+// to its parent's child list in order,
+// as if they had been written there directly.
+//
+// Groups may be nested arbitrarily.
+func Group(a ...Attr) Attr {
 	return group(func(yield func(vdom.Attr) bool) {
-		for _, a := range attrs {
+		for _, a := range a {
 			switch v := a.(type) {
 			case attr:
 				if !yield(vdom.Attr(v)) {
