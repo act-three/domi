@@ -1,7 +1,6 @@
 package domi
 
 import (
-	"strings"
 	"testing"
 )
 
@@ -16,7 +15,7 @@ func TestSpliceNoEventField(t *testing.T) {
 	if !ok {
 		t.Fatal("handler not registered")
 	}
-	got, err := spliceEvent[plainMsg](raw, []byte(`{"type":"click"}`))
+	got, err := unmarshalMsg[plainMsg](raw, []byte(`{"type":"click"}`))
 	if err != nil {
 		t.Fatalf("splice: %v", err)
 	}
@@ -42,7 +41,7 @@ func TestSpliceWithEventField(t *testing.T) {
 	a := On("input")(msg{Tag: "EditName"}).(attr)
 	raw, _ := lookupHandler(a.Value)
 	blob := []byte(`{"type":"input","target":{"tag":"input","name":"name","value":"Em"}}`)
-	got, err := spliceEvent[msg](raw, blob)
+	got, err := unmarshalMsg[msg](raw, blob)
 	if err != nil {
 		t.Fatalf("splice: %v", err)
 	}
@@ -88,7 +87,7 @@ func TestSpliceMultipleHandlersSameEvent(t *testing.T) {
 	blob := []byte(`{"type":"keydown","key":"s","ctrl":true,"target":{"tag":"input"}}`)
 	for _, hv := range []string{a.Value, b.Value} {
 		raw, _ := lookupHandler(hv)
-		got, err := spliceEvent[msg](raw, blob)
+		got, err := unmarshalMsg[msg](raw, blob)
 		if err != nil {
 			t.Fatalf("splice: %v", err)
 		}
@@ -110,36 +109,41 @@ func TestSpliceFormFields(t *testing.T) {
 	a := On("submit")(msg{Tag: "Save"}).(attr)
 	raw, _ := lookupHandler(a.Value)
 	blob := []byte(`{"type":"submit","target":{"tag":"form"},"form":{"name":"Em","email":"e@x"}}`)
-	got, _ := spliceEvent[msg](raw, blob)
+	got, _ := unmarshalMsg[msg](raw, blob)
 	if got.Event.Form["name"] != "Em" || got.Event.Form["email"] != "e@x" {
 		t.Fatalf("form not spliced: %+v", got.Event.Form)
 	}
 }
 
-// Two `domi:"event"` tagged fields in one Msg is a registration error.
-// The field type is irrelevant — the validation checks the tag.
-func TestMultipleEventFieldsPanics(t *testing.T) {
-	type bad struct {
-		A struct{} `domi:"event"`
-		B struct{} `domi:"event"`
+// When a Msg has more than one `domi:"event"` field, the first one in
+// declaration order wins; later ones are ignored.
+func TestMultipleEventFieldsFirstWins(t *testing.T) {
+	type evt struct {
+		Type string `json:"type"`
 	}
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("expected panic on multiple domi:\"event\" fields")
-		}
-		if !strings.Contains(r.(error).Error(), "multiple") {
-			t.Fatalf("wrong panic message: %v", r)
-		}
-	}()
-	On("click")(bad{})
+	type msg struct {
+		A evt `domi:"event" json:"a"`
+		B evt `domi:"event" json:"b"`
+	}
+	a := On("click")(msg{}).(attr)
+	raw, _ := lookupHandler(a.Value)
+	got, err := unmarshalMsg[msg](raw, []byte(`{"type":"click"}`))
+	if err != nil {
+		t.Fatalf("splice: %v", err)
+	}
+	if got.A.Type != "click" {
+		t.Fatalf("event did not land in first tagged field: %+v", got)
+	}
+	if got.B.Type != "" {
+		t.Fatalf("event leaked into second tagged field: %+v", got)
+	}
 }
 
 // Non-struct Msg (e.g. a string) is fine — no event field, no panic.
 func TestNonStructMsg(t *testing.T) {
 	a := On("click")("hello").(attr)
 	raw, _ := lookupHandler(a.Value)
-	got, err := spliceEvent[string](raw, []byte(`{"type":"click"}`))
+	got, err := unmarshalMsg[string](raw, []byte(`{"type":"click"}`))
 	if err != nil {
 		t.Fatalf("splice: %v", err)
 	}
@@ -160,7 +164,7 @@ func TestSpliceEmptyBlob(t *testing.T) {
 	}
 	a := On("click")(msg{Tag: "Tick"}).(attr)
 	raw, _ := lookupHandler(a.Value)
-	got, err := spliceEvent[msg](raw, nil)
+	got, err := unmarshalMsg[msg](raw, nil)
 	if err != nil {
 		t.Fatalf("splice: %v", err)
 	}
