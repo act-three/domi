@@ -24,7 +24,7 @@ type App[Msg any] interface {
 }
 
 // A Cmd is a deferred side-effect that eventually produces a Msg.
-// The framework runs each in Cmd its own goroutine
+// The framework runs each Cmd in its own goroutine
 // and passes the resulting Msg back into Update.
 type Cmd[Msg any] struct {
 	s iter.Seq[func(context.Context) Msg]
