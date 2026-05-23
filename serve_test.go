@@ -13,7 +13,7 @@ import (
 // so View produces a different tree (and the diff produces real patches).
 type counterApp struct{ n int }
 
-func (a *counterApp) Update(int) Cmd[int] { a.n++; return CmdNone[int]() }
+func (a *counterApp) Update(int) Cmd[int] { a.n++; return Batch[int]() }
 func (a *counterApp) View() (string, Node) {
 	return "", Tag("div")()(Text(fmt.Sprintf("%d", a.n)))
 }
@@ -63,7 +63,7 @@ func TestSessionLoopPatchSendInterruptible(t *testing.T) {
 // members as separate top-level children of the mount.
 type fragmentApp struct{ n int }
 
-func (a *fragmentApp) Update(int) Cmd[int] { a.n++; return CmdNone[int]() }
+func (a *fragmentApp) Update(int) Cmd[int] { a.n++; return Batch[int]() }
 func (a *fragmentApp) View() (string, Node) {
 	return "", Fragment(
 		Tag("div")()(Text(fmt.Sprintf("a%d", a.n))),
@@ -103,7 +103,7 @@ func TestSpawnCmdPassesSessionCtx(t *testing.T) {
 	defer cancel()
 	msgChan := make(chan int, 1)
 	got := make(chan context.Context, 1)
-	cmd := CmdFn(func(c context.Context) int {
+	cmd := Func(func(c context.Context) int {
 		got <- c
 		return 0
 	})
@@ -125,7 +125,7 @@ func TestSpawnCmdSendInterruptibleOnCancel(t *testing.T) {
 	msgChan := make(chan int) // unbuffered, no reader
 	started := make(chan struct{})
 	exited := make(chan struct{})
-	cmd := CmdFn(func(c context.Context) int {
+	cmd := Func(func(c context.Context) int {
 		close(started)
 		<-c.Done() // honor ctx
 		return 0

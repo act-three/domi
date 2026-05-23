@@ -144,7 +144,7 @@ func sessionLoop[Msg any](
 // msgChan, so a cancelled session doesn't leak goroutines waiting on a
 // reader that will never come.
 func spawnCmd[Msg any](ctx context.Context, cmd Cmd[Msg], msgTx chan<- Msg) {
-	for _, fn := range cmd.fns {
+	for fn := range cmd.s {
 		go func(f func(context.Context) Msg) {
 			msg := f(ctx)
 			select {
@@ -299,17 +299,17 @@ func handleSSE[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 func document(title, sessionID string, body Node) vdom.Node {
 	return vdom.Element(Tag("html")()(
 		Tag("head")()(
-			Tag("meta")(Attribute("charset", "utf-8")),
+			Tag("meta")(Name("charset", "utf-8")),
 			Tag("title")()(Text(title)),
 		),
 		Tag("body")()(
 			Tag("div")(
-				Attribute("id", "domi-root"),
-				Attribute("data-domi-session", sessionID),
+				Name("id", "domi-root"),
+				Name("data-domi-session", sessionID),
 			)(body),
 			Tag("script")(
-				Attribute("type", "module"),
-				Attribute("src", clientJSPath),
+				Name("type", "module"),
+				Name("src", clientJSPath),
 			),
 		),
 	).(element))
