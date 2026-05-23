@@ -25,7 +25,7 @@ func TestSessionLoopExitsOnCancel(t *testing.T) {
 	patchChan := make(chan []vdom.Patch, 1)
 	done := make(chan struct{})
 	go func() {
-		sessionLoop(ctx, &counterApp{}, "", lowerOne(Tag("div")()()), msgChan, patchChan)
+		sessionLoop(ctx, &counterApp{}, "", lower(Tag("div")()()), msgChan, patchChan)
 		close(done)
 	}()
 	cancel()
@@ -46,7 +46,7 @@ func TestSessionLoopPatchSendInterruptible(t *testing.T) {
 	msgChan <- 1
 	done := make(chan struct{})
 	go func() {
-		sessionLoop(ctx, &counterApp{}, "", lowerOne(Tag("div")()()), msgChan, patchChan)
+		sessionLoop(ctx, &counterApp{}, "", lower(Tag("div")()()), msgChan, patchChan)
 		close(done)
 	}()
 	// Give the loop time to consume the message and block on the send.
@@ -56,6 +56,43 @@ func TestSessionLoopPatchSendInterruptible(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("sessionLoop blocked on patchTx send despite ctx cancel")
+	}
+}
+
+// fragmentApp's View returns a Fragment so the framework treats its
+// members as separate top-level children of the mount.
+type fragmentApp struct{ n int }
+
+func (a *fragmentApp) Update(int) Cmd[int] { a.n++; return CmdNone[int]() }
+func (a *fragmentApp) View() (string, Node) {
+	return "", Fragment(
+		Tag("div")()(Text(fmt.Sprintf("a%d", a.n))),
+		Tag("div")()(Text(fmt.Sprintf("b%d", a.n))),
+	)
+}
+
+// A Fragment returned from View lowers to multiple top-level children,
+// and sessionLoop diffs them positionally against the previous frame.
+func TestSessionLoopFragmentAtRoot(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	msgChan := make(chan int, 1)
+	patchChan := make(chan []vdom.Patch, 1)
+	app := &fragmentApp{}
+	_, view0 := app.View()
+	go sessionLoop(ctx, app, "", lower(view0), msgChan, patchChan)
+	msgChan <- 1
+	select {
+	case patches := <-patchChan:
+		// Each <div> child's text changes (a0→a1, b0→b1), producing
+		// two set_text patches addressed at [0,0] and [1,0]. The exact
+		// shape isn't the contract — what matters is that *both*
+		// top-level siblings were diffed, not just one.
+		if len(patches) < 2 {
+			t.Fatalf("expected patches for both Fragment siblings, got %d: %+v", len(patches), patches)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("no patches arrived")
 	}
 }
 

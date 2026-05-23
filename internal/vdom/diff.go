@@ -50,8 +50,8 @@ type patch struct {
 }
 
 // Diff produces the minimal patch list that transforms old into new.
-func Diff(old, new Node) []Patch {
-	patches := diff(old, new)
+func Diff(old, new []Node) []Patch {
+	patches := diffFragment(old, new, nil, nil)
 	out := make([]Patch, len(patches))
 	for i, p := range patches {
 		out[i] = Patch{p: p}
@@ -64,13 +64,6 @@ func Diff(old, new Node) []Patch {
 // it before or after DOM patches as needed.
 func SetTitle(title string) Patch {
 	return Patch{p: patch{Op: "set_title", Value: title}}
-}
-
-// diff is the internal entrypoint that returns the unwrapped patch
-// slice. Tests in this package use it directly so they can read patch
-// fields without going through the Patch wrapper.
-func diff(old, new Node) []patch {
-	return diffNode(old, new, nil, nil)
 }
 
 func diffNode(old, new Node, path []int, out []patch) []patch {
@@ -97,7 +90,7 @@ func diffNode(old, new Node, path []int, out []patch) []patch {
 		if o.keys != nil {
 			out = diffKeyed(o.children, n.children, o.keys, n.keys, path, out)
 		} else {
-			out = diffChildren(o.children, n.children, path, out)
+			out = diffFragment(o.children, n.children, path, out)
 		}
 	}
 	return out
@@ -129,7 +122,7 @@ func diffAttrs(old, new []Attr, path []int, out []patch) []patch {
 	return out
 }
 
-func diffChildren(old, new []Node, path []int, out []patch) []patch {
+func diffFragment(old, new []Node, path []int, out []patch) []patch {
 	// Coalesce adjacent text siblings before diffing. The HTML parser
 	// merges adjacent text into one DOM Text node on round-trip, so
 	// position-indexed patches must address children using the merged

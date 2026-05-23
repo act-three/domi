@@ -109,7 +109,7 @@ func sessionLoop[Msg any](
 	ctx context.Context,
 	app App[Msg],
 	prevTitle string,
-	prev vdom.Node,
+	prev []vdom.Node,
 	msgChan chan Msg,
 	patchTx chan<- []vdom.Patch,
 ) {
@@ -119,8 +119,8 @@ func sessionLoop[Msg any](
 			return
 		case msg := <-msgChan:
 			cmd := app.Update(msg)
-			title, node := app.View()
-			next := lowerOne(node)
+			title, view := app.View()
+			next := lower(view)
 			patches := vdom.Diff(prev, next)
 			if title != prevTitle {
 				patches = append([]vdom.Patch{vdom.SetTitle(title)}, patches...)
@@ -162,7 +162,7 @@ func handleRoot[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), store *sessionStore
 		id := newSessionID()
 		app, cmd := f()
 		title, view := app.View()
-		initial := lowerOne(view)
+		initial := lower(view)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		st := &sessionState[Msg]{
@@ -293,10 +293,9 @@ func handleSSE[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 }
 
 // document builds the HTML shell wrapping body — head with title, body
-// with the session-marked mount div and the bootstrap script tag.
-// Constructed with the public Tag builders so future moves (e.g.
-// accepting an App-supplied head) slot in without reshaping the
-// construction.
+// with the session-marked mount div and the bootstrap script tag. The
+// mount div anchors the patch session on the client; its children are
+// the App's View tree (a Fragment expanding into multiple siblings).
 func document(title, sessionID string, body Node) vdom.Node {
 	return vdom.Element(Tag("html")()(
 		Tag("head")()(

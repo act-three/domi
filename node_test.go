@@ -1,10 +1,22 @@
 package domi
 
 import (
+	"fmt"
 	"testing"
 
 	"ily.dev/domi/internal/vdom"
 )
+
+// lowerOne narrows a single Node to its lowered vdom.Node form, asserting
+// the Node materializes to exactly one entry. Test helper for assertions
+// on single-node trees.
+func lowerOne(n Node) vdom.Node {
+	out := lower(n)
+	if len(out) != 1 {
+		panic(fmt.Sprintf("lowerOne: expected 1 node, got %d", len(out)))
+	}
+	return out[0]
+}
 
 type tMsg struct {
 	Tag string `json:"t"`
@@ -54,20 +66,23 @@ func TestFragmentPreservesSiblingOrder(t *testing.T) {
 }
 
 func TestFragmentIsTransparentToDiff(t *testing.T) {
-	a := lowerOne(Tag("div")()(Fragment(Text("a"), Text("b"))))
-	b := lowerOne(Tag("div")()(Text("a"), Text("b")))
+	a := lower(Tag("div")()(Fragment(Text("a"), Text("b"))))
+	b := lower(Tag("div")()(Text("a"), Text("b")))
 	if got := vdom.Diff(a, b); len(got) != 0 {
 		t.Fatalf("Fragment-wrapped should diff identically: got %+v", got)
 	}
 }
 
-func TestFragmentAtRootPanics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("expected panic for Fragment at root, got none")
-		}
-	}()
-	_ = lowerOne(Fragment(Tag("div")()()))
+func TestFragmentAtRootLowers(t *testing.T) {
+	// A Fragment returned from App.View becomes the mount's children.
+	got := lower(Fragment(Tag("div")()(Text("a")), Tag("span")()(Text("b"))))
+	if len(got) != 2 {
+		t.Fatalf("expected 2 lowered nodes from Fragment root, got %d: %+v", len(got), got)
+	}
+	if vdom.Render(got[0]) != "<div>a</div>" || vdom.Render(got[1]) != "<span>b</span>" {
+		t.Fatalf("Fragment children should lower in order: %q, %q",
+			vdom.Render(got[0]), vdom.Render(got[1]))
+	}
 }
 
 func TestFragmentInKeyedPanics(t *testing.T) {

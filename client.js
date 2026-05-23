@@ -178,11 +178,13 @@ function postEnvelope(sessionId, h, e) {
 
 function initSession(container) {
   const sessionId = container.dataset.domiSession;
-  let root = container.firstChild;
+  // The container is the mount div — framework territory, constructed
+  // with stable tag + attrs, so it's never the target of a patch. App
+  // content sits as its children, addressed by patches at [0], [1], …
+  let root = container;
 
-  // Delegated listeners on the container (not root): the user's top-level
-  // node — which `root` points at — can be replaced by a `replace` patch
-  // at path [], and we don't want event delegation to die with it.
+  // Delegated listeners on the container: it stays put for the session,
+  // so listeners don't have to migrate when patches mutate its subtree.
   for (const ev of EVENTS) {
     container.addEventListener(ev, (e) => {
       let el = e.target;
