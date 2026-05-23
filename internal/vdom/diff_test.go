@@ -30,6 +30,13 @@ func keyedList(keys ...string) Element {
 	return NewElement("ul", nil, children, slices.Clone(keys))
 }
 
+// diffOne returns the unwrapped patch slice for two single-root trees,
+// so tests can read patch fields directly without going through the
+// [Patch] wrapper that public [Diff] returns.
+func diffOne(old, new Node) []patch {
+	return diffNode(old, new, nil, nil)
+}
+
 // countOps returns counts of structural patch ops in `patches`.
 func countOps(patches []patch) (inserts, removes, moves int) {
 	for _, p := range patches {
@@ -47,7 +54,7 @@ func countOps(patches []patch) (inserts, removes, moves int) {
 
 func TestNoChange(t *testing.T) {
 	a := el("div", tx("hi"))
-	if got := diff(a, a); len(got) != 0 {
+	if got := diffOne(a, a); len(got) != 0 {
 		t.Fatalf("want no patches, got %+v", got)
 	}
 }
@@ -55,7 +62,7 @@ func TestNoChange(t *testing.T) {
 func TestTextChange(t *testing.T) {
 	a := el("div", tx("hi"))
 	b := el("div", tx("bye"))
-	got := diff(a, b)
+	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "set_text" || got[0].Value != "bye" {
 		t.Fatalf("unexpected: %+v", got)
 	}
@@ -64,7 +71,7 @@ func TestTextChange(t *testing.T) {
 func TestTagChangeReplaces(t *testing.T) {
 	a := el("div")
 	b := el("span")
-	got := diff(a, b)
+	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "replace" {
 		t.Fatalf("unexpected: %+v", got)
 	}
@@ -73,7 +80,7 @@ func TestTagChangeReplaces(t *testing.T) {
 func TestKeyedReorder(t *testing.T) {
 	a := keyedList("a", "b", "c")
 	b := keyedList("c", "a", "b")
-	got := diff(a, b)
+	got := diffOne(a, b)
 	for _, p := range got {
 		if p.Op == "move_child" {
 			return
@@ -85,7 +92,7 @@ func TestKeyedReorder(t *testing.T) {
 func TestKeyedInsertMiddle(t *testing.T) {
 	a := keyedList("a", "c")
 	b := keyedList("a", "b", "c")
-	got := diff(a, b)
+	got := diffOne(a, b)
 	for _, p := range got {
 		if p.Op == "insert_child" && p.Key == "b" && p.Before == "c" {
 			return
@@ -97,7 +104,7 @@ func TestKeyedInsertMiddle(t *testing.T) {
 func TestKeyedRemove(t *testing.T) {
 	a := keyedList("a", "b", "c")
 	b := keyedList("a", "c")
-	got := diff(a, b)
+	got := diffOne(a, b)
 	for _, p := range got {
 		if p.Op == "remove_child" && p.Key == "b" {
 			return
@@ -109,7 +116,7 @@ func TestKeyedRemove(t *testing.T) {
 func TestAttrAdded(t *testing.T) {
 	a := el("div")
 	b := NewElement("div", []Attr{at("class", "x")}, nil, nil)
-	got := diff(a, b)
+	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "set_attr" || got[0].Name != "class" || got[0].Value != "x" {
 		t.Fatalf("expected single set_attr, got %+v", got)
 	}
@@ -118,7 +125,7 @@ func TestAttrAdded(t *testing.T) {
 func TestAttrChanged(t *testing.T) {
 	a := NewElement("div", []Attr{at("class", "x")}, nil, nil)
 	b := NewElement("div", []Attr{at("class", "y")}, nil, nil)
-	got := diff(a, b)
+	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "set_attr" || got[0].Value != "y" {
 		t.Fatalf("expected set_attr to y, got %+v", got)
 	}
@@ -127,7 +134,7 @@ func TestAttrChanged(t *testing.T) {
 func TestAttrRemoved(t *testing.T) {
 	a := NewElement("div", []Attr{at("class", "x")}, nil, nil)
 	b := el("div")
-	got := diff(a, b)
+	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "remove_attr" || got[0].Name != "class" {
 		t.Fatalf("expected remove_attr, got %+v", got)
 	}
@@ -136,7 +143,7 @@ func TestAttrRemoved(t *testing.T) {
 func TestReplacePatchCarriesHTML(t *testing.T) {
 	a := el("div")
 	b := el("span", tx("hi"))
-	got := diff(a, b)
+	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "replace" {
 		t.Fatalf("expected single replace, got %+v", got)
 	}
@@ -148,7 +155,7 @@ func TestReplacePatchCarriesHTML(t *testing.T) {
 func TestInsertChildPatchCarriesHTML(t *testing.T) {
 	a := el("ul")
 	b := el("ul", el("li", tx("one")))
-	got := diff(a, b)
+	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "insert_child" {
 		t.Fatalf("expected single insert_child, got %+v", got)
 	}
@@ -196,7 +203,7 @@ func TestLISEmpty(t *testing.T) {
 func TestKeyedAppendOnlyInserts(t *testing.T) {
 	a := keyedList("a", "b", "c")
 	b := keyedList("a", "b", "c", "d", "e")
-	got := diff(a, b)
+	got := diffOne(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 2 || rm != 0 || mv != 0 {
 		t.Fatalf("want 2 inserts, 0 removes, 0 moves; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -207,7 +214,7 @@ func TestKeyedAppendOnlyInserts(t *testing.T) {
 func TestKeyedPrependOnlyInserts(t *testing.T) {
 	a := keyedList("c", "d", "e")
 	b := keyedList("a", "b", "c", "d", "e")
-	got := diff(a, b)
+	got := diffOne(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 2 || rm != 0 || mv != 0 {
 		t.Fatalf("want 2 inserts, 0 removes, 0 moves; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -218,7 +225,7 @@ func TestKeyedPrependOnlyInserts(t *testing.T) {
 func TestKeyedMiddleInsertOnePatch(t *testing.T) {
 	a := keyedList("a", "b", "d")
 	b := keyedList("a", "b", "c", "d")
-	got := diff(a, b)
+	got := diffOne(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 1 || rm != 0 || mv != 0 {
 		t.Fatalf("want 1 insert only; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -229,7 +236,7 @@ func TestKeyedMiddleInsertOnePatch(t *testing.T) {
 func TestKeyedMiddleDeleteOnePatch(t *testing.T) {
 	a := keyedList("a", "b", "c", "d")
 	b := keyedList("a", "b", "d")
-	got := diff(a, b)
+	got := diffOne(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 0 || rm != 1 || mv != 0 {
 		t.Fatalf("want 1 remove only; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -240,7 +247,7 @@ func TestKeyedMiddleDeleteOnePatch(t *testing.T) {
 func TestKeyedAdjacentSwapOneMove(t *testing.T) {
 	a := keyedList("a", "b", "c", "d")
 	b := keyedList("a", "c", "b", "d")
-	got := diff(a, b)
+	got := diffOne(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 0 || rm != 0 || mv != 1 {
 		t.Fatalf("want exactly 1 move; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -252,7 +259,7 @@ func TestKeyedAdjacentSwapOneMove(t *testing.T) {
 func TestKeyedReverseMinimalMoves(t *testing.T) {
 	a := keyedList("a", "b", "c", "d", "e")
 	b := keyedList("e", "d", "c", "b", "a")
-	got := diff(a, b)
+	got := diffOne(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 0 || rm != 0 || mv != 4 {
 		t.Fatalf("want 4 moves; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -269,7 +276,7 @@ func TestKeyedReverseMinimalMoves(t *testing.T) {
 func TestKeyedRule4TailToHead(t *testing.T) {
 	a := keyedList("a", "b", "c", "d")
 	b := keyedList("d", "a", "b", "c")
-	got := diff(a, b)
+	got := diffOne(a, b)
 	ins, rm, mv := countOps(got)
 	if ins != 0 || rm != 0 || mv != 1 {
 		t.Fatalf("want exactly 1 move; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
@@ -286,7 +293,7 @@ func TestKeyedRule4TailToHead(t *testing.T) {
 // Identical: no patches at all.
 func TestKeyedIdenticalNoOps(t *testing.T) {
 	a := keyedList("a", "b", "c", "d")
-	got := diff(a, a)
+	got := diffOne(a, a)
 	if len(got) != 0 {
 		t.Fatalf("want no patches, got %+v", got)
 	}
@@ -297,7 +304,7 @@ func TestKeyedIdenticalNoOps(t *testing.T) {
 func TestKeyedMixedRemoveInsertMove(t *testing.T) {
 	a := keyedList("a", "b", "c", "d", "e") // remove c, insert x, swap d/b
 	b := keyedList("a", "d", "x", "b", "e")
-	got := diff(a, b)
+	got := diffOne(a, b)
 	ins, rm, _ := countOps(got)
 	if ins != 1 || rm != 1 {
 		t.Fatalf("want 1 insert and 1 remove; got %+v", got)
@@ -310,7 +317,7 @@ func TestKeyedMixedRemoveInsertMove(t *testing.T) {
 func TestAttrCombiningBeforeDiff(t *testing.T) {
 	a := NewElement("div", []Attr{at("class", "a")}, nil, nil)
 	b := NewElement("div", []Attr{at("class", "a"), at("class", "b")}, nil, nil)
-	got := diff(a, b)
+	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "set_attr" || got[0].Value != "a b" {
 		t.Fatalf("expected class to combine to \"a b\", got %+v", got)
 	}
@@ -335,7 +342,7 @@ func TestAttrCombiningBeforeDiff(t *testing.T) {
 func TestKeyedOnlyInsertsAnchorOrder(t *testing.T) {
 	old := keyedList("a")
 	next := keyedList("b", "c", "a")
-	got := diff(old, next)
+	got := diffOne(old, next)
 	var inserts []patch
 	for _, p := range got {
 		if p.Op == "insert_child" {
@@ -366,7 +373,7 @@ func TestKeyedOnlyInsertsAnchorOrder(t *testing.T) {
 func TestAdjacentTextCoalescesBeforePositionalDiff(t *testing.T) {
 	old := el("div", tx("a"), tx("b"), el("span"))
 	next := el("div", el("span"))
-	got := diff(old, next)
+	got := diffOne(old, next)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 patches (one remove + one replace), got %d: %+v", len(got), got)
 	}

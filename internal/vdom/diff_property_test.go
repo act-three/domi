@@ -234,7 +234,7 @@ func checkProperty(t *testing.T, a *bunApplier, seed uint64, verbose bool) {
 	old := genElement(rng.Uint64(), 0)
 	new := genElement(rng.Uint64(), 0)
 
-	patches := diff(old, new)
+	patches := diffOne(old, new)
 	gotHTML, err := a.apply(Render(old), patches)
 	if err != nil {
 		if verbose {
@@ -269,7 +269,7 @@ func TestSetAttrEmptyValueAppliesAsEmptyString(t *testing.T) {
 	old := NewElement("div", nil, nil, nil)
 	new := NewElement("div", []Attr{{Name: "class", Value: ""}}, nil, nil)
 
-	gotHTML, err := a.apply(Render(old), diff(old, new))
+	gotHTML, err := a.apply(Render(old), diffOne(old, new))
 	if err != nil {
 		t.Fatalf("bun apply: %v", err)
 	}

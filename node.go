@@ -92,8 +92,7 @@ func Tag(name string) func(...Attr) Element {
 	return func(attrs ...Attr) Element {
 		a := slices.Collect(iter.Seq[vdom.Attr](Group(attrs...).(group)))
 		return func(children ...Node) Node {
-			c := slices.Collect(iter.Seq[vdom.Node](Fragment(children...).(fragment)))
-			return element(vdom.NewElement(name, a, c, nil))
+			return element(vdom.NewElement(name, a, lower(children...), nil))
 		}
 	}
 }
@@ -156,13 +155,11 @@ type fragment iter.Seq[vdom.Node]
 
 func (fragment) isNode() {}
 
-// Fragment returns a Node that, when used as a child of a [Tag]
-// element, contributes its children to that element's child list in
-// order, as if they had been written there directly.
+// Fragment returns a Node that contributes its children to its parent's
+// child list in order, as if they had been written there directly.
 //
 // A Fragment cannot be keyed — [Keyed] children must each be a single
-// element with an identity — and cannot stand at the root of the tree
-// returned by [App.View]. Wrap it in an element first.
+// element with an identity.
 func Fragment(children ...Node) Node {
 	return fragment(func(yield func(vdom.Node) bool) {
 		for _, c := range children {
@@ -188,19 +185,11 @@ func Fragment(children ...Node) Node {
 	})
 }
 
-// lowerOne narrows a single Node to its lowered vdom.Node form. Called
-// by the server on each [App.View] result. A Fragment is only valid
-// inside an element; using one as the tree root panics.
-func lowerOne(n Node) vdom.Node {
-	switch v := n.(type) {
-	case Element:
-		return v().(node).lowered()
-	case node:
-		return v.lowered()
-	case fragment:
-		panic("domi: Fragment cannot stand alone; wrap it in an element")
-	}
-	panic(fmt.Sprintf("domi: cannot lower %T", n))
+// lower flattens nodes into their lowered vdom.Node form, expanding
+// any [Fragment] entries inline so the result is a flat slice of
+// element and text nodes ready for vdom rendering or diffing.
+func lower(nodes ...Node) []vdom.Node {
+	return slices.Collect(iter.Seq[vdom.Node](Fragment(nodes...).(fragment)))
 }
 
 // Attr is an opaque attribute carried by an element. Construct via
