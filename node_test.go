@@ -25,8 +25,8 @@ type tMsg struct {
 // Two On() calls with the same Msg value share a registry slot because
 // the hash is content-addressable.
 func TestHandlerHashIsContentAddressable(t *testing.T) {
-	a := On("click", tMsg{"x"}).(attr)
-	b := On("click", tMsg{"x"}).(attr)
+	a := On("click")(tMsg{"x"}).(attr)
+	b := On("click")(tMsg{"x"}).(attr)
 	if a.Value != b.Value {
 		t.Fatalf("identical Msgs should produce identical attr values; got %q vs %q", a.Value, b.Value)
 	}
