@@ -7,44 +7,6 @@ import (
 	"sync"
 )
 
-// Event is the payload delivered with every event dispatch. To receive
-// it, embed a field of this type in your Msg and mark it with a
-// domi:"event" struct tag:
-//
-//	type Msg struct {
-//	    Tag   string
-//	    Event domi.Event `domi:"event"`
-//	}
-//
-// On each dispatch the framework fills the tagged field with details of
-// the firing event before calling Update; any value pre-set on the field
-// in the [On] literal is ignored. Msgs delivered by a [Cmd] always have
-// a zero Event field.
-type Event struct {
-	Type    string            `json:"type"`
-	Key     string            `json:"key,omitempty"`
-	Code    string            `json:"code,omitempty"`
-	Button  int               `json:"button,omitempty"`
-	ClientX int               `json:"clientX,omitempty"`
-	ClientY int               `json:"clientY,omitempty"`
-	Ctrl    bool              `json:"ctrl,omitempty"`
-	Shift   bool              `json:"shift,omitempty"`
-	Alt     bool              `json:"alt,omitempty"`
-	Meta    bool              `json:"meta,omitempty"`
-	Target  Target            `json:"target"`
-	Form    map[string]string `json:"form,omitempty"`
-}
-
-// Target describes the element the event fired on.
-type Target struct {
-	Tag     string            `json:"tag"`
-	ID      string            `json:"id,omitempty"`
-	Name    string            `json:"name,omitempty"`
-	Value   string            `json:"value,omitempty"`
-	Checked bool              `json:"checked,omitempty"`
-	Data    map[string]string `json:"data,omitempty"`
-}
-
 // msgTypeInfo caches the result of scanning a Msg type for a `domi:"event"`
 // tagged field. Stored per reflect.Type in msgTypeCache so we pay the
 // reflection cost once per Msg type, not per On() call or per dispatch.
@@ -86,19 +48,18 @@ func scanMsgType(t reflect.Type) *msgTypeInfo {
 	return &msgTypeInfo{eventFieldPath: path}
 }
 
-// On returns a builder for an attribute that binds msg to event on
-// the resulting element: when the browser fires that event, the
-// framework dispatches msg to the App's Update.
+// On returns a builder for an attribute that binds msg to event
+// on the resulting element.
+// When the browser fires the named event,
+// the framework calls Update(msg).
 //
-// Multiple On(event)(...) attributes on the same element all fire when
-// the event occurs; each msg is dispatched to Update in the order the
-// attributes were attached.
+// Multiple On(event)(...) attributes on the same element all fire
+// when the event occurs.
 //
-// If msg's type contains a field of type [Event] with a domi:"event"
-// struct tag, the framework fills that field with the firing event's
-// details before calling Update. The value of that field in the literal
-// passed to the builder is ignored — only the other fields contribute
-// to the Msg's identity.
+// If msg has a field tagged domi:"event",
+// the framework unmarshals the event into that field.
+// See [ily.dev/domi/event.Event] for a convenience type
+// that captures everything the client sends.
 func On(event string) func(msg any) Attr {
 	return func(msg any) Attr {
 		info := msgTypeInfoFor(reflect.TypeOf(msg))
