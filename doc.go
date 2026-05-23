@@ -23,4 +23,24 @@
 // this package and its subpackages. Application code and third-party
 // packages should pick data attributes outside that prefix to avoid
 // collisions with framework internals — present or future.
+//
+// # Bundling the Client
+//
+// The client-side runtime for this module lives in file client.js
+// at the module root.
+// Apps using the default [Handler] without further customization
+// don't need to access this file directly.
+// The framework includes it in the default document head.
+//
+// Apps that provide their own document shell can add client.js
+// into their JavaScript bundle alongside their app code.
+// The filesystem path of client.js is:
+//
+//	$(go list -m -f '{{.Dir}}' ily.dev/domi)/client.js
+//
+// Include this path in your JavaScript bundle,
+// import the module, and call run:
+//
+//	import * as Domi from "path/to/client.js";
+//	Domi.run(); // after document.body is ready
 package domi
