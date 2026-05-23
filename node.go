@@ -222,10 +222,12 @@ type attr vdom.Attr
 
 func (attr) isAttr() {}
 
-// Name returns an HTML attribute with the given name and value
-// (e.g. class="foo").
-func Name(name, value string) Attr {
-	return attr{Name: name, Value: value}
+// Name returns a builder for an HTML attribute with the given name. (e.g. class).
+// Call it to obtain an [Attr] with the given value (e.g. class="foo").
+func Name(name string) func(value string) Attr {
+	return func(value string) Attr {
+		return attr{Name: name, Value: value}
+	}
 }
 
 // group is the lowered form of a [Group]: a sequence of vdom.Attrs that

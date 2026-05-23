@@ -101,16 +101,16 @@ func TestFragmentInKeyedPanics(t *testing.T) {
 // indistinguishable from writing its attrs inline at the use site.
 
 func TestGroupNestedFlattens(t *testing.T) {
-	a := lowerOne(Tag("div")(Group(Group(Name("class", "a"), Name("id", "x")), Name("data-x", "1")))())
-	b := lowerOne(Tag("div")(Name("class", "a"), Name("id", "x"), Name("data-x", "1"))())
+	a := lowerOne(Tag("div")(Group(Group(Name("class")("a"), Name("id")("x")), Name("data-x")("1")))())
+	b := lowerOne(Tag("div")(Name("class")("a"), Name("id")("x"), Name("data-x")("1"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("nested Group should flatten: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
 }
 
 func TestGroupEmptyContributesNothing(t *testing.T) {
-	a := lowerOne(Tag("div")(Group(), Name("id", "x"))())
-	b := lowerOne(Tag("div")(Name("id", "x"))())
+	a := lowerOne(Tag("div")(Group(), Name("id")("x"))())
+	b := lowerOne(Tag("div")(Name("id")("x"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("empty Group should contribute nothing: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
@@ -118,15 +118,15 @@ func TestGroupEmptyContributesNothing(t *testing.T) {
 
 func TestGroupPreservesAttrOrder(t *testing.T) {
 	a := lowerOne(Tag("div")(
-		Name("id", "x"),
-		Group(Name("class", "a"), Name("data-y", "1")),
-		Name("data-z", "2"),
+		Name("id")("x"),
+		Group(Name("class")("a"), Name("data-y")("1")),
+		Name("data-z")("2"),
 	)())
 	b := lowerOne(Tag("div")(
-		Name("id", "x"),
-		Name("class", "a"),
-		Name("data-y", "1"),
-		Name("data-z", "2"),
+		Name("id")("x"),
+		Name("class")("a"),
+		Name("data-y")("1"),
+		Name("data-z")("2"),
 	)())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("Group attrs should appear in position: %q vs %q", vdom.Render(a), vdom.Render(b))
@@ -137,8 +137,8 @@ func TestGroupPreservesAttrOrder(t *testing.T) {
 // a Group of duplicate classes should combine with a sibling Class just
 // like inline duplicates do.
 func TestGroupClassCombinesAcrossBoundary(t *testing.T) {
-	a := lowerOne(Tag("div")(Group(Name("class", "a"), Name("class", "b")), Name("class", "c"))())
-	b := lowerOne(Tag("div")(Name("class", "a"), Name("class", "b"), Name("class", "c"))())
+	a := lowerOne(Tag("div")(Group(Name("class")("a"), Name("class")("b")), Name("class")("c"))())
+	b := lowerOne(Tag("div")(Name("class")("a"), Name("class")("b"), Name("class")("c"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("Group-of-classes should combine like inline: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
@@ -147,8 +147,8 @@ func TestGroupClassCombinesAcrossBoundary(t *testing.T) {
 // Group works in Keyed's attrs slot for the same reason it works in
 // Tag's — both lower attrs at construction via the same path.
 func TestGroupInKeyedAttrs(t *testing.T) {
-	a := lowerOne(Keyed("ul")(Group(Name("class", "a"), Name("id", "x")))(func(yield func(string, Node) bool) {}))
-	b := lowerOne(Keyed("ul")(Name("class", "a"), Name("id", "x"))(func(yield func(string, Node) bool) {}))
+	a := lowerOne(Keyed("ul")(Group(Name("class")("a"), Name("id")("x")))(func(yield func(string, Node) bool) {}))
+	b := lowerOne(Keyed("ul")(Name("class")("a"), Name("id")("x"))(func(yield func(string, Node) bool) {}))
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("Group in Keyed attrs should flatten: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
