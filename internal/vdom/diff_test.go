@@ -384,3 +384,35 @@ func TestAdjacentTextCoalescesBeforePositionalDiff(t *testing.T) {
 		t.Fatalf("expected second patch replace at [0], got %+v", got[1])
 	}
 }
+
+// Regression: diffPositional's `append(path, i)` reused the underlying
+// array across sibling iterations when path had spare capacity, so a
+// patch emitted on an early sibling had its tail index silently
+// overwritten by a later sibling. Manifested in the wild as a span's
+// style patch landing on the last button — same path prefix, last
+// index clobbered to point at the last sibling.
+//
+// The construction below picks four nesting levels and four siblings:
+// at depth 3 the path slice grows from cap 2 to cap 4 (Go append
+// doubling), so depth-4 iterations write into the spare slot 3,
+// overwriting whatever the first sibling's stored patch put there.
+func TestDiffPathNotAliasedAcrossSiblings(t *testing.T) {
+	plain := func(children ...Node) Node {
+		return NewElement("div", nil, children, nil)
+	}
+	leaf := func(class string) Node {
+		return NewElement("span", []Attr{{Name: "class", Value: class}}, nil, nil)
+	}
+	old := plain(plain(plain(plain(leaf("old"), leaf("a"), leaf("b"), leaf("c")))))
+	next := plain(plain(plain(plain(leaf("new"), leaf("a"), leaf("b"), leaf("c")))))
+	got := diffOne(old, next)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 set_attr patch on first leaf, got %d: %+v", len(got), got)
+	}
+	if got[0].Op != "set_attr" {
+		t.Fatalf("expected set_attr, got %q", got[0].Op)
+	}
+	if !slices.Equal(got[0].Path, []int{0, 0, 0, 0}) {
+		t.Fatalf("set_attr should target first leaf at [0,0,0,0], got %v", got[0].Path)
+	}
+}
