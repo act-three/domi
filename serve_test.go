@@ -3,6 +3,8 @@ package domi
 import (
 	"context"
 	"fmt"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -93,6 +95,43 @@ func TestSessionLoopFragmentAtRoot(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("no patches arrived")
+	}
+}
+
+// The Document option swaps the default HTML shell for the App's
+// builder, lets it own <head>, and still attaches the session marker
+// to body.
+func TestHandlerDocumentOption(t *testing.T) {
+	custom := func(title string, body Node) Node {
+		return Tag("html")()(
+			Tag("head")()(
+				Tag("title")()(Text("custom:"+title)),
+				Tag("meta")(Name("name")("test"), Name("content")("hello")),
+			),
+			body,
+		)
+	}
+	h := Handler(func() (*counterApp, Cmd[int]) {
+		return &counterApp{}, Batch[int]()
+	}, Document(custom))
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+
+	body := w.Body.String()
+	if !strings.Contains(body, `<title>custom:</title>`) {
+		t.Fatalf("custom Document not invoked; body: %s", body)
+	}
+	if !strings.Contains(body, `<meta name="test" content="hello">`) {
+		t.Fatalf("custom head content missing; body: %s", body)
+	}
+	if !strings.Contains(body, `data-domi-session=`) {
+		t.Fatalf("session marker not attached to body; got: %s", body)
+	}
+	// The default bootstrap script must not appear when Document is set —
+	// the App is responsible for loading the client itself.
+	if strings.Contains(body, "Domi.run()") {
+		t.Fatalf("default bootstrap leaked into custom Document; got: %s", body)
 	}
 }
 
