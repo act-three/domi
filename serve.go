@@ -33,10 +33,11 @@ var clientJSPath = func() string {
 // to obtain a fresh App instance plus an initial [Cmd].
 // This instance is associated with the session,
 // so each browser gets its own independent state.
-func Handler[Msg any, A App[Msg]](f func() (A, Cmd[Msg])) http.Handler {
+func Handler[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), o ...Option) http.Handler {
+	config := resolveOptions(o)
 	store := newSessionStore[Msg]()
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", handleRoot(f, store))
+	mux.HandleFunc("GET /{$}", handleRoot(f, config, store))
 	mux.HandleFunc("GET /sse/{id}", handleSSE(store))
 	mux.HandleFunc("POST /event/{id}", handleEvent(store))
 	mux.HandleFunc("GET "+clientJSPath, func(w http.ResponseWriter, req *http.Request) {
@@ -157,12 +158,11 @@ func spawnCmd[Msg any](ctx context.Context, cmd Cmd[Msg], msgTx chan<- Msg) {
 
 // ---- HTTP handlers ----
 
-func handleRoot[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), store *sessionStore[Msg]) http.HandlerFunc {
+func handleRoot[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), config handlerConfig, store *sessionStore[Msg]) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := newSessionID()
 		app, cmd := f()
 		title, view := app.View()
-		initial := lower(view)
 
 		ctx, cancel := context.WithCancel(context.Background())
 		st := &sessionState[Msg]{
@@ -180,12 +180,14 @@ func handleRoot[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), store *sessionStore
 			store.delete(id)
 		}()
 
-		go sessionLoop(ctx, app, title, initial, st.msgChan, st.patchRx)
+		go sessionLoop(ctx, app, title, lower(view), st.msgChan, st.patchRx)
 		spawnCmd(ctx, cmd, st.msgChan)
 
+		body := Tag("body")(Name("data-domi-session")(id))(view)
+		root := lowerOne(config.document(title, body))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = io.WriteString(w, "<!doctype html>")
-		_, _ = io.WriteString(w, vdom.Render(document(title, id, view)))
+		_, _ = io.WriteString(w, vdom.Render(root))
 	}
 }
 
@@ -292,12 +294,8 @@ func handleSSE[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 	}
 }
 
-// document returns the HTML shell that wraps body. The inline module
-// script mirrors what a bundled app would do.
-//
-//	`import * as Domi from <hashed path>; Domi.run()`
-func document(title, sessionID string, body Node) vdom.Node {
-	return vdom.Element(Tag("html")()(
+func defaultDocument(title string, body Node) Node {
+	return Tag("html")()(
 		Tag("head")()(
 			Tag("meta")(Name("charset")("utf-8")),
 			Tag("title")()(Text(title)),
@@ -305,6 +303,6 @@ func document(title, sessionID string, body Node) vdom.Node {
 				Text(fmt.Sprintf(`import * as Domi from %q; Domi.run();`, clientJSPath)),
 			),
 		),
-		Tag("body")(Name("data-domi-session")(sessionID))(body),
-	).(element))
+		body,
+	)
 }

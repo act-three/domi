@@ -194,6 +194,17 @@ func lower(nodes ...Node) []vdom.Node {
 	return slices.Collect(iter.Seq[vdom.Node](Fragment(nodes...).(fragment)))
 }
 
+// lowerOne narrows a single Node to its lowered vdom.Node form,
+// panicking if n materializes to anything other than exactly one node
+// (e.g. a Fragment with zero or multiple children).
+func lowerOne(n Node) vdom.Node {
+	out := lower(n)
+	if len(out) != 1 {
+		panic(fmt.Sprintf("domi: expected 1 node, got %d", len(out)))
+	}
+	return out[0]
+}
+
 // An Attr is an HTML attribute.
 //
 // In rendered output,

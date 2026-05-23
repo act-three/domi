@@ -1,22 +1,10 @@
 package domi
 
 import (
-	"fmt"
 	"testing"
 
 	"ily.dev/domi/internal/vdom"
 )
-
-// lowerOne narrows a single Node to its lowered vdom.Node form, asserting
-// the Node materializes to exactly one entry. Test helper for assertions
-// on single-node trees.
-func lowerOne(n Node) vdom.Node {
-	out := lower(n)
-	if len(out) != 1 {
-		panic(fmt.Sprintf("lowerOne: expected 1 node, got %d", len(out)))
-	}
-	return out[0]
-}
 
 type tMsg struct {
 	Tag string `json:"t"`
