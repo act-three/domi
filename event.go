@@ -86,29 +86,31 @@ func scanMsgType(t reflect.Type) *msgTypeInfo {
 	return &msgTypeInfo{eventFieldPath: path}
 }
 
-// On binds msg to event on the resulting attribute's element: when the
-// browser fires that event on the element, the framework dispatches msg
-// to the App's Update.
+// On returns a builder for an attribute that binds msg to event on
+// the resulting element: when the browser fires that event, the
+// framework dispatches msg to the App's Update.
 //
-// Multiple On(event, ...) attributes on the same element all fire when
+// Multiple On(event)(...) attributes on the same element all fire when
 // the event occurs; each msg is dispatched to Update in the order the
 // attributes were attached.
 //
 // If msg's type contains a field of type [Event] with a domi:"event"
 // struct tag, the framework fills that field with the firing event's
 // details before calling Update. The value of that field in the literal
-// passed to On is ignored — only the other fields contribute to the
-// Msg's identity.
-func On(event string, msg any) Attr {
-	info := msgTypeInfoFor(reflect.TypeOf(msg))
-	if info.err != nil {
-		panic(info.err)
+// passed to the builder is ignored — only the other fields contribute
+// to the Msg's identity.
+func On(event string) func(msg any) Attr {
+	return func(msg any) Attr {
+		info := msgTypeInfoFor(reflect.TypeOf(msg))
+		if info.err != nil {
+			panic(info.err)
+		}
+		raw, err := json.Marshal(zeroEventField(msg, info.eventFieldPath))
+		if err != nil {
+			raw = []byte("null")
+		}
+		return attr{Name: "data-msg-" + event, Value: registerHandler(raw)}
 	}
-	raw, err := json.Marshal(zeroEventField(msg, info.eventFieldPath))
-	if err != nil {
-		raw = []byte("null")
-	}
-	return attr{Name: "data-msg-" + event, Value: registerHandler(raw)}
 }
 
 // zeroEventField returns msg with the field at fieldPath set to its zero

@@ -16,7 +16,7 @@ type evMsg struct {
 
 // A Msg without a tagged event field round-trips unchanged.
 func TestSpliceNoEventField(t *testing.T) {
-	a := On("click", plainMsg{"hi"}).(attr)
+	a := On("click")(plainMsg{"hi"}).(attr)
 	raw, ok := lookupHandler(a.Value)
 	if !ok {
 		t.Fatal("handler not registered")
@@ -32,7 +32,7 @@ func TestSpliceNoEventField(t *testing.T) {
 
 // A Msg with a tagged event field receives the spliced payload.
 func TestSpliceWithEventField(t *testing.T) {
-	a := On("input", evMsg{Tag: "EditName"}).(attr)
+	a := On("input")(evMsg{Tag: "EditName"}).(attr)
 	raw, _ := lookupHandler(a.Value)
 	blob := []byte(`{"type":"input","target":{"tag":"input","name":"name","value":"Em"}}`)
 	got, err := spliceEvent[evMsg](raw, blob)
@@ -50,8 +50,8 @@ func TestSpliceWithEventField(t *testing.T) {
 // A pre-filled event field at construction time must not influence the
 // content hash — the registration step zeros it before marshaling.
 func TestPrefilledEventFieldDoesNotAffectHash(t *testing.T) {
-	a := On("click", evMsg{Tag: "X"}).(attr)
-	b := On("click", evMsg{Tag: "X", Event: Event{Type: "click", Key: "Enter"}}).(attr)
+	a := On("click")(evMsg{Tag: "X"}).(attr)
+	b := On("click")(evMsg{Tag: "X", Event: Event{Type: "click", Key: "Enter"}}).(attr)
 	if a.Value != b.Value {
 		t.Fatalf("hash diverged on pre-fill; got %q vs %q", a.Value, b.Value)
 	}
@@ -60,8 +60,8 @@ func TestPrefilledEventFieldDoesNotAffectHash(t *testing.T) {
 // Multiple handlers on the same event each get the same payload spliced
 // into their own Msg independently.
 func TestSpliceMultipleHandlersSameEvent(t *testing.T) {
-	a := On("keydown", evMsg{Tag: "Save"}).(attr)
-	b := On("keydown", evMsg{Tag: "DraftAutosave"}).(attr)
+	a := On("keydown")(evMsg{Tag: "Save"}).(attr)
+	b := On("keydown")(evMsg{Tag: "DraftAutosave"}).(attr)
 	blob := []byte(`{"type":"keydown","key":"s","ctrl":true,"target":{"tag":"input"}}`)
 	for _, hv := range []string{a.Value, b.Value} {
 		raw, _ := lookupHandler(hv)
@@ -77,7 +77,7 @@ func TestSpliceMultipleHandlersSameEvent(t *testing.T) {
 
 // Form fields land in Event.Form when the JS sends them.
 func TestSpliceFormFields(t *testing.T) {
-	a := On("submit", evMsg{Tag: "Save"}).(attr)
+	a := On("submit")(evMsg{Tag: "Save"}).(attr)
 	raw, _ := lookupHandler(a.Value)
 	blob := []byte(`{"type":"submit","target":{"tag":"form"},"form":{"name":"Em","email":"e@x"}}`)
 	got, _ := spliceEvent[evMsg](raw, blob)
@@ -101,12 +101,12 @@ func TestMultipleEventFieldsPanics(t *testing.T) {
 			t.Fatalf("wrong panic message: %v", r)
 		}
 	}()
-	On("click", bad{})
+	On("click")(bad{})
 }
 
 // Non-struct Msg (e.g. a string) is fine — no event field, no panic.
 func TestNonStructMsg(t *testing.T) {
-	a := On("click", "hello").(attr)
+	a := On("click")("hello").(attr)
 	raw, _ := lookupHandler(a.Value)
 	got, err := spliceEvent[string](raw, []byte(`{"type":"click"}`))
 	if err != nil {
@@ -120,7 +120,7 @@ func TestNonStructMsg(t *testing.T) {
 // Empty event blob (e.g. a Cmd-produced dispatch path, hypothetically)
 // leaves the event field at its zero value rather than failing.
 func TestSpliceEmptyBlob(t *testing.T) {
-	a := On("click", evMsg{Tag: "Tick"}).(attr)
+	a := On("click")(evMsg{Tag: "Tick"}).(attr)
 	raw, _ := lookupHandler(a.Value)
 	got, err := spliceEvent[evMsg](raw, nil)
 	if err != nil {
