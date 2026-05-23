@@ -299,12 +299,12 @@ func handleSSE[Msg any](store *sessionStore[Msg]) http.HandlerFunc {
 func document(title, sessionID string, body Node) vdom.Node {
 	return vdom.Element(Tag("html")()(
 		Tag("head")()(
-			Tag("meta")(Name("charset", "utf-8")),
+			Tag("meta")(Name("charset")("utf-8")),
 			Tag("title")()(Text(title)),
-			Tag("script")(Name("type", "module"))(
+			Tag("script")(Name("type")("module"))(
 				Text(fmt.Sprintf(`import * as Domi from %q; Domi.run();`, clientJSPath)),
 			),
 		),
-		Tag("body")(Name("data-domi-session", sessionID))(body),
+		Tag("body")(Name("data-domi-session")(sessionID))(body),
 	).(element))
 }
