@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"slices"
+	"strings"
 )
 
 // Patch is a single mutation op the client applies to its DOM. The
@@ -64,6 +65,15 @@ func Diff(old, new []Node) []Patch {
 // it before or after DOM patches as needed.
 func SetTitle(title string) Patch {
 	return Patch{p: patch{Op: "set_title", Value: title}}
+}
+
+// Reset replaces the root's entire subtree with the given children.
+func Reset(children []Node) Patch {
+	var b strings.Builder
+	for _, c := range children {
+		writeNode(c, &b)
+	}
+	return Patch{p: patch{Op: "reset", HTML: b.String()}}
 }
 
 func diffNode(old, new Node, path []int, out []patch) []patch {
