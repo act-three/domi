@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"ily.dev/domi/internal/vdom"
 )
@@ -29,6 +30,7 @@ type session[Msg any] struct {
 	view      []vdom.Node
 	patchSets []patchSet // TODO use a better data structure
 	taken     bool       // true after an SSE consumer has been attached
+	active    time.Time  // most recent activity; idleWatch reads this
 }
 
 func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
@@ -89,6 +91,7 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	s.touch()
 	for h := range strings.SplitSeq(envelope.H, ",") {
 		if h == "" {
 			continue
@@ -114,7 +117,35 @@ func (s *session[Msg]) claimSSE() bool {
 		return false
 	}
 	s.taken = true
+	s.active = time.Now()
 	return true
+}
+
+// touch records activity on the session, deferring the idle timeout.
+func (s *session[Msg]) touch() {
+	s.mu.Lock()
+	s.active = time.Now()
+	s.mu.Unlock()
+}
+
+// idleWatch cancels the session once it has been idle for d.
+// Runs as a goroutine started at session creation
+// and exits when the session ctx is cancelled for any reason.
+func (s *session[Msg]) idleWatch(d time.Duration) {
+	for {
+		s.mu.Lock()
+		wait := d - time.Since(s.active)
+		s.mu.Unlock()
+		if wait <= 0 {
+			s.cancel()
+			return
+		}
+		select {
+		case <-time.After(wait):
+		case <-s.ctx.Done():
+			return
+		}
+	}
 }
 
 func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
@@ -152,6 +183,7 @@ func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 					return
 				}
 				rc.Flush()
+				s.touch()
 			}
 		}
 	}

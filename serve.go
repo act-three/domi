@@ -53,13 +53,16 @@ func newServer[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), opts []Option) *serv
 		appf: func() (App[Msg], Cmd[Msg]) { return f() },
 		m:    make(map[string]*session[Msg]),
 		config: handlerConfig{
-			document: defaultDocument,
+			document:       defaultDocument,
+			sessionTimeout: 48 * time.Hour,
 		},
 	}
 	for _, o := range opts {
 		switch o := o.(type) {
 		case documentOption:
 			sv.config.document = o.f
+		case sessionTimeoutOption:
+			sv.config.sessionTimeout = o.d
 		}
 	}
 	return sv
@@ -74,10 +77,11 @@ func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 		id:     id,
 		sv:     sv,
 		ready:  make(chan struct{}, 1),
+		active: time.Now(),
 	}
 	sv.put(id, s)
+	go s.idleWatch(sv.config.sessionTimeout)
 	go func() {
-		// TODO: replace with timeout-based GC
 		<-ctx.Done()
 		sv.delete(id)
 	}()
