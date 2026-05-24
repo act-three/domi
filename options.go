@@ -9,20 +9,6 @@ type handlerConfig struct {
 	document func(title string, body Node) Node
 }
 
-// resolveOptions folds opts into a single handlerConfig.
-func resolveOptions(opts []Option) handlerConfig {
-	config := handlerConfig{
-		document: defaultDocument,
-	}
-	for _, o := range opts {
-		switch o := o.(type) {
-		case documentOption:
-			config.document = o.f
-		}
-	}
-	return config
-}
-
 // Document supplies a custom builder for the initial HTML shell.
 // The builder is called once per session
 // with the initial document title and the body element.
