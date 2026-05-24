@@ -41,6 +41,7 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 		app:    app,
 		ready:  make(chan struct{}, 1),
 		view:   lower(view),
+		active: time.Now(),
 	}
 }
 
@@ -96,6 +97,86 @@ func TestHandlerDocumentOption(t *testing.T) {
 	if strings.Contains(body, "Domi.run()") {
 		t.Fatalf("default bootstrap leaked into custom Document; got: %s", body)
 	}
+}
+
+// idleWatch cancels the session once activity falls behind by d.
+func TestSessionIdleWatchFires(t *testing.T) {
+	const d = 50 * time.Millisecond
+	s := newTestSession(&counterApp{})
+	defer s.cancel()
+	go s.idleWatch(d)
+	select {
+	case <-s.ctx.Done():
+	case <-time.After(d * 10):
+		t.Fatal("idleWatch did not cancel an idle session")
+	}
+}
+
+// touch defers the idle deadline. Repeated touches keep the session
+// alive past d; once they stop, idleWatch fires.
+func TestSessionIdleWatchTouchDefers(t *testing.T) {
+	const d = 50 * time.Millisecond
+	s := newTestSession(&counterApp{})
+	defer s.cancel()
+	go s.idleWatch(d)
+
+	// Touch four times across ~2d to verify the deadline keeps sliding.
+	for range 4 {
+		time.Sleep(d / 2)
+		s.touch()
+	}
+	if s.ctx.Err() != nil {
+		t.Fatalf("session cancelled despite recent touches: %v", s.ctx.Err())
+	}
+
+	// Stop touching; cancellation should follow within roughly d.
+	select {
+	case <-s.ctx.Done():
+	case <-time.After(d * 10):
+		t.Fatal("idleWatch did not cancel after touches stopped")
+	}
+}
+
+// A session whose client never attaches SSE expires after
+// SessionTimeout: the watchdog cancels its ctx and the server removes it
+// from the live-session map.
+func TestServerSessionTimeoutNeverAttached(t *testing.T) {
+	const d = 50 * time.Millisecond
+	sv := newServer(
+		func() (*counterApp, Cmd[int]) { return &counterApp{}, Batch[int]() },
+		[]Option{SessionTimeout(d)},
+	)
+	sv.handleRoot(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+
+	sv.mu.Lock()
+	if len(sv.m) != 1 {
+		sv.mu.Unlock()
+		t.Fatalf("expected 1 session, got %d", len(sv.m))
+	}
+	var s *session[int]
+	for _, ss := range sv.m {
+		s = ss
+	}
+	sv.mu.Unlock()
+
+	select {
+	case <-s.ctx.Done():
+	case <-time.After(d * 10):
+		t.Fatal("session ctx not cancelled after SessionTimeout")
+	}
+
+	// The watcher goroutine deletes from the map once ctx is done.
+	deadline := time.Now().Add(d * 5)
+	for time.Now().Before(deadline) {
+		sv.mu.Lock()
+		n := len(sv.m)
+		sv.mu.Unlock()
+		if n == 0 {
+			return
+		}
+		time.Sleep(d / 10)
+	}
+	t.Fatal("session not removed from server map")
 }
 
 // (*session).spawn hands the session ctx to the Cmd body so cmds can

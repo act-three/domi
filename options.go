@@ -1,12 +1,15 @@
 package domi
 
+import "time"
+
 // An Option configures a [Handler].
 type Option interface {
 	isOption()
 }
 
 type handlerConfig struct {
-	document func(title string, body Node) Node
+	document       func(title string, body Node) Node
+	sessionTimeout time.Duration
 }
 
 // Document supplies a custom builder for the initial HTML shell.
@@ -38,3 +41,16 @@ type documentOption struct {
 }
 
 func (documentOption) isOption() {}
+
+// SessionTimeout sets how long a session can remain idle before the
+// framework releases it.
+// The default timeout is 48 hours.
+func SessionTimeout(d time.Duration) Option {
+	return sessionTimeoutOption{d}
+}
+
+type sessionTimeoutOption struct {
+	d time.Duration
+}
+
+func (sessionTimeoutOption) isOption() {}
