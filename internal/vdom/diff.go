@@ -71,7 +71,7 @@ func SetTitle(title string) Patch {
 func Reset(children []Node) Patch {
 	var b strings.Builder
 	for _, c := range children {
-		writeNode(c, &b)
+		_ = RenderTo(&b, c)
 	}
 	return Patch{p: patch{Op: "reset", HTML: b.String()}}
 }
