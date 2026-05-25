@@ -6,8 +6,11 @@ import (
 	"iter"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 
+	"golang.org/x/net/html"
+	"golang.org/x/net/html/atom"
 	"ily.dev/domi/internal/vdom"
 )
 
@@ -40,13 +43,13 @@ func lookupHandler(key string) ([]byte, bool) {
 }
 
 // A Node is an HTML node,
-// a [Text], [Tag], [Keyed], or a [Fragment].
+// a [Text], [Raw], [Tag], [Keyed], or [Fragment].
 type Node interface {
 	isNode()
 }
 
 // node is the lowered form of a Node, satisfied only by element and
-// text. Public constructors lower their inputs to nodes at construction
+// raw. Public constructors lower their inputs to nodes at construction
 // time; the lowered() method then yields the corresponding vdom.Node
 // so the renderer and differ can operate on a tree they own.
 type node interface {
@@ -62,11 +65,11 @@ type element vdom.Element
 func (element) isNode()              {}
 func (e element) lowered() vdom.Node { return vdom.Element(e) }
 
-// text is the domi-side wrapper around [vdom.Text].
-type text vdom.Text
+// raw is the domi-side wrapper around [vdom.Raw].
+type raw vdom.Raw
 
-func (text) isNode()              {}
-func (t text) lowered() vdom.Node { return vdom.Text(t) }
+func (raw) isNode()              {}
+func (r raw) lowered() vdom.Node { return vdom.Raw(r) }
 
 // Element is the partially-applied builder returned by Tag(name)(attrs).
 // Calling it with children produces a finished element node; an Element
@@ -96,9 +99,40 @@ func Tag(name string) func(...Attr) Element {
 	}
 }
 
-// Text returns a text node.
+// Text returns a text node. The string is escaped for safe embedding
+// in HTML; use [Raw] for pre-escaped or trusted content.
 func Text(s string) Node {
-	return text(s)
+	return raw(vdom.Text(s))
+}
+
+// Raw returns a node whose content is written verbatim, without HTML
+// escaping. Use Raw for trusted HTML: inline SVG, pre-sanitized
+// markdown output, or fragments from third-party HTML generators.
+// Never pass user-controlled input to Raw without prior sanitization.
+//
+// The content must produce exactly one DOM node when parsed: either a
+// text string containing no markup, or a single properly nested HTML
+// element with explicit closing tags. Raw panics if the content is
+// empty, contains multiple top-level nodes, or has unclosed tags.
+func Raw(s string) Node {
+	validateRaw(s)
+	return raw(vdom.Raw(s))
+}
+
+// validateRaw panics if s does not produce exactly one DOM node when
+// parsed as HTML in a flow-content context (a <body> child).
+func validateRaw(s string) {
+	if s == "" {
+		panic("domi: Raw: empty string produces no DOM nodes")
+	}
+	ctx := &html.Node{Type: html.ElementNode, DataAtom: atom.Body, Data: "body"}
+	nodes, err := html.ParseFragment(strings.NewReader(s), ctx)
+	if err != nil {
+		panic("domi: Raw: " + err.Error())
+	}
+	if len(nodes) != 1 {
+		panic(fmt.Sprintf("domi: Raw: content must produce exactly one DOM node, got %d", len(nodes)))
+	}
 }
 
 // Keyed returns a curried builder for an element whose children are
