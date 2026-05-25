@@ -1,6 +1,7 @@
 package domi
 
 import (
+	"strings"
 	"testing"
 
 	"ily.dev/domi/internal/vdom"
@@ -139,5 +140,65 @@ func TestGroupInKeyedAttrs(t *testing.T) {
 	b := lowerOne(Keyed("ul")(Name("class")("a"), Name("id")("x"))(func(yield func(string, Node) bool) {}))
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("Group in Keyed attrs should flatten: %q vs %q", vdom.Render(a), vdom.Render(b))
+	}
+}
+
+// ---- attribute combining tests ----
+//
+// NewElement normalizes attrs at construction, so duplicate names are
+// resolved before the renderer or differ ever sees them. These tests
+// exercise the observable contract through Tag → Render.
+
+func TestCombineClassWithSpace(t *testing.T) {
+	got := vdom.Render(lowerOne(Tag("div")(Name("class")("a"), Name("class")("b"))()))
+	want := `<div class="a b"></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestCombineStyleWithSemicolon(t *testing.T) {
+	got := vdom.Render(lowerOne(Tag("div")(Name("style")("color:red"), Name("style")("font-weight:bold"))()))
+	want := `<div style="color:red;font-weight:bold"></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestCombineDataMsgWithComma(t *testing.T) {
+	got := vdom.Render(lowerOne(Tag("div")(Name("data-msg-click")("h1"), Name("data-msg-click")("h2"))()))
+	want := `<div data-msg-click="h1,h2"></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestCombineDistinctEventsKeepBoth(t *testing.T) {
+	rendered := vdom.Render(lowerOne(Tag("div")(Name("data-msg-click")("h1"), Name("data-msg-submit")("h2"))()))
+	if !strings.Contains(rendered, "data-msg-click") || !strings.Contains(rendered, "data-msg-submit") {
+		t.Fatalf("distinct event attrs should both appear: %q", rendered)
+	}
+}
+
+func TestCombineSingleDataMsgNoComma(t *testing.T) {
+	rendered := vdom.Render(lowerOne(Tag("div")(Name("data-msg-click")("h1"))()))
+	if strings.Contains(rendered, ",") {
+		t.Fatalf("single data-msg should have no comma: %q", rendered)
+	}
+}
+
+func TestCombineOtherAttrFirstWins(t *testing.T) {
+	got := vdom.Render(lowerOne(Tag("div")(Name("id")("first"), Name("id")("second"))()))
+	want := `<div id="first"></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestCombineClassEmptyGuard(t *testing.T) {
+	got := vdom.Render(lowerOne(Tag("div")(Name("class")(""), Name("class")("b"))()))
+	want := `<div class="b"></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
 }

@@ -38,8 +38,12 @@ func (Element) vdomNode() {}
 // NewElement constructs an [Element]. Pass nil for keys to build a
 // positional element; pass a slice (even empty) parallel to children
 // to build a keyed element.
+//
+// Attrs are normalized at construction: duplicate names are resolved
+// per [combineAttrs], so the renderer and differ can iterate them
+// directly without further processing.
 func NewElement(tag string, attrs []Attr, children []Node, keys []string) Element {
-	return Element{tag: tag, attrs: attrs, children: children, keys: keys}
+	return Element{tag: tag, attrs: combineAttrs(attrs), children: children, keys: keys}
 }
 
 // WithAttr returns a copy of e with a single additional attribute
@@ -63,39 +67,29 @@ type Attr struct {
 	Value string
 }
 
-// combineSep returns the separator for attributes whose duplicate
-// occurrences should be combined. Non-combining attributes are
-// first-wins.
-//
-//   - class:      single space
-//   - style:      semicolon
-//   - data-msg-*: comma (the server splits on commas to recover the
-//     individual handler hashes)
-func combineSep(name string) (sep string, ok bool) {
-	switch name {
-	case "class":
-		return " ", true
-	case "style":
-		return ";", true
-	}
-	if strings.HasPrefix(name, "data-msg-") {
-		return ",", true
-	}
-	return "", false
-}
-
-// combinedAttrs returns attrs with duplicates resolved per the rules
-// in combineSep. First-occurrence order is preserved. The walker is a
-// single pass; each combining attribute accumulates into its own
-// strings.Builder (amortized O(N) per name, replacing the previous
-// quadratic string concat).
-func combinedAttrs(attrs []Attr) []Attr {
+// combineAttrs resolves duplicate attribute names in attrs: class
+// joins with " ", style with ";", data-msg-* with ",", and everything
+// else is first-wins. Returns the input slice unchanged when no
+// duplicates are present.
+func combineAttrs(attrs []Attr) []Attr {
 	if len(attrs) < 2 {
 		return attrs
 	}
+	// Fast path: check for duplicates without allocating.
+	for i := 1; i < len(attrs); i++ {
+		for j := 0; j < i; j++ {
+			if attrs[i].Name == attrs[j].Name {
+				return combineAttrsSlow(attrs)
+			}
+		}
+	}
+	return attrs
+}
+
+func combineAttrsSlow(attrs []Attr) []Attr {
 	out := make([]Attr, 0, len(attrs))
 	idx := make(map[string]int, len(attrs))
-	var bufs map[string]*strings.Builder // lazy; allocated on first duplicate
+	var bufs map[string]*strings.Builder // lazy; allocated on first combining dup
 	for _, a := range attrs {
 		i, dup := idx[a.Name]
 		if !dup {
@@ -127,6 +121,26 @@ func combinedAttrs(attrs []Attr) []Attr {
 		out[idx[name]].Value = buf.String()
 	}
 	return out
+}
+
+// combineSep returns the separator for attributes whose duplicate
+// occurrences should be combined.
+//
+//   - class:      single space
+//   - style:      semicolon
+//   - data-msg-*: comma (the server splits on commas to recover the
+//     individual handler hashes)
+func combineSep(name string) (sep string, ok bool) {
+	switch name {
+	case "class":
+		return " ", true
+	case "style":
+		return ";", true
+	}
+	if strings.HasPrefix(name, "data-msg-") {
+		return ",", true
+	}
+	return "", false
 }
 
 // isVoid reports whether tag is a void HTML element (one that must not

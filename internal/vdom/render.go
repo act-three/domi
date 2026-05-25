@@ -26,7 +26,7 @@ func RenderTo(w io.Writer, n Node) error {
 	case Element:
 		w.Write(lt)
 		io.WriteString(w, v.tag)
-		for _, a := range combinedAttrs(v.attrs) {
+		for _, a := range v.attrs {
 			if err := writeAttr(w, a); err != nil {
 				return err
 			}
