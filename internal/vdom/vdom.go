@@ -48,6 +48,9 @@ func NewElement(tag string, attrs iter.Seq[Attr], children []Node, keys []string
 	a := slices.Collect(attrs)
 	slices.SortStableFunc(a, cmpAttrName)
 	a = combineAttrs(a)
+	if keys == nil {
+		children = coalesceText(children)
+	}
 	return Element{tag: tag, attrs: a, children: children, keys: keys}
 }
 
@@ -158,6 +161,53 @@ func combineSep(name string) (sep string, ok bool) {
 		return ",", true
 	}
 	return "", false
+}
+
+// coalesceText concatenates adjacent text-only Raw children into a
+// single Raw node, matching the shape the HTML parser produces (it
+// merges adjacent text nodes on round-trip).
+//
+// Only Raw nodes whose content contains no '<' are eligible: those
+// are escaped text from [Text] and always map to a single DOM text
+// node. Raw nodes with markup may produce element nodes and must not
+// be concatenated with neighbors.
+//
+// Returns the input slice unchanged when no coalescing is needed.
+func coalesceText(children []Node) []Node {
+	merged := false
+	for i := 1; i < len(children); i++ {
+		if isText(children[i-1]) && isText(children[i]) {
+			merged = true
+			break
+		}
+	}
+	if !merged {
+		return children
+	}
+	out := make([]Node, 0, len(children))
+	var buf string
+	flush := func() {
+		if buf != "" {
+			out = append(out, Raw(buf))
+			buf = ""
+		}
+	}
+	for _, c := range children {
+		if r, ok := c.(Raw); ok && isText(c) {
+			buf += string(r)
+			continue
+		}
+		flush()
+		out = append(out, c)
+	}
+	flush()
+	return out
+}
+
+// isText reports whether n is a text-only Raw node (no markup).
+func isText(n Node) bool {
+	r, ok := n.(Raw)
+	return ok && !strings.Contains(string(r), "<")
 }
 
 // isVoid reports whether tag is a void HTML element (one that must not
