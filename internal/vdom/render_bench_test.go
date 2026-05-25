@@ -9,27 +9,27 @@ import (
 func benchTree() Node {
 	items := make([]Node, 100)
 	for i := range items {
-		items[i] = NewElement("li", []Attr{
-			{Name: "class", Value: "item"},
-			{Name: "data-idx", Value: strconv.Itoa(i)},
-		}, []Node{
-			NewElement("span", []Attr{{Name: "class", Value: "label"}},
+		items[i] = NewElement("li", attrs(
+			Attr{Name: "class", Value: "item"},
+			Attr{Name: "data-idx", Value: strconv.Itoa(i)},
+		), []Node{
+			NewElement("span", attrs(Attr{Name: "class", Value: "label"}),
 				[]Node{Text("Item " + strconv.Itoa(i))}, nil),
-			NewElement("button", []Attr{
-				{Name: "class", Value: "btn delete"},
-				{Name: "data-msg-click", Value: "abc123"},
-			}, []Node{Text("×")}, nil),
+			NewElement("button", attrs(
+				Attr{Name: "class", Value: "btn delete"},
+				Attr{Name: "data-msg-click", Value: "abc123"},
+			), []Node{Text("×")}, nil),
 		}, nil)
 	}
-	return NewElement("div", []Attr{{Name: "id", Value: "app"}}, []Node{
-		NewElement("nav", []Attr{{Name: "class", Value: "navbar"}}, []Node{
-			NewElement("a", []Attr{
-				{Name: "href", Value: "/"},
-				{Name: "class", Value: "brand"},
-			}, []Node{Text("My App")}, nil),
+	return NewElement("div", attrs(Attr{Name: "id", Value: "app"}), []Node{
+		NewElement("nav", attrs(Attr{Name: "class", Value: "navbar"}), []Node{
+			NewElement("a", attrs(
+				Attr{Name: "href", Value: "/"},
+				Attr{Name: "class", Value: "brand"},
+			), []Node{Text("My App")}, nil),
 		}, nil),
-		NewElement("h1", nil, []Node{Text("Todo List")}, nil),
-		NewElement("ul", []Attr{{Name: "class", Value: "list"}}, items, nil),
+		NewElement("h1", attrs(), []Node{Text("Todo List")}, nil),
+		NewElement("ul", attrs(Attr{Name: "class", Value: "list"}), items, nil),
 	}, nil)
 }
 
