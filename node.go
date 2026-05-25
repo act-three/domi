@@ -105,6 +105,11 @@ func Text(s string) Node {
 	return raw(vdom.Text(s))
 }
 
+// Textf returns a text node formatted with [fmt.Sprintf].
+func Textf(format string, a ...any) Node {
+	return Text(fmt.Sprintf(format, a...))
+}
+
 // Raw returns a node whose content is written verbatim, without HTML
 // escaping. Use Raw for trusted HTML: inline SVG, pre-sanitized
 // markdown output, or fragments from third-party HTML generators.

@@ -5,7 +5,11 @@
 // for others) are described on [domi.Attr].
 package attr
 
-import "ily.dev/domi"
+import (
+	"fmt"
+
+	"ily.dev/domi"
+)
 
 var (
 	Class       = domi.Name("class")
@@ -16,3 +20,8 @@ var (
 	Placeholder = domi.Name("placeholder")
 	Value       = domi.Name("value")
 )
+
+// Stylef returns a style attribute formatted with [fmt.Sprintf].
+func Stylef(format string, a ...any) domi.Attr {
+	return Style(fmt.Sprintf(format, a...))
+}
