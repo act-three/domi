@@ -107,24 +107,22 @@ func diffNode(old, new Node, path []int, out []patch) []patch {
 }
 
 func diffAttrs(old, new []Attr, path []int, out []patch) []patch {
-	o := combinedAttrs(old)
-	n := combinedAttrs(new)
-	oldByName := make(map[string]string, len(o))
-	for _, a := range o {
+	oldByName := make(map[string]string, len(old))
+	for _, a := range old {
 		oldByName[a.Name] = a.Value
 	}
-	nextByName := make(map[string]string, len(n))
-	for _, a := range n {
+	nextByName := make(map[string]string, len(new))
+	for _, a := range new {
 		nextByName[a.Name] = a.Value
 	}
 	// Emit sets in new-occurrence order so patches are deterministic.
-	for _, a := range n {
+	for _, a := range new {
 		if existing, ok := oldByName[a.Name]; !ok || existing != a.Value {
 			out = append(out, patch{Op: "set_attr", Path: slices.Clone(path), Name: a.Name, Value: a.Value})
 		}
 	}
 	// Emit removes in old-occurrence order.
-	for _, a := range o {
+	for _, a := range old {
 		if _, ok := nextByName[a.Name]; !ok {
 			out = append(out, patch{Op: "remove_attr", Path: slices.Clone(path), Name: a.Name})
 		}

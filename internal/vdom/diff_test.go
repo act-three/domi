@@ -311,18 +311,6 @@ func TestKeyedMixedRemoveInsertMove(t *testing.T) {
 	}
 }
 
-// Diff runs combinedAttrs on both sides, so duplicate-attr combining
-// is part of what the diff sees: two `class` attrs collapse to one
-// canonical "a b" value.
-func TestAttrCombiningBeforeDiff(t *testing.T) {
-	a := NewElement("div", []Attr{at("class", "a")}, nil, nil)
-	b := NewElement("div", []Attr{at("class", "a"), at("class", "b")}, nil, nil)
-	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "set_attr" || got[0].Value != "a b" {
-		t.Fatalf("expected class to combine to \"a b\", got %+v", got)
-	}
-}
-
 // ---- regression cases pulled from property-test failures ----
 //
 // Each minimizes a failing seed from TestDiffApplyProperty into a
