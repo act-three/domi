@@ -60,7 +60,7 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	root := lowerOne(s.sv.config.document(title, body))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = io.WriteString(w, "<!doctype html>")
-	_, _ = io.WriteString(w, vdom.Render(root))
+	_ = vdom.RenderTo(w, root)
 }
 
 // spawn hands the session ctx to each Cmd body so cmds can honor
