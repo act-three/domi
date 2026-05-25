@@ -51,8 +51,10 @@ type patch struct {
 }
 
 // Diff produces the minimal patch list that transforms old into new.
+// Root-level children are coalesced to match the DOM shape (element
+// children are coalesced at construction in [NewElement]).
 func Diff(old, new []Node) []Patch {
-	patches := diffFragment(old, new, nil, nil)
+	patches := diffPositional(coalesceText(old), coalesceText(new), nil, nil)
 	out := make([]Patch, len(patches))
 	for i, p := range patches {
 		out[i] = Patch{p: p}
@@ -97,7 +99,7 @@ func diffNode(old, new Node, path []int, out []patch) []patch {
 		if o.keys != nil {
 			out = diffKeyed(o.children, n.children, o.keys, n.keys, path, out)
 		} else {
-			out = diffFragment(o.children, n.children, path, out)
+			out = diffPositional(o.children, n.children, path, out)
 		}
 	}
 	return out
@@ -131,63 +133,6 @@ func diffAttrs(old, new []Attr, path []int, out []patch) []patch {
 		out = append(out, patch{Op: "set_attr", Path: slices.Clone(path), Name: new[j].Name, Value: new[j].Value})
 	}
 	return out
-}
-
-func diffFragment(old, new []Node, path []int, out []patch) []patch {
-	// Coalesce adjacent text siblings before diffing. The HTML parser
-	// merges adjacent text into one DOM Text node on round-trip, so
-	// position-indexed patches must address children using the merged
-	// count — otherwise insert_child/remove_child idx would walk off
-	// the end of the parent's childNodes on the client.
-	old = coalesceText(old)
-	new = coalesceText(new)
-	return diffPositional(old, new, path, out)
-}
-
-// coalesceText concatenates adjacent text-only Raw children into a
-// single Raw node, matching the shape the HTML parser produces (it
-// merges adjacent text nodes on round-trip). Returns the input slice
-// unchanged when no coalescing happens.
-//
-// Only Raw nodes whose content contains no '<' are eligible: those
-// are escaped text from [Text] and always map to a single DOM text
-// node. Raw nodes with markup (from the public Raw constructor) may
-// produce element nodes and must not be concatenated with neighbors.
-func coalesceText(children []Node) []Node {
-	merged := false
-	for i := 1; i < len(children); i++ {
-		if isText(children[i-1]) && isText(children[i]) {
-			merged = true
-			break
-		}
-	}
-	if !merged {
-		return children
-	}
-	out := make([]Node, 0, len(children))
-	var buf string
-	flush := func() {
-		if buf != "" {
-			out = append(out, Raw(buf))
-			buf = ""
-		}
-	}
-	for _, c := range children {
-		if r, ok := c.(Raw); ok && isText(c) {
-			buf += string(r)
-			continue
-		}
-		flush()
-		out = append(out, c)
-	}
-	flush()
-	return out
-}
-
-// isText reports whether n is a text-only Raw node (no markup).
-func isText(n Node) bool {
-	r, ok := n.(Raw)
-	return ok && !strings.Contains(string(r), "<")
 }
 
 func diffPositional(old, new []Node, path []int, out []patch) []patch {
