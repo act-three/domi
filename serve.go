@@ -55,6 +55,8 @@ func newServer[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), opts []Option) *serv
 		config: handlerConfig{
 			document:       defaultDocument,
 			sessionTimeout: 48 * time.Hour,
+			replayWindow:   128,
+			keepalive:      25 * time.Second,
 		},
 	}
 	for _, o := range opts {
@@ -63,6 +65,10 @@ func newServer[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), opts []Option) *serv
 			sv.config.document = o.f
 		case sessionTimeoutOption:
 			sv.config.sessionTimeout = o.d
+		case replayWindowOption:
+			sv.config.replayWindow = o.n
+		case keepaliveOption:
+			sv.config.keepalive = o.d
 		}
 	}
 	return sv
@@ -76,7 +82,7 @@ func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 		cancel: cancel,
 		id:     id,
 		sv:     sv,
-		ready:  make(chan struct{}, 1),
+		log:    make([]frame, sv.config.replayWindow),
 		active: time.Now(),
 	}
 	sv.put(id, s)

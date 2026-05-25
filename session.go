@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,23 +15,38 @@ import (
 	"ily.dev/domi/internal/vdom"
 )
 
-type patchSet []vdom.Patch
+// frame is one entry in a session's patch log: the seq is monotonic per
+// session and travels back to the client as the SSE event id, so a
+// reconnecting client can ask for everything after the seq it last saw.
+type frame struct {
+	seq     uint64
+	patches []vdom.Patch
+}
+
+// Each new SSE request builds a fresh sseAttachment and evicts any
+// previous one by cancelling its ctx. At most one consumer ever reads
+// from ready, so signals can't race across reconnects.
+type sseAttachment struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	ready  chan struct{}
+}
 
 type session[Msg any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	id    string
-	app   App[Msg]
-	sv    *server[Msg]
-	ready chan struct{} // unblocks when a new view & patchset is ready
+	id  string
+	app App[Msg]
+	sv  *server[Msg]
 
-	mu        sync.Mutex // protects the following fields
-	title     string
-	view      []vdom.Node
-	patchSets []patchSet // TODO use a better data structure
-	taken     bool       // true after an SSE consumer has been attached
-	active    time.Time  // most recent activity; idleWatch reads this
+	mu     sync.Mutex // protects the following fields
+	title  string
+	view   []vdom.Node
+	log    []frame        // fixed-size ring; log[seq%len(log)] holds frame seq
+	head   uint64         // seq of the most recent frame; 0 if none
+	sse    *sseAttachment // nil if no current consumer
+	active time.Time
 }
 
 func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
@@ -47,9 +63,8 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	_, _ = io.WriteString(w, vdom.Render(root))
 }
 
-// spawn runs each Cmd in its own goroutine. The session ctx is handed to
-// the Cmd's body so cmds can honor cancellation; the returned Msg feeds
-// straight back into apply.
+// spawn hands the session ctx to each Cmd body so cmds can honor
+// cancellation; the returned Msg feeds back into apply.
 func (s *session[Msg]) spawn(cmd Cmd[Msg]) {
 	for f := range cmd.s {
 		go func() {
@@ -71,10 +86,13 @@ func (s *session[Msg]) apply(msg Msg) {
 		ps = append(ps, vdom.SetTitle(title))
 	}
 	if len(ps) > 0 {
-		s.patchSets = append(s.patchSets, ps)
-		select {
-		case s.ready <- struct{}{}:
-		default:
+		s.head++
+		s.log[s.head%uint64(len(s.log))] = frame{seq: s.head, patches: ps}
+		if s.sse != nil {
+			select {
+			case s.sse.ready <- struct{}{}:
+			default:
+			}
 		}
 	}
 	s.view = next
@@ -110,27 +128,15 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *session[Msg]) claimSSE() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.taken {
-		return false
-	}
-	s.taken = true
-	s.active = time.Now()
-	return true
-}
-
-// touch records activity on the session, deferring the idle timeout.
+// touch defers the idle timeout.
 func (s *session[Msg]) touch() {
 	s.mu.Lock()
 	s.active = time.Now()
 	s.mu.Unlock()
 }
 
-// idleWatch cancels the session once it has been idle for d.
-// Runs as a goroutine started at session creation
-// and exits when the session ctx is cancelled for any reason.
+// idleWatch cancels the session after d of inactivity. Started as a
+// goroutine at session creation; exits when s.ctx fires.
 func (s *session[Msg]) idleWatch(d time.Duration) {
 	for {
 		s.mu.Lock()
@@ -149,42 +155,133 @@ func (s *session[Msg]) idleWatch(d time.Duration) {
 }
 
 func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
-	if !s.claimSSE() {
-		http.Error(w, "sse already attached", http.StatusConflict)
-		return
+	var seen uint64
+	if v := req.Header.Get("Last-Event-ID"); v != "" {
+		n, err := strconv.ParseUint(v, 10, 64)
+		if err != nil {
+			http.Error(w, "bad Last-Event-ID", http.StatusBadRequest)
+			return
+		}
+		seen = n
 	}
+
+	att := s.attachSSE()
+	defer s.detachSSE(att)
+
 	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	rc.Flush()
 
-	// SSE disconnect ends the session (reconnection is a separate
-	// roadmap item). Cancel triggers the watcher in handleRoot to
-	// remove the session from the server.
-	defer s.cancel()
-
-	ctx := req.Context()
-	for {
-		select {
-		case <-ctx.Done():
+	if resync, view, title, head := s.needsResync(seen); resync {
+		f := frame{seq: head, patches: []vdom.Patch{
+			vdom.Reset(view),
+			vdom.SetTitle(title),
+		}}
+		if err := writeFrame(w, rc, f); err != nil {
 			return
-		case <-s.ready:
-			s.mu.Lock()
-			ps := s.patchSets
-			s.patchSets = nil
-			s.mu.Unlock()
-			for _, p := range ps {
-				data, err := json.Marshal(p)
-				if err != nil {
-					return
-				}
-				if _, err := fmt.Fprintf(w, "event: patch\ndata: %s\n\n", data); err != nil {
-					return
-				}
-				rc.Flush()
-				s.touch()
+		}
+		seen = head
+	}
+
+	for {
+		s.touch()
+		for _, f := range s.framesSince(seen) {
+			if err := writeFrame(w, rc, f); err != nil {
+				return
+			}
+			seen = f.seq
+		}
+
+		select {
+		case <-att.ready:
+		case <-att.ctx.Done():
+			return
+		case <-req.Context().Done():
+			return
+		case <-time.After(s.sv.config.keepalive):
+			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+				return
+			}
+			if err := rc.Flush(); err != nil {
+				return
 			}
 		}
 	}
+}
+
+// attachSSE evicts any prior SSE consumer by cancelling its
+// attachment ctx, then returns a fresh attachment for the new caller
+// to watch.
+func (s *session[Msg]) attachSSE() *sseAttachment {
+	attCtx, attCancel := context.WithCancel(s.ctx)
+	att := &sseAttachment{
+		ctx:    attCtx,
+		cancel: attCancel,
+		ready:  make(chan struct{}, 1),
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	prev := s.sse
+	s.sse = att
+	s.active = time.Now()
+	if prev != nil {
+		prev.cancel()
+	}
+	return att
+}
+
+// detachSSE clears att's slot on s only if it's still the current
+// attachment — an eviction may have already replaced it.
+func (s *session[Msg]) detachSSE(att *sseAttachment) {
+	att.cancel()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sse == att {
+		s.sse = nil
+	}
+}
+
+// needsResync captures view/title/head atomically with the resync
+// decision so the caller can write the resync frame against a single
+// consistent snapshot — without it, head could advance between the
+// decision and the write.
+func (s *session[Msg]) needsResync(seen uint64) (resync bool, view []vdom.Node, title string, head uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	head = s.head
+	oldest := uint64(1)
+	if n := uint64(len(s.log)); head >= n {
+		oldest = head - n + 1
+	}
+	if seen+1 < oldest || seen > head {
+		return true, s.view, s.title, head
+	}
+	return false, nil, "", head
+}
+
+func (s *session[Msg]) framesSince(seen uint64) []frame {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if seen >= s.head {
+		return nil
+	}
+	n := uint64(len(s.log))
+	out := make([]frame, 0, s.head-seen)
+	for q := seen + 1; q <= s.head; q++ {
+		out = append(out, s.log[q%n])
+	}
+	return out
+}
+
+func writeFrame(w http.ResponseWriter, rc *http.ResponseController, f frame) error {
+	data, err := json.Marshal(f.patches)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "id: %d\nevent: patch\ndata: %s\n\n", f.seq, data); err != nil {
+		return err
+	}
+	return rc.Flush()
 }

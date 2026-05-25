@@ -107,6 +107,15 @@ export function applyPatch(root, p) {
       }
       return root;
     }
+    case 'reset': {
+      // The root (and its delegated listeners) survives the rebuild, so
+      // the session keeps working after a server-driven full resync.
+      while (root.firstChild) root.removeChild(root.firstChild);
+      delete root.__domiChildren;
+      const frag = fragmentFromHTML(p.html);
+      while (frag.firstChild) root.appendChild(frag.firstChild);
+      return root;
+    }
     default:
       console.warn('domi: unknown op', p);
       return root;
@@ -221,6 +230,13 @@ export function run() {
     }
     for (const p of patches) root = applyPatch(root, p);
   });
-  sse.onerror = (e) => console.warn('domi: SSE error', e);
+  // A non-2xx response — the server's signal that the session is
+  // permanently gone — moves the EventSource to CLOSED and fires
+  // onerror. Transient network drops leave readyState at CONNECTING
+  // and EventSource auto-reconnects, so checking for CLOSED is what
+  // distinguishes "give up and reload" from "wait it out".
+  sse.onerror = () => {
+    if (sse.readyState === EventSource.CLOSED) location.reload();
+  };
 }
 
