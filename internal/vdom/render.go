@@ -68,60 +68,22 @@ func writeAttr(w io.Writer, a Attr) error {
 }
 
 func writeEscapedText(w io.Writer, s string) error {
-	last := 0
-	for i := range len(s) {
-		var esc []byte
-		switch s[i] {
-		case '&':
-			esc = escAmp
-		case '<':
-			esc = escLt
-		case '>':
-			esc = escGt
-		default:
-			continue
-		}
-		if _, err := io.WriteString(w, s[last:i]); err != nil {
-			return err
-		}
-		if _, err := w.Write(esc); err != nil {
-			return err
-		}
-		last = i + 1
-	}
-	_, err := io.WriteString(w, s[last:])
+	_, err := textEscaper.WriteString(w, s)
 	return err
 }
 
+// writeEscapedAttr only escapes & and " — the two characters that
+// are special inside double-quoted attribute values per the HTML5
+// spec. <, >, and ' are literal inside double quotes.
 func writeEscapedAttr(w io.Writer, s string) error {
-	last := 0
-	for i := range len(s) {
-		var esc []byte
-		switch s[i] {
-		case '&':
-			esc = escAmp
-		case '<':
-			esc = escLt
-		case '>':
-			esc = escGt
-		case '"':
-			esc = escQuot
-		case '\'':
-			esc = escApos
-		default:
-			continue
-		}
-		if _, err := io.WriteString(w, s[last:i]); err != nil {
-			return err
-		}
-		if _, err := w.Write(esc); err != nil {
-			return err
-		}
-		last = i + 1
-	}
-	_, err := io.WriteString(w, s[last:])
+	_, err := attrEscaper.WriteString(w, s)
 	return err
 }
+
+var (
+	textEscaper = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;")
+	attrEscaper = strings.NewReplacer("&", "&amp;", `"`, "&quot;")
+)
 
 var (
 	lt      = []byte("<")
@@ -130,9 +92,4 @@ var (
 	sp      = []byte(" ")
 	eqQuote = []byte(`="`)
 	dquote  = []byte(`"`)
-	escAmp  = []byte("&amp;")
-	escLt   = []byte("&lt;")
-	escGt   = []byte("&gt;")
-	escQuot = []byte("&quot;")
-	escApos = []byte("&#39;")
 )
