@@ -78,13 +78,10 @@ func Reset(children []Node) Patch {
 
 func diffNode(old, new Node, path []int, out []patch) []patch {
 	switch o := old.(type) {
-	case Text:
-		n, isText := new.(Text)
-		if !isText {
+	case Raw:
+		n, isRaw := new.(Raw)
+		if !isRaw || o != n {
 			return append(out, patch{Op: "replace", Path: slices.Clone(path), HTML: Render(new)})
-		}
-		if o != n {
-			out = append(out, patch{Op: "set_text", Path: slices.Clone(path), Value: string(n)})
 		}
 	case Element:
 		// Replace on tag mismatch, or on keyed-vs-positional mismatch.
@@ -147,16 +144,19 @@ func diffFragment(old, new []Node, path []int, out []patch) []patch {
 	return diffPositional(old, new, path, out)
 }
 
-// coalesceText concatenates adjacent text-node children into a single
-// text node, matching the shape the HTML parser produces. Returns the
-// input slice unchanged when no coalescing happens. Element entries
-// pass through untouched — they're not text and aren't merged.
+// coalesceText concatenates adjacent text-only Raw children into a
+// single Raw node, matching the shape the HTML parser produces (it
+// merges adjacent text nodes on round-trip). Returns the input slice
+// unchanged when no coalescing happens.
+//
+// Only Raw nodes whose content contains no '<' are eligible: those
+// are escaped text from [Text] and always map to a single DOM text
+// node. Raw nodes with markup (from the public Raw constructor) may
+// produce element nodes and must not be concatenated with neighbors.
 func coalesceText(children []Node) []Node {
 	merged := false
 	for i := 1; i < len(children); i++ {
-		_, prev := children[i-1].(Text)
-		_, cur := children[i].(Text)
-		if prev && cur {
+		if isText(children[i-1]) && isText(children[i]) {
 			merged = true
 			break
 		}
@@ -168,13 +168,13 @@ func coalesceText(children []Node) []Node {
 	var buf string
 	flush := func() {
 		if buf != "" {
-			out = append(out, Text(buf))
+			out = append(out, Raw(buf))
 			buf = ""
 		}
 	}
 	for _, c := range children {
-		if t, ok := c.(Text); ok {
-			buf += string(t)
+		if r, ok := c.(Raw); ok && isText(c) {
+			buf += string(r)
 			continue
 		}
 		flush()
@@ -182,6 +182,12 @@ func coalesceText(children []Node) []Node {
 	}
 	flush()
 	return out
+}
+
+// isText reports whether n is a text-only Raw node (no markup).
+func isText(n Node) bool {
+	r, ok := n.(Raw)
+	return ok && !strings.Contains(string(r), "<")
 }
 
 func diffPositional(old, new []Node, path []int, out []patch) []patch {

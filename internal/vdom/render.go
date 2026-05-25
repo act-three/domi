@@ -21,8 +21,9 @@ func Render(n Node) string {
 // construction).
 func RenderTo(w io.Writer, n Node) error {
 	switch v := n.(type) {
-	case Text:
-		return writeEscapedText(w, string(v))
+	case Raw:
+		_, err := io.WriteString(w, string(v))
+		return err
 	case Element:
 		w.Write(lt)
 		io.WriteString(w, v.tag)
@@ -64,11 +65,6 @@ func writeAttr(w io.Writer, a Attr) error {
 		return err
 	}
 	_, err := w.Write(dquote)
-	return err
-}
-
-func writeEscapedText(w io.Writer, s string) error {
-	_, err := textEscaper.WriteString(w, s)
 	return err
 }
 

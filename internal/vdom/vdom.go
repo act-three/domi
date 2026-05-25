@@ -4,7 +4,7 @@
 // they lower into.
 //
 // The exported types here are deliberately minimal: an HTML element
-// has only two kinds of children (element and text), so a sum of two
+// has two kinds of children (element and raw), so a sum of two
 // concrete structs covers the tree shape exactly. Renderers and
 // differs switch exhaustively on those two cases.
 package vdom
@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-// Node is anything in a lowered VDOM tree: an [Element] or a [Text].
+// Node is anything in a lowered VDOM tree: an [Element] or a [Raw].
 type Node interface {
 	vdomNode()
 }
@@ -28,8 +28,8 @@ type Node interface {
 // keys discriminates positional from keyed elements: nil means
 // positional; non-nil (even empty) means children are paired with
 // these keys for identity-based reconciliation. When non-nil,
-// len(keys) equals len(children), and each child is an Element (text
-// can't carry a data-domi-key attribute).
+// len(keys) equals len(children), and each child is an Element (raw
+// nodes can't carry a data-domi-key attribute).
 type Element struct {
 	tag      string
 	attrs    []Attr
@@ -68,10 +68,28 @@ func (e Element) WithAttr(a Attr) Element {
 	return Element{tag: e.tag, attrs: out, children: e.children, keys: e.keys}
 }
 
-// Text is a text node.
-type Text string
+// Raw is a pre-rendered leaf node: its content is written verbatim
+// by the renderer with no escaping. Escaped text, inline SVG,
+// sanitized markdown — all pass through as Raw by the time they
+// reach the tree.
+//
+// Raw must parse as a single DOM node by an HTML parser.
+// It is the client's responsibility to ensure this when
+// providing arbitrary Raw HTML content.
+//
+// Use [Text] to construct a Raw from arbitrary text,
+// to be parsed as a single HTML text node.
+type Raw string
 
-func (Text) vdomNode() {}
+func (Raw) vdomNode() {}
+
+// Text escapes s for safe embedding in HTML and returns it as a
+// [Raw] node. This is the standard way to place text content in
+// the tree; the escaping happens once at construction, not at
+// render time.
+func Text(s string) Raw {
+	return Raw(textEscaper.Replace(s))
+}
 
 // Attr is a flat name/value attribute pair.
 type Attr struct {

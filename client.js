@@ -46,10 +46,6 @@ export function applyPatch(root, p) {
       if (node.parentNode) node.parentNode.replaceChild(newNode, node);
       return node === root ? newNode : root;
     }
-    case 'set_text': {
-      walk(root, p.path).nodeValue = p.value;
-      return root;
-    }
     case 'set_title': {
       document.title = p.value;
       return root;

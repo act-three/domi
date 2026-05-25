@@ -202,3 +202,141 @@ func TestCombineClassEmptyGuard(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
+
+// ---- Raw tests ----
+
+func TestRawRendersVerbatim(t *testing.T) {
+	got := vdom.Render(lowerOne(Raw("<b>hi</b>")))
+	want := "<b>hi</b>"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestRawInElement(t *testing.T) {
+	got := vdom.Render(lowerOne(Tag("div")()(Raw("<b>hi</b>"))))
+	want := "<div><b>hi</b></div>"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestRawInFragment(t *testing.T) {
+	got := lower(Fragment(Text("a"), Raw("<b>hi</b>"), Text("c")))
+	if len(got) != 3 {
+		t.Fatalf("expected 3 nodes, got %d", len(got))
+	}
+	if vdom.Render(got[1]) != "<b>hi</b>" {
+		t.Fatalf("Raw in Fragment should render verbatim: got %q", vdom.Render(got[1]))
+	}
+}
+
+func TestRawTransparentToDiff(t *testing.T) {
+	a := lower(Tag("div")()(Raw("<b>hi</b>")))
+	b := lower(Tag("div")()(Raw("<b>hi</b>")))
+	if got := vdom.Diff(a, b); len(got) != 0 {
+		t.Fatalf("identical Raw should produce no patches: got %+v", got)
+	}
+}
+
+func TestRawDiffProducesReplace(t *testing.T) {
+	a := lower(Tag("div")()(Raw("<b>hi</b>")))
+	b := lower(Tag("div")()(Raw("<i>bye</i>")))
+	got := vdom.Diff(a, b)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 patch, got %d: %+v", len(got), got)
+	}
+}
+
+func TestRawSVG(t *testing.T) {
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2L2 22h20z"></path></svg>`
+	got := vdom.Render(lowerOne(Raw(svg)))
+	if got != svg {
+		t.Fatalf("SVG should render verbatim:\n got: %q\nwant: %q", got, svg)
+	}
+}
+
+func TestRawPureText(t *testing.T) {
+	// Raw with no markup is valid — it's a single text node.
+	got := vdom.Render(lowerOne(Raw("hello world")))
+	if got != "hello world" {
+		t.Fatalf("got %q, want %q", got, "hello world")
+	}
+}
+
+func TestRawVoidElement(t *testing.T) {
+	got := vdom.Render(lowerOne(Raw("<br>")))
+	if got != "<br>" {
+		t.Fatalf("got %q, want %q", got, "<br>")
+	}
+}
+
+// ---- Raw validation tests ----
+
+func TestRawPanicsOnEmpty(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for empty Raw")
+		}
+	}()
+	Raw("")
+}
+
+func TestRawPanicsOnMultipleElements(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for multiple elements")
+		}
+	}()
+	Raw("<b>a</b><i>b</i>")
+}
+
+func TestRawPanicsOnLeadingText(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for leading text")
+		}
+	}()
+	Raw("hello<b>world</b>")
+}
+
+func TestRawPanicsOnTrailingText(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for trailing text")
+		}
+	}()
+	Raw("<b>hello</b>world")
+}
+
+func TestRawAcceptsAutoClosedTag(t *testing.T) {
+	// The HTML5 parser auto-closes unclosed tags, producing one node.
+	Raw("<div>hello")
+}
+
+func TestRawPanicsOnVoidWithTrailing(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for void element with trailing content")
+		}
+	}()
+	Raw("<br><br>")
+}
+
+func TestRawAcceptsNestedSameTag(t *testing.T) {
+	// Should not panic — validator tracks depth for the root tag.
+	Raw("<div><div>inner</div></div>")
+}
+
+func TestRawAcceptsBareAngleBracketInContent(t *testing.T) {
+	// Bare '<' inside an element is valid (the HTML parser handles it).
+	Raw("<div>5 < 10</div>")
+}
+
+func TestRawAcceptsAttributeWithAngleBracket(t *testing.T) {
+	Raw(`<div data-x="a>b">content</div>`)
+}
+
+func TestRawAcceptsComment(t *testing.T) {
+	Raw("<div><!-- comment --></div>")
+}

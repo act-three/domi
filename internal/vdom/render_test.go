@@ -31,3 +31,36 @@ func TestRenderMixedAttrs(t *testing.T) {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
+
+func TestRenderRawVerbatim(t *testing.T) {
+	got := Render(Raw("<b>hi</b>"))
+	want := "<b>hi</b>"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderRawNoEscaping(t *testing.T) {
+	got := Render(Raw("a &amp; b"))
+	want := "a &amp; b"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderTextEscapes(t *testing.T) {
+	got := Render(Text("a < b & c"))
+	want := "a &lt; b &amp; c"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestRenderRawInsideElement(t *testing.T) {
+	in := NewElement("div", attrs(), []Node{Raw("<b>hi</b>")}, nil)
+	got := Render(in)
+	want := "<div><b>hi</b></div>"
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
