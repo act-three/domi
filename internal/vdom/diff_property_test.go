@@ -4,6 +4,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
+	"iter"
 	"math/rand/v2"
 	"os"
 	"reflect"
@@ -161,11 +162,11 @@ func genNode(seed uint64, depth int) Node {
 	return genElement(rng.Uint64(), depth)
 }
 
-func genAttrs(seed uint64) []Attr {
+func genAttrs(seed uint64) iter.Seq[Attr] {
 	rng := rand.New(rand.NewPCG(seed, 0xC0FFEE))
 	n := rng.IntN(genMaxAttrs + 1)
 	if n == 0 {
-		return nil
+		return attrs()
 	}
 	used := map[string]bool{}
 	out := make([]Attr, 0, n)
@@ -178,7 +179,7 @@ func genAttrs(seed uint64) []Attr {
 		value := genAttrValues[rng.IntN(len(genAttrValues))]
 		out = append(out, Attr{Name: name, Value: value})
 	}
-	return out
+	return slices.Values(out)
 }
 
 // ---- property test ----
@@ -266,8 +267,8 @@ func checkProperty(t *testing.T, a *bunApplier, seed uint64, verbose bool) {
 func TestSetAttrEmptyValueAppliesAsEmptyString(t *testing.T) {
 	a := startBunApplier(t)
 
-	old := NewElement("div", nil, nil, nil)
-	new := NewElement("div", []Attr{{Name: "class", Value: ""}}, nil, nil)
+	old := NewElement("div", attrs(), nil, nil)
+	new := NewElement("div", attrs(Attr{Name: "class", Value: ""}), nil, nil)
 
 	gotHTML, err := a.apply(Render(old), diffOne(old, new))
 	if err != nil {

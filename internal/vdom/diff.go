@@ -106,26 +106,32 @@ func diffNode(old, new Node, path []int, out []patch) []patch {
 	return out
 }
 
+// diffAttrs emits set_attr and remove_attr patches for changes
+// between old and new. Both slices are sorted by name (guaranteed by
+// NewElement), so a single merge-scan suffices with no maps.
 func diffAttrs(old, new []Attr, path []int, out []patch) []patch {
-	oldByName := make(map[string]string, len(old))
-	for _, a := range old {
-		oldByName[a.Name] = a.Value
-	}
-	nextByName := make(map[string]string, len(new))
-	for _, a := range new {
-		nextByName[a.Name] = a.Value
-	}
-	// Emit sets in new-occurrence order so patches are deterministic.
-	for _, a := range new {
-		if existing, ok := oldByName[a.Name]; !ok || existing != a.Value {
-			out = append(out, patch{Op: "set_attr", Path: slices.Clone(path), Name: a.Name, Value: a.Value})
+	i, j := 0, 0
+	for i < len(old) && j < len(new) {
+		switch strings.Compare(old[i].Name, new[j].Name) {
+		case -1:
+			out = append(out, patch{Op: "remove_attr", Path: slices.Clone(path), Name: old[i].Name})
+			i++
+		case +1:
+			out = append(out, patch{Op: "set_attr", Path: slices.Clone(path), Name: new[j].Name, Value: new[j].Value})
+			j++
+		default:
+			if old[i].Value != new[j].Value {
+				out = append(out, patch{Op: "set_attr", Path: slices.Clone(path), Name: new[j].Name, Value: new[j].Value})
+			}
+			i++
+			j++
 		}
 	}
-	// Emit removes in old-occurrence order.
-	for _, a := range old {
-		if _, ok := nextByName[a.Name]; !ok {
-			out = append(out, patch{Op: "remove_attr", Path: slices.Clone(path), Name: a.Name})
-		}
+	for ; i < len(old); i++ {
+		out = append(out, patch{Op: "remove_attr", Path: slices.Clone(path), Name: old[i].Name})
+	}
+	for ; j < len(new); j++ {
+		out = append(out, patch{Op: "set_attr", Path: slices.Clone(path), Name: new[j].Name, Value: new[j].Value})
 	}
 	return out
 }

@@ -95,7 +95,7 @@ func TestHandlerDocumentOption(t *testing.T) {
 	if !strings.Contains(body, `<title>custom:</title>`) {
 		t.Fatalf("custom Document not invoked; body: %s", body)
 	}
-	if !strings.Contains(body, `<meta name="test" content="hello">`) {
+	if !strings.Contains(body, `<meta content="hello" name="test">`) {
 		t.Fatalf("custom head content missing; body: %s", body)
 	}
 	if !strings.Contains(body, `data-domi-session=`) {

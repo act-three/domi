@@ -89,7 +89,7 @@ func (Element) isNode() {}
 // Helpers for common tags can be found in [ily.dev/domi/html].
 func Tag(name string) func(...Attr) Element {
 	return func(attrs ...Attr) Element {
-		a := slices.Collect(iter.Seq[vdom.Attr](Group(attrs...).(group)))
+		a := iter.Seq[vdom.Attr](Group(attrs...).(group))
 		return func(children ...Node) Node {
 			return element(vdom.NewElement(name, a, lower(children...), nil))
 		}
@@ -123,7 +123,7 @@ func Text(s string) Node {
 // logical item.
 func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 	return func(attrs ...Attr) func(iter.Seq2[string, Node]) Node {
-		a := slices.Collect(iter.Seq[vdom.Attr](Group(attrs...).(group)))
+		a := iter.Seq[vdom.Attr](Group(attrs...).(group))
 		return func(seq iter.Seq2[string, Node]) Node {
 			var keys []string
 			var children []vdom.Node

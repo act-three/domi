@@ -8,7 +8,7 @@ import "testing"
 // serialization preference — the boolean-attribute form is the
 // idiomatic one.
 func TestRenderEmptyAttrEmitsNameOnly(t *testing.T) {
-	in := NewElement("input", []Attr{{Name: "disabled", Value: ""}}, nil, nil)
+	in := NewElement("input", attrs(Attr{Name: "disabled", Value: ""}), nil, nil)
 	got := Render(in)
 	want := `<input disabled>`
 	if got != want {
@@ -17,15 +17,16 @@ func TestRenderEmptyAttrEmitsNameOnly(t *testing.T) {
 }
 
 // TestRenderMixedAttrs: name-only and name=value attrs coexist on the
-// same element in source order.
+// same element. NewElement sorts attrs by name, so the output is in
+// alphabetical order regardless of input order.
 func TestRenderMixedAttrs(t *testing.T) {
-	in := NewElement("input", []Attr{
-		{Name: "type", Value: "checkbox"},
-		{Name: "checked", Value: ""},
-		{Name: "name", Value: "agree"},
-	}, nil, nil)
+	in := NewElement("input", attrs(
+		Attr{Name: "type", Value: "checkbox"},
+		Attr{Name: "checked", Value: ""},
+		Attr{Name: "name", Value: "agree"},
+	), nil, nil)
 	got := Render(in)
-	want := `<input type="checkbox" checked name="agree">`
+	want := `<input checked name="agree" type="checkbox">`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}

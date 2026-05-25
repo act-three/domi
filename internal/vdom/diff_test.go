@@ -1,13 +1,14 @@
 package vdom
 
 import (
+	"iter"
 	"slices"
 	"testing"
 )
 
 // el builds an element with no attrs from a tag and child list.
 func el(tag string, children ...Node) Element {
-	return NewElement(tag, nil, children, nil)
+	return NewElement(tag, attrs(), children, nil)
 }
 
 // tx builds a text node.
@@ -16,6 +17,9 @@ func tx(s string) Text { return Text(s) }
 // at builds an attribute literal.
 func at(name, value string) Attr { return Attr{Name: name, Value: value} }
 
+// attrs wraps a slice as an iterator for NewElement.
+func attrs(a ...Attr) iter.Seq[Attr] { return slices.Values(a) }
+
 // keyedList builds a keyed <ul> whose children are <li>s named for each key.
 // Each <li> carries a data-domi-key attribute matching its key — what the
 // domi-side Keyed constructor injects at construction time.
@@ -23,11 +27,11 @@ func keyedList(keys ...string) Element {
 	children := make([]Node, len(keys))
 	for i, k := range keys {
 		children[i] = NewElement("li",
-			[]Attr{{Name: "data-domi-key", Value: k}},
+			attrs(Attr{Name: "data-domi-key", Value: k}),
 			[]Node{Text(k)},
 			nil)
 	}
-	return NewElement("ul", nil, children, slices.Clone(keys))
+	return NewElement("ul", attrs(), children, slices.Clone(keys))
 }
 
 // diffOne returns the unwrapped patch slice for two single-root trees,
@@ -115,7 +119,7 @@ func TestKeyedRemove(t *testing.T) {
 
 func TestAttrAdded(t *testing.T) {
 	a := el("div")
-	b := NewElement("div", []Attr{at("class", "x")}, nil, nil)
+	b := NewElement("div", attrs(at("class", "x")), nil, nil)
 	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "set_attr" || got[0].Name != "class" || got[0].Value != "x" {
 		t.Fatalf("expected single set_attr, got %+v", got)
@@ -123,8 +127,8 @@ func TestAttrAdded(t *testing.T) {
 }
 
 func TestAttrChanged(t *testing.T) {
-	a := NewElement("div", []Attr{at("class", "x")}, nil, nil)
-	b := NewElement("div", []Attr{at("class", "y")}, nil, nil)
+	a := NewElement("div", attrs(at("class", "x")), nil, nil)
+	b := NewElement("div", attrs(at("class", "y")), nil, nil)
 	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "set_attr" || got[0].Value != "y" {
 		t.Fatalf("expected set_attr to y, got %+v", got)
@@ -132,7 +136,7 @@ func TestAttrChanged(t *testing.T) {
 }
 
 func TestAttrRemoved(t *testing.T) {
-	a := NewElement("div", []Attr{at("class", "x")}, nil, nil)
+	a := NewElement("div", attrs(at("class", "x")), nil, nil)
 	b := el("div")
 	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "remove_attr" || got[0].Name != "class" {
@@ -386,10 +390,10 @@ func TestAdjacentTextCoalescesBeforePositionalDiff(t *testing.T) {
 // overwriting whatever the first sibling's stored patch put there.
 func TestDiffPathNotAliasedAcrossSiblings(t *testing.T) {
 	plain := func(children ...Node) Node {
-		return NewElement("div", nil, children, nil)
+		return NewElement("div", attrs(), children, nil)
 	}
 	leaf := func(class string) Node {
-		return NewElement("span", []Attr{{Name: "class", Value: class}}, nil, nil)
+		return NewElement("span", attrs(Attr{Name: "class", Value: class}), nil, nil)
 	}
 	old := plain(plain(plain(plain(leaf("old"), leaf("a"), leaf("b"), leaf("c")))))
 	next := plain(plain(plain(plain(leaf("new"), leaf("a"), leaf("b"), leaf("c")))))

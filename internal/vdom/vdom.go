@@ -9,7 +9,11 @@
 // differs switch exhaustively on those two cases.
 package vdom
 
-import "strings"
+import (
+	"iter"
+	"slices"
+	"strings"
+)
 
 // Node is anything in a lowered VDOM tree: an [Element] or a [Text].
 type Node interface {
@@ -39,20 +43,28 @@ func (Element) vdomNode() {}
 // positional element; pass a slice (even empty) parallel to children
 // to build a keyed element.
 //
-// Attrs are normalized at construction: duplicate names are resolved
-// per [combineAttrs], so the renderer and differ can iterate them
-// directly without further processing.
-func NewElement(tag string, attrs []Attr, children []Node, keys []string) Element {
-	return Element{tag: tag, attrs: combineAttrs(attrs), children: children, keys: keys}
+// Attrs are sorted by name and deduplicated according to the combining rules.
+func NewElement(tag string, attrs iter.Seq[Attr], children []Node, keys []string) Element {
+	a := slices.Collect(attrs)
+	slices.SortStableFunc(a, cmpAttrName)
+	a = combineAttrs(a)
+	return Element{tag: tag, attrs: a, children: children, keys: keys}
+}
+
+func cmpAttrName(a, b Attr) int {
+	return strings.Compare(a.Name, b.Name)
 }
 
 // WithAttr returns a copy of e with a single additional attribute
-// appended. Used by [ily.dev/domi.Keyed] to inject the data-domi-key
-// attribute onto child elements without mutating the original.
+// inserted in sorted position. Used by [ily.dev/domi.Keyed] to
+// inject the data-domi-key attribute onto child elements without
+// mutating the original.
 func (e Element) WithAttr(a Attr) Element {
+	i, _ := slices.BinarySearchFunc(e.attrs, a, cmpAttrName)
 	out := make([]Attr, len(e.attrs)+1)
-	copy(out, e.attrs)
-	out[len(e.attrs)] = a
+	copy(out, e.attrs[:i])
+	out[i] = a
+	copy(out[i+1:], e.attrs[i:])
 	return Element{tag: e.tag, attrs: out, children: e.children, keys: e.keys}
 }
 
@@ -67,33 +79,31 @@ type Attr struct {
 	Value string
 }
 
-// combineAttrs resolves duplicate attribute names in attrs: class
-// joins with " ", style with ";", data-msg-* with ",", and everything
-// else is first-wins. Returns the input slice unchanged when no
-// duplicates are present.
+// combineAttrs resolves duplicate attribute names in a sorted attr
+// list: class joins with " ", style with ";", data-msg-* with ",",
+// and everything else is first-wins. Returns the input slice
+// unchanged when no duplicates are present.
 func combineAttrs(attrs []Attr) []Attr {
 	if len(attrs) < 2 {
 		return attrs
 	}
-	// Fast path: check for duplicates without allocating.
+	// Fast path: with sorted input, duplicates are adjacent.
+	hasDup := false
 	for i := 1; i < len(attrs); i++ {
-		for j := 0; j < i; j++ {
-			if attrs[i].Name == attrs[j].Name {
-				return combineAttrsSlow(attrs)
-			}
+		if attrs[i].Name == attrs[i-1].Name {
+			hasDup = true
+			break
 		}
 	}
-	return attrs
-}
-
-func combineAttrsSlow(attrs []Attr) []Attr {
+	if !hasDup {
+		return attrs
+	}
+	// Slow path: linear scan merging adjacent duplicates.
 	out := make([]Attr, 0, len(attrs))
-	idx := make(map[string]int, len(attrs))
-	var bufs map[string]*strings.Builder // lazy; allocated on first combining dup
-	for _, a := range attrs {
-		i, dup := idx[a.Name]
-		if !dup {
-			idx[a.Name] = len(out)
+	out = append(out, attrs[0])
+	for _, a := range attrs[1:] {
+		prev := &out[len(out)-1]
+		if a.Name != prev.Name {
 			out = append(out, a)
 			continue
 		}
@@ -101,24 +111,13 @@ func combineAttrsSlow(attrs []Attr) []Attr {
 		if !isComb {
 			continue // first-wins
 		}
-		if bufs == nil {
-			bufs = map[string]*strings.Builder{}
-		}
-		buf, ok := bufs[a.Name]
-		if !ok {
-			buf = &strings.Builder{}
-			buf.WriteString(out[i].Value)
-			bufs[a.Name] = buf
-		}
 		if a.Value != "" {
-			if buf.Len() > 0 {
-				buf.WriteString(sep)
+			if prev.Value != "" {
+				prev.Value += sep + a.Value
+			} else {
+				prev.Value = a.Value
 			}
-			buf.WriteString(a.Value)
 		}
-	}
-	for name, buf := range bufs {
-		out[idx[name]].Value = buf.String()
 	}
 	return out
 }
