@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -36,9 +37,10 @@ type session[Msg any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	id  string
-	app App[Msg]
-	sv  *server[Msg]
+	id     string
+	app    App[Msg]
+	sv     *server[Msg]
+	logger *slog.Logger
 
 	mu     sync.Mutex // protects the following fields
 	title  string
@@ -101,6 +103,7 @@ func (s *session[Msg]) apply(msg Msg) {
 }
 
 func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
 	var envelope struct {
 		H string         `json:"h"`
 		E jsontext.Value `json:"e"`
@@ -116,11 +119,17 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		}
 		raw, ok := lookupHandler(h)
 		if !ok {
-			continue // unknown, skip.
+			s.logger.WarnContext(ctx, "unknown msg", "key", h)
+			continue
 		}
 		msg, err := unmarshalMsg[Msg](raw, envelope.E)
 		if err != nil {
-			// TODO: this should not fail. what do? log? http error code?
+			s.logger.WarnContext(ctx, "msg unmarshal",
+				"key", h,
+				"error", err,
+				"msg", string(raw),
+				"event", string(envelope.E),
+			)
 			continue
 		}
 		go s.apply(msg)

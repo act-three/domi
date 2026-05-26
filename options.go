@@ -1,6 +1,9 @@
 package domi
 
-import "time"
+import (
+	"log/slog"
+	"time"
+)
 
 // An Option configures a [Handler].
 type Option interface {
@@ -9,6 +12,7 @@ type Option interface {
 
 type handlerConfig struct {
 	document       func(title string, body Node) Node
+	logger         *slog.Logger
 	sessionTimeout time.Duration
 	replayWindow   int
 	keepalive      time.Duration
@@ -86,3 +90,17 @@ type keepaliveOption struct {
 }
 
 func (keepaliveOption) isOption() {}
+
+// Logger sets the structured logger used by the framework
+// for internal diagnostics such as malformed client events
+// and handler registry misses.
+// The default logger is [slog.Default].
+func Logger(l *slog.Logger) Option {
+	return loggerOption{l}
+}
+
+type loggerOption struct {
+	l *slog.Logger
+}
+
+func (loggerOption) isOption() {}
