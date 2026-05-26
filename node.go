@@ -280,6 +280,24 @@ func Name(name string) func(value string) Attr {
 	}
 }
 
+// Bool returns a builder for a boolean HTML attribute.
+// When true the attribute is present (name-only, e.g. disabled).
+// When false it is absent.
+// This matches the HTML semantics
+// where a boolean attribute's presence means true
+// and its absence means false.
+//
+//	Tag("input")(attr.Disabled(true))()   // <input disabled>
+//	Tag("input")(attr.Disabled(false))()  // <input>
+func Bool(name string) func(bool) Attr {
+	return func(v bool) Attr {
+		if v {
+			return attr{Name: name}
+		}
+		return Group()
+	}
+}
+
 // group is the lowered form of a [Group]: a sequence of vdom.Attrs that
 // splats into a parent's attribute list. group satisfies Attr but not
 // attr — the parent collects it into its own Attrs slice rather than

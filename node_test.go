@@ -340,3 +340,82 @@ func TestRawAcceptsAttributeWithAngleBracket(t *testing.T) {
 func TestRawAcceptsComment(t *testing.T) {
 	Raw("<div><!-- comment --></div>")
 }
+
+// ---- Bool tests ----
+
+func TestBoolTrueEmitsNameOnly(t *testing.T) {
+	got := vdom.Render(lowerOne(Tag("input")(Bool("disabled")(true))()))
+	want := `<input disabled>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestBoolFalseEmitsNothing(t *testing.T) {
+	got := vdom.Render(lowerOne(Tag("input")(Bool("disabled")(false))()))
+	want := `<input>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestBoolTrueWithOtherAttrs(t *testing.T) {
+	got := vdom.Render(lowerOne(Tag("input")(
+		Name("type")("checkbox"),
+		Bool("checked")(true),
+	)()))
+	want := `<input checked type="checkbox">`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestBoolFalseWithOtherAttrs(t *testing.T) {
+	got := vdom.Render(lowerOne(Tag("input")(
+		Name("type")("checkbox"),
+		Bool("checked")(false),
+	)()))
+	want := `<input type="checkbox">`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestBoolToggleDiffProducesSetAndRemove(t *testing.T) {
+	a := lower(Tag("input")(Bool("disabled")(false))())
+	b := lower(Tag("input")(Bool("disabled")(true))())
+
+	// false → true should produce a set_attr
+	ps := vdom.Diff(a, b)
+	if len(ps) != 1 {
+		t.Fatalf("false→true: expected 1 patch, got %d", len(ps))
+	}
+
+	// true → false should produce a remove_attr
+	ps = vdom.Diff(b, a)
+	if len(ps) != 1 {
+		t.Fatalf("true→false: expected 1 patch, got %d", len(ps))
+	}
+}
+
+func TestBoolSameValueNoDiff(t *testing.T) {
+	a := lower(Tag("input")(Bool("disabled")(true))())
+	b := lower(Tag("input")(Bool("disabled")(true))())
+	if ps := vdom.Diff(a, b); len(ps) != 0 {
+		t.Fatalf("same value should produce no patches, got %d", len(ps))
+	}
+}
+
+func TestBoolInGroup(t *testing.T) {
+	a := lowerOne(Tag("input")(Group(
+		Name("type")("text"),
+		Bool("readonly")(true),
+	))())
+	b := lowerOne(Tag("input")(
+		Name("type")("text"),
+		Bool("readonly")(true),
+	)())
+	if vdom.Render(a) != vdom.Render(b) {
+		t.Fatalf("Bool in Group should flatten: %q vs %q", vdom.Render(a), vdom.Render(b))
+	}
+}
