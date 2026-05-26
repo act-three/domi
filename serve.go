@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -54,6 +55,7 @@ func newServer[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), opts []Option) *serv
 		m:    make(map[string]*session[Msg]),
 		config: handlerConfig{
 			document:       defaultDocument,
+			logger:         slog.Default(),
 			sessionTimeout: 48 * time.Hour,
 			replayWindow:   128,
 			keepalive:      25 * time.Second,
@@ -69,6 +71,8 @@ func newServer[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), opts []Option) *serv
 			sv.config.replayWindow = o.n
 		case keepaliveOption:
 			sv.config.keepalive = o.d
+		case loggerOption:
+			sv.config.logger = o.l
 		}
 	}
 	return sv
@@ -82,6 +86,7 @@ func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 		cancel: cancel,
 		id:     id,
 		sv:     sv,
+		logger: sv.config.logger.With("session", id),
 		log:    make([]frame, sv.config.replayWindow),
 		active: time.Now(),
 	}
