@@ -419,3 +419,58 @@ func TestBoolInGroup(t *testing.T) {
 		t.Fatalf("Bool in Group should flatten: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
 }
+
+// ---- Enumerated boolean tests ----
+//
+// contenteditable, draggable, spellcheck, and translate take the
+// string values "true" and "false" rather than using presence/absence.
+
+func TestEnumBoolTrueEmitsValueTrue(t *testing.T) {
+	got := vdom.Render(lowerOne(Tag("div")(Bool("contenteditable")(true))()))
+	want := `<div contenteditable="true"></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestEnumBoolFalseEmitsValueFalse(t *testing.T) {
+	got := vdom.Render(lowerOne(Tag("div")(Bool("contenteditable")(false))()))
+	want := `<div contenteditable="false"></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestEnumBoolDiffProducesSetAttr(t *testing.T) {
+	a := lower(Tag("div")(Bool("spellcheck")(true))())
+	b := lower(Tag("div")(Bool("spellcheck")(false))())
+	ps := vdom.Diff(a, b)
+	if len(ps) != 1 {
+		t.Fatalf("true→false: expected 1 patch, got %d", len(ps))
+	}
+}
+
+func TestEnumBoolSameValueNoDiff(t *testing.T) {
+	a := lower(Tag("div")(Bool("draggable")(true))())
+	b := lower(Tag("div")(Bool("draggable")(true))())
+	if ps := vdom.Diff(a, b); len(ps) != 0 {
+		t.Fatalf("same value should produce no patches, got %d", len(ps))
+	}
+}
+
+func TestEnumBoolAllFour(t *testing.T) {
+	for _, name := range []string{"contenteditable", "draggable", "spellcheck", "translate"} {
+		got := vdom.Render(lowerOne(Tag("div")(Bool(name)(true))()))
+		want := `<div ` + name + `="true"></div>`
+		if got != want {
+			t.Fatalf("Bool(%q)(true): got %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestRegularBoolStillUsesPresenceAbsence(t *testing.T) {
+	got := vdom.Render(lowerOne(Tag("input")(Bool("disabled")(true))()))
+	if strings.Contains(got, `="true"`) {
+		t.Fatalf("regular bool should use presence, not value: %q", got)
+	}
+}
