@@ -81,6 +81,7 @@ func newServer[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), opts []Option) *serv
 func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	id := rand.Text()
 	ctx, cancel := context.WithCancel(context.Background())
+	ctx = context.WithValue(ctx, sessionIDKey{}, id)
 	s := &session[Msg]{
 		ctx:    ctx,
 		cancel: cancel,
