@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -51,7 +52,7 @@ func newTodos() (*Todos, domi.Cmd[Msg]) {
 	return t, domi.Batch[Msg]()
 }
 
-func (t *Todos) Update(msg Msg) domi.Cmd[Msg] {
+func (t *Todos) Update(_ context.Context, msg Msg) domi.Cmd[Msg] {
 	switch msg.Tag {
 	case "Add":
 		t.nextID++
@@ -84,7 +85,7 @@ func (t *Todos) Update(msg Msg) domi.Cmd[Msg] {
 	return domi.Batch[Msg]()
 }
 
-func (t *Todos) View() (string, N) {
+func (t *Todos) View(_ context.Context) (string, N) {
 	return "todos",
 		div(style("font-family:system-ui;padding:2rem;max-width:32rem"))(
 			h1()(text("todos")),

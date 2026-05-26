@@ -14,13 +14,19 @@ type App[Msg any] interface {
 	// in response to each Msg. It must not produce external
 	// side-effects, only update its internal state.
 	//
+	// The context carries the session ID (see [SessionID])
+	// and is cancelled when the session ends.
+	//
 	// For external side-effects, such as database writes,
 	// Update should return a [Cmd].
-	Update(Msg) Cmd[Msg]
+	Update(context.Context, Msg) Cmd[Msg]
 
 	// View returns the document title and body tree
 	// to be displayed in the browser.
-	View() (title string, n Node)
+	//
+	// The context carries the session ID (see [SessionID])
+	// and is cancelled when the session ends.
+	View(context.Context) (title string, n Node)
 }
 
 // A Cmd is a deferred side-effect that eventually produces a Msg.

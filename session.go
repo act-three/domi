@@ -54,7 +54,7 @@ type session[Msg any] struct {
 func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	app, cmd := s.sv.appf()
-	title, view := app.View()
+	title, view := app.View(mergedContext{s.ctx, ctx})
 	s.app = app
 	s.title, s.view = title, lower(view)
 	s.spawn(cmd)
@@ -77,18 +77,18 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 func (s *session[Msg]) spawn(cmd Cmd[Msg]) {
 	for f := range cmd.s {
 		go func() {
-			s.apply(f(s.ctx))
+			s.apply(s.ctx, f(s.ctx))
 		}()
 	}
 }
 
-func (s *session[Msg]) apply(msg Msg) {
+func (s *session[Msg]) apply(ctx context.Context, msg Msg) {
 	// s.mu serializes the whole update cycle, including the user's Update
 	// and View. If those grow expensive, split state under a second lock.
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	cmd := s.app.Update(msg)
-	title, view := s.app.View()
+	cmd := s.app.Update(ctx, msg)
+	title, view := s.app.View(ctx)
 	next := lower(view)
 	ps := vdom.Diff(s.view, next)
 	if title != s.title {
@@ -139,7 +139,7 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 			)
 			continue
 		}
-		go s.apply(msg)
+		go s.apply(mergedContext{s.ctx, ctx}, msg)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

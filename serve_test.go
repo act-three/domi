@@ -14,8 +14,8 @@ import (
 // so View produces a different tree (and the diff produces real patches).
 type counterApp struct{ n int }
 
-func (a *counterApp) Update(int) Cmd[int] { a.n++; return Batch[int]() }
-func (a *counterApp) View() (string, Node) {
+func (a *counterApp) Update(context.Context, int) Cmd[int] { a.n++; return Batch[int]() }
+func (a *counterApp) View(context.Context) (string, Node) {
 	return "", Tag("div")()(Text(fmt.Sprintf("%d", a.n)))
 }
 
@@ -23,8 +23,8 @@ func (a *counterApp) View() (string, Node) {
 // members as separate top-level children of the mount.
 type fragmentApp struct{ n int }
 
-func (a *fragmentApp) Update(int) Cmd[int] { a.n++; return Batch[int]() }
-func (a *fragmentApp) View() (string, Node) {
+func (a *fragmentApp) Update(context.Context, int) Cmd[int] { a.n++; return Batch[int]() }
+func (a *fragmentApp) View(context.Context) (string, Node) {
 	return "", Fragment(
 		Tag("div")()(Text(fmt.Sprintf("a%d", a.n))),
 		Tag("div")()(Text(fmt.Sprintf("b%d", a.n))),
@@ -38,7 +38,7 @@ func (a *fragmentApp) View() (string, Node) {
 func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 	const replayWindow = 128
 	ctx, cancel := context.WithCancel(context.Background())
-	_, view := app.View()
+	_, view := app.View(ctx)
 	return &session[Msg]{
 		ctx:    ctx,
 		cancel: cancel,
@@ -58,7 +58,7 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 func TestSessionApplyFragmentAtRoot(t *testing.T) {
 	s := newTestSession(&fragmentApp{})
 	defer s.cancel()
-	s.apply(1)
+	s.apply(s.ctx, 1)
 	if s.head != 1 {
 		t.Fatalf("expected head=1 after one apply, got %d", s.head)
 	}
@@ -225,9 +225,9 @@ func TestSessionApplyRingBuffer(t *testing.T) {
 	s.sv.config.replayWindow = window
 	s.log = make([]frame, window)
 	defer s.cancel()
-	s.apply(1) // seq 1 → log[1]
-	s.apply(2) // seq 2 → log[0] (overwrites zero-value)
-	s.apply(3) // seq 3 → log[1] (overwrites seq 1)
+	s.apply(s.ctx, 1) // seq 1 → log[1]
+	s.apply(s.ctx, 2) // seq 2 → log[0] (overwrites zero-value)
+	s.apply(s.ctx, 3) // seq 3 → log[1] (overwrites seq 1)
 	if s.head != 3 {
 		t.Fatalf("expected head=3, got %d", s.head)
 	}
@@ -252,9 +252,9 @@ func TestSessionSSEFreshClient(t *testing.T) {
 func TestSessionSSEReplayWithinWindow(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	s.apply(1)
-	s.apply(2)
-	s.apply(3)
+	s.apply(s.ctx, 1)
+	s.apply(s.ctx, 2)
+	s.apply(s.ctx, 3)
 	out := runSSE(t, s, "1", 30*time.Millisecond)
 	if !strings.Contains(out, "id: 2") || !strings.Contains(out, "id: 3") {
 		t.Fatalf("expected frames 2 and 3 in output, got: %s", out)
@@ -275,10 +275,10 @@ func TestSessionSSEResyncOutOfWindow(t *testing.T) {
 	defer s.cancel()
 	// Four apply calls overflow the window of 2, so the oldest two
 	// frames are gone from the ring. Client at seq 1 needs them.
-	s.apply(1)
-	s.apply(2)
-	s.apply(3)
-	s.apply(4)
+	s.apply(s.ctx, 1)
+	s.apply(s.ctx, 2)
+	s.apply(s.ctx, 3)
+	s.apply(s.ctx, 4)
 	out := runSSE(t, s, "1", 30*time.Millisecond)
 	if !strings.Contains(out, `"op":"reset"`) {
 		t.Fatalf("expected reset patch for out-of-window client, got: %s", out)
@@ -297,7 +297,7 @@ func TestSessionSSEResyncOutOfWindow(t *testing.T) {
 func TestSessionSSEResyncAheadOfHead(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	s.apply(1)
+	s.apply(s.ctx, 1)
 	out := runSSE(t, s, "42", 30*time.Millisecond)
 	if !strings.Contains(out, `"op":"reset"`) {
 		t.Fatalf("expected reset for stale client, got: %s", out)

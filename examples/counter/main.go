@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
@@ -33,7 +34,7 @@ func newCounter() (*Counter, domi.Cmd[Msg]) {
 	return &Counter{}, domi.Batch[Msg]()
 }
 
-func (c *Counter) Update(msg Msg) domi.Cmd[Msg] {
+func (c *Counter) Update(_ context.Context, msg Msg) domi.Cmd[Msg] {
 	switch msg.Tag {
 	case "Increment":
 		c.count++
@@ -45,7 +46,7 @@ func (c *Counter) Update(msg Msg) domi.Cmd[Msg] {
 	return domi.Batch[Msg]()
 }
 
-func (c *Counter) View() (string, N) {
+func (c *Counter) View(_ context.Context) (string, N) {
 	return fmt.Sprintf("Counter (%d)", c.count),
 		div(style("font-family:system-ui;padding:2rem"))(
 			h1()(text(fmt.Sprintf("Count: %d", c.count))),
