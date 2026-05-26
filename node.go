@@ -280,22 +280,45 @@ func Name(name string) func(value string) Attr {
 	}
 }
 
-// Bool returns a builder for a boolean HTML attribute.
-// When true the attribute is present (name-only, e.g. disabled).
-// When false it is absent.
-// This matches the HTML semantics
-// where a boolean attribute's presence means true
-// and its absence means false.
+// Bool returns a builder for a boolean HTML attribute. For standard
+// boolean attributes (disabled, checked, …), true means present
+// (name-only) and false means absent:
 //
 //	Tag("input")(attr.Disabled(true))()   // <input disabled>
 //	Tag("input")(attr.Disabled(false))()  // <input>
+//
+// For enumerated boolean attributes (contenteditable, draggable,
+// spellcheck, translate), true and false emit the corresponding
+// string value instead:
+//
+//	Tag("div")(attr.ContentEditable(true))()   // <div contenteditable="true">
+//	Tag("div")(attr.ContentEditable(false))()  // <div contenteditable="false">
 func Bool(name string) func(bool) Attr {
+	if enumeratedBool[name] {
+		return func(v bool) Attr {
+			if v {
+				return attr{Name: name, Value: "true"}
+			}
+			return attr{Name: name, Value: "false"}
+		}
+	}
 	return func(v bool) Attr {
 		if v {
 			return attr{Name: name}
 		}
 		return Group()
 	}
+}
+
+// enumeratedBool is the set of HTML attributes that take the string
+// values "true" and "false" rather than using presence/absence
+// semantics. These look boolean but are technically enumerated
+// attributes in the HTML spec.
+var enumeratedBool = map[string]bool{
+	"contenteditable": true,
+	"draggable":       true,
+	"spellcheck":      true,
+	"translate":       true,
 }
 
 // group is the lowered form of a [Group]: a sequence of vdom.Attrs that
