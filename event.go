@@ -2,6 +2,7 @@ package domi
 
 import (
 	"encoding/json/v2"
+	"fmt"
 	"reflect"
 )
 
@@ -17,6 +18,8 @@ import (
 // the framework unmarshals the event into that field.
 // See [ily.dev/domi/event.Event] for a convenience type
 // that captures everything the client sends.
+//
+// If msg cannot be marshaled to JSON, On panics.
 func On(event string) func(msg any) Attr {
 	return func(msg any) Attr {
 		if fi := eventFieldIndex(reflect.ValueOf(msg)); fi != nil {
@@ -28,7 +31,7 @@ func On(event string) func(msg any) Attr {
 
 		raw, err := json.Marshal(msg)
 		if err != nil {
-			raw = []byte("null")
+			panic(fmt.Errorf("bad msg for %s: %w", event, err))
 		}
 		return attr{Name: "data-msg-" + event, Value: registerHandler(raw)}
 	}

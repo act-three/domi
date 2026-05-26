@@ -52,6 +52,7 @@ type session[Msg any] struct {
 }
 
 func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
+	ctx := req.Context()
 	app, cmd := s.sv.appf()
 	title, view := app.View()
 	s.app = app
@@ -61,8 +62,14 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	body := Tag("body")(Name("data-domi-session")(s.id))(view)
 	root := lowerOne(s.sv.config.document(title, body))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	_, _ = io.WriteString(w, "<!doctype html>")
-	_ = vdom.RenderTo(w, root)
+	if _, err := io.WriteString(w, "<!doctype html>"); err != nil {
+		s.logger.DebugContext(ctx, "response", "error", err)
+		return
+	}
+	if err := vdom.RenderTo(w, root); err != nil {
+		s.logger.DebugContext(ctx, "response", "error", err)
+		return
+	}
 }
 
 // spawn hands the session ctx to each Cmd body so cmds can honor
@@ -189,6 +196,7 @@ func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 			vdom.SetTitle(title),
 		}}
 		if err := writeFrame(w, rc, f); err != nil {
+			s.logger.DebugContext(req.Context(), "sse", "error", err)
 			return
 		}
 		seen = head
@@ -198,6 +206,7 @@ func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 		s.touch()
 		for _, f := range s.framesSince(seen) {
 			if err := writeFrame(w, rc, f); err != nil {
+				s.logger.DebugContext(req.Context(), "sse", "error", err)
 				return
 			}
 			seen = f.seq
@@ -211,11 +220,10 @@ func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 			return
 		case <-time.After(s.sv.config.keepalive):
 			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
+				s.logger.DebugContext(req.Context(), "sse", "error", err)
 				return
 			}
-			if err := rc.Flush(); err != nil {
-				return
-			}
+			rc.Flush()
 		}
 	}
 }
@@ -292,5 +300,6 @@ func writeFrame(w http.ResponseWriter, rc *http.ResponseController, f frame) err
 	if _, err := fmt.Fprintf(w, "id: %d\nevent: patch\ndata: %s\n\n", f.seq, data); err != nil {
 		return err
 	}
-	return rc.Flush()
+	rc.Flush()
+	return nil
 }
