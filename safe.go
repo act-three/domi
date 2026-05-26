@@ -84,6 +84,16 @@ func safeChildren(n *html.Node) []Node {
 }
 
 func isSafeURL(u string) bool {
+	// Browsers strip ASCII tabs and newlines from the entire URL before
+	// evaluating the scheme (WHATWG URL Standard §4.1 step 4). Strip
+	// them here so embedded whitespace can't sneak past the prefix
+	// checks — e.g. "java\tscript:alert(1)" must be caught.
+	u = strings.Map(func(r rune) rune {
+		if r == '\t' || r == '\n' || r == '\r' {
+			return -1
+		}
+		return r
+	}, u)
 	u = strings.TrimSpace(strings.ToLower(u))
 	return !strings.HasPrefix(u, "javascript:") &&
 		!strings.HasPrefix(u, "data:") &&

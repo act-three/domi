@@ -1,6 +1,7 @@
 package domi
 
 import (
+	"math/rand/v2"
 	"strings"
 	"testing"
 
@@ -91,6 +92,23 @@ func TestSafe(t *testing.T) {
 			`<a href="vbscript:exec">xss</a>`,
 			"<a>xss</a>"},
 
+		// Embedded tabs/newlines bypass (WHATWG URL §4.1)
+		{"javascript with tab",
+			"<a href=\"java\tscript:alert(1)\">xss</a>",
+			"<a>xss</a>"},
+		{"javascript with newline",
+			"<a href=\"java\nscript:alert(1)\">xss</a>",
+			"<a>xss</a>"},
+		{"javascript with carriage return",
+			"<a href=\"java\rscript:alert(1)\">xss</a>",
+			"<a>xss</a>"},
+		{"javascript scattered whitespace",
+			"<a href=\"j\ta\nv\ra\tscript:alert(1)\">xss</a>",
+			"<a>xss</a>"},
+		{"data with tab",
+			"<img src=\"da\tta:text/html,<script>alert(1)</script>\">",
+			"<img>"},
+
 		// Table attributes
 		{"table with colspan",
 			`<table><tr><td colspan="2">cell</td></tr></table>`,
@@ -104,4 +122,38 @@ func TestSafe(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestIsSafeURLPropertyRejectsSchemes checks that for any blocked
+// scheme, inserting arbitrary tabs, newlines, and carriage returns
+// into the scheme name is still caught. This guards against the
+// WHATWG URL Standard §4.1 normalization that browsers apply.
+func TestIsSafeURLPropertyRejectsSchemes(t *testing.T) {
+	const iterations = 2000
+	schemes := []string{"javascript", "data", "file", "vbscript"}
+	rng := rand.New(rand.NewPCG(0xBEEF, 0))
+
+	for i := range iterations {
+		scheme := schemes[rng.IntN(len(schemes))]
+		mangled := injectWhitespace(rng, scheme)
+		url := mangled + ":alert(1)"
+		if isSafeURL(url) {
+			t.Fatalf("[%d] isSafeURL(%q) = true, want false (scheme %q mangled to %q)",
+				i, url, scheme, mangled)
+		}
+	}
+}
+
+// injectWhitespace inserts random \t, \n, \r between characters of s.
+func injectWhitespace(rng *rand.Rand, s string) string {
+	ws := []rune{'\t', '\n', '\r'}
+	var b strings.Builder
+	for _, r := range s {
+		// 40% chance of injecting whitespace before this char
+		if rng.IntN(5) < 2 {
+			b.WriteRune(ws[rng.IntN(len(ws))])
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
