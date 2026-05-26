@@ -43,7 +43,7 @@ type Todos struct {
 	nextID uint64
 }
 
-func newTodos() (*Todos, domi.Cmd[Msg]) {
+func newTodos(_ context.Context) (*Todos, domi.Cmd[Msg]) {
 	t := &Todos{}
 	for _, s := range []string{"learn go generics", "spike domi", "ship something"} {
 		t.nextID++

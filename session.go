@@ -53,8 +53,9 @@ type session[Msg any] struct {
 
 func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
-	app, cmd := s.sv.appf()
-	title, view := app.View(mergedContext{s.ctx, ctx})
+	appCtx := mergedContext{s.ctx, ctx}
+	app, cmd := s.sv.appf(appCtx)
+	title, view := app.View(appCtx)
 	s.app = app
 	s.title, s.view = title, lower(view)
 	s.spawn(cmd)
@@ -72,12 +73,12 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// spawn hands the session ctx to each Cmd body so cmds can honor
-// cancellation; the returned Msg feeds back into apply.
+// spawn runs each Cmd body in its own goroutine and feeds the
+// resulting Msg back into apply.
 func (s *session[Msg]) spawn(cmd Cmd[Msg]) {
 	for f := range cmd.s {
 		go func() {
-			s.apply(s.ctx, f(s.ctx))
+			s.apply(s.ctx, f())
 		}()
 	}
 }

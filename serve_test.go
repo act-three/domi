@@ -84,7 +84,7 @@ func TestHandlerDocumentOption(t *testing.T) {
 			body,
 		)
 	}
-	h := Handler(func() (*counterApp, Cmd[int]) {
+	h := Handler(func(context.Context) (*counterApp, Cmd[int]) {
 		return &counterApp{}, Batch[int]()
 	}, Document(custom))
 
@@ -152,7 +152,7 @@ func TestSessionIdleWatchTouchDefers(t *testing.T) {
 func TestServerSessionTimeoutNeverAttached(t *testing.T) {
 	const d = 50 * time.Millisecond
 	sv := newServer(
-		func() (*counterApp, Cmd[int]) { return &counterApp{}, Batch[int]() },
+		func(context.Context) (*counterApp, Cmd[int]) { return &counterApp{}, Batch[int]() },
 		[]Option{SessionTimeout(d)},
 	)
 	sv.handleRoot(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
@@ -385,22 +385,18 @@ func TestSessionSSEEviction(t *testing.T) {
 	<-done2
 }
 
-// (*session).spawn hands the session ctx to the Cmd body so cmds can
-// honor cancellation.
-func TestSessionSpawnPassesSessionCtx(t *testing.T) {
+// (*session).spawn runs each Cmd body in its own goroutine.
+func TestSessionSpawnRunsCmds(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	got := make(chan context.Context, 1)
-	cmd := Func(func(c context.Context) int {
-		got <- c
+	done := make(chan struct{})
+	cmd := Func(func() int {
+		close(done)
 		return 0
 	})
 	s.spawn(cmd)
 	select {
-	case c := <-got:
-		if c != s.ctx {
-			t.Fatalf("spawn should pass session ctx, got a different one")
-		}
+	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("Cmd body never ran")
 	}

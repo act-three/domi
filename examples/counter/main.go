@@ -30,7 +30,7 @@ type Counter struct {
 	count int
 }
 
-func newCounter() (*Counter, domi.Cmd[Msg]) {
+func newCounter(_ context.Context) (*Counter, domi.Cmd[Msg]) {
 	return &Counter{}, domi.Batch[Msg]()
 }
 
