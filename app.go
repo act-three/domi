@@ -33,20 +33,23 @@ type App[Msg any] interface {
 // The framework runs each Cmd in its own goroutine
 // and passes the resulting Msg back into Update.
 type Cmd[Msg any] struct {
-	s iter.Seq[func(context.Context) Msg]
+	s iter.Seq[func() Msg]
 }
 
 // Func returns a [Cmd] that runs fn and dispatches its result back
 // into Update.
-func Func[Msg any](f func(context.Context) Msg) Cmd[Msg] {
-	return Cmd[Msg]{slices.Values([]func(context.Context) Msg{f})}
+//
+// The app should capture the context
+// from [Update] or the [Handler] constructor for f to use.
+func Func[Msg any](f func() Msg) Cmd[Msg] {
+	return Cmd[Msg]{slices.Values([]func() Msg{f})}
 }
 
 // Batch returns a [Cmd] that runs each item in c concurrently.
 // The resulting [Msg] values are dispatched to Update serially.
 func Batch[Msg any](c ...Cmd[Msg]) Cmd[Msg] {
 	return Cmd[Msg]{
-		func(yield func(func(context.Context) Msg) bool) {
+		func(yield func(func() Msg) bool) {
 			for _, c := range c {
 				for c := range c.s {
 					if !yield(c) {

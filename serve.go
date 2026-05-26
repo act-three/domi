@@ -25,9 +25,11 @@ var clientJSPath = func() string {
 // At the start of a session,
 // the returned Handler calls f
 // to obtain a fresh App instance plus an initial [Cmd].
+// The context carries the session ID (see [SessionID])
+// and is cancelled when the session ends.
 // This instance is associated with the session,
 // so each browser gets its own independent state.
-func Handler[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), o ...Option) http.Handler {
+func Handler[Msg any, A App[Msg]](f func(context.Context) (A, Cmd[Msg]), o ...Option) http.Handler {
 	sv := newServer(f, o)
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /{$}", sv.handleRoot)
@@ -43,15 +45,15 @@ func Handler[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), o ...Option) http.Hand
 
 type server[Msg any] struct {
 	config handlerConfig
-	appf   func() (App[Msg], Cmd[Msg])
+	appf   func(context.Context) (App[Msg], Cmd[Msg])
 
 	mu sync.Mutex
 	m  map[string]*session[Msg]
 }
 
-func newServer[Msg any, A App[Msg]](f func() (A, Cmd[Msg]), opts []Option) *server[Msg] {
+func newServer[Msg any, A App[Msg]](f func(context.Context) (A, Cmd[Msg]), opts []Option) *server[Msg] {
 	sv := &server[Msg]{
-		appf: func() (App[Msg], Cmd[Msg]) { return f() },
+		appf: func(ctx context.Context) (App[Msg], Cmd[Msg]) { return f(ctx) },
 		m:    make(map[string]*session[Msg]),
 		config: handlerConfig{
 			document:       defaultDocument,
