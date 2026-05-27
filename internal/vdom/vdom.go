@@ -100,10 +100,8 @@ type Attr struct {
 	Value string
 }
 
-// combineAttrs resolves duplicate attribute names in a sorted attr
-// list: class joins with " ", style with ";", data-msg-* with ",",
-// and everything else is first-wins. Returns the input slice
-// unchanged when no duplicates are present.
+// combineAttrs resolves duplicate attribute names.
+// attrs must be sorted.
 func combineAttrs(attrs []Attr) []Attr {
 	if len(attrs) < 2 {
 		return attrs
@@ -143,24 +141,30 @@ func combineAttrs(attrs []Attr) []Attr {
 	return out
 }
 
+var combining = map[string]string{
+	"class": " ",
+	"style": ";",
+}
+
+// RegisterCombining registers name as a combining attribute with the
+// given separator. When a combining attribute appears more than once
+// on an element, the values are joined with sep into a single
+// attribute.
+//
+// RegisterCombining must be called before any call to [NewElement],
+// typically from a package init function.
+func RegisterCombining(name, sep string) {
+	combining[name] = sep
+}
+
 // combineSep returns the separator for attributes whose duplicate
 // occurrences should be combined.
-//
-//   - class:      single space
-//   - style:      semicolon
-//   - data-msg-*: comma (the server splits on commas to recover the
-//     individual handler hashes)
-func combineSep(name string) (sep string, ok bool) {
-	switch name {
-	case "class":
-		return " ", true
-	case "style":
-		return ";", true
-	}
+func combineSep(name string) (string, bool) {
 	if strings.HasPrefix(name, "data-msg-") {
 		return ",", true
 	}
-	return "", false
+	sep, ok := combining[name]
+	return sep, ok
 }
 
 // coalesceText concatenates adjacent text-only Raw children into a
