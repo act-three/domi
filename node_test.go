@@ -203,6 +203,15 @@ func TestCombineClassEmptyGuard(t *testing.T) {
 	}
 }
 
+func TestRegisterCombining(t *testing.T) {
+	RegisterCombining("data-x", ":")
+	got := vdom.Render(lowerOne(Tag("div")(Name("data-x")("a"), Name("data-x")("b"), Name("data-x")("c"))()))
+	want := `<div data-x="a:b:c"></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 // ---- Raw tests ----
 
 func TestRawRendersVerbatim(t *testing.T) {

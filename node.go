@@ -251,16 +251,11 @@ func lowerOne(n Node) vdom.Node {
 // on any given element:
 //
 //  1. For each combining attribute,
-//     it concatenates the values according to the table below.
+//     the framework combines the values into a single value.
+//     See [RegisterCombining] for more.
 //  2. Event handlers are combined internally.
 //  3. For all other attributes,
 //     only the first occurrence appears.
-//
-// The combining attributes are:
-//
-//	name  sep
-//	class " "
-//	style ";"
 type Attr interface {
 	isAttr()
 }
@@ -356,4 +351,22 @@ func Group(a ...Attr) Attr {
 			}
 		}
 	})
+}
+
+// RegisterCombining registers name as a "combining" attribute.
+// When a combining attribute appears more than once in an HTML node,
+// the values are combined, separated by sep,
+// into a single attribute in the rendered output.
+//
+// RegisterCombining must be called before Handler.
+// This is typically done in an init function in packages
+// that define custom attributes.
+//
+// The initial set of combining attributes is:
+//
+//	name  sep
+//	class " "
+//	style ";"
+func RegisterCombining(name, sep string) {
+	vdom.RegisterCombining(name, sep)
 }
