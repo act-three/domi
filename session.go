@@ -6,6 +6,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"io"
+	"iter"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -49,6 +50,7 @@ type session[Msg any] struct {
 	head   uint64         // seq of the most recent frame; 0 if none
 	sse    *sseAttachment // nil if no current consumer
 	active time.Time
+	subs   map[any]context.CancelFunc // active subscription keys → cancel
 }
 
 func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
@@ -58,6 +60,7 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	title, view := app.View(appCtx)
 	s.app = app
 	s.title, s.view = title, lower(view)
+	s.updateSubs(app.Subscriptions(appCtx))
 	s.spawn(cmd)
 
 	body := Tag("body")(Name("data-domi-session")(s.id))(view)
@@ -107,7 +110,42 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg) {
 	}
 	s.view = next
 	s.title = title
+	s.updateSubs(s.app.Subscriptions(ctx))
 	s.spawn(cmd)
+}
+
+// updateSubs reconciles the active subscription set against wanted.
+// New keys start a goroutine that iterates the event stream;
+// absent keys cancel their goroutine via context.
+func (s *session[Msg]) updateSubs(wanted Sub[Msg]) {
+	next := make(map[any]func(context.Context) iter.Seq[Msg], len(wanted.s))
+	for _, e := range wanted.s {
+		next[e.key] = e.events
+	}
+	for key, cancel := range s.subs {
+		if _, ok := next[key]; !ok {
+			cancel()
+			delete(s.subs, key)
+		}
+	}
+	for key, events := range next {
+		if _, ok := s.subs[key]; ok {
+			continue
+		}
+		if s.subs == nil {
+			s.subs = make(map[any]context.CancelFunc)
+		}
+		ctx, cancel := context.WithCancel(s.ctx)
+		s.subs[key] = cancel
+		go func() {
+			for msg := range events(ctx) {
+				if ctx.Err() != nil {
+					break
+				}
+				s.apply(s.ctx, msg)
+			}
+		}()
+	}
 }
 
 func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {

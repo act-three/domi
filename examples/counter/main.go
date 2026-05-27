@@ -56,6 +56,8 @@ func (c *Counter) View(_ context.Context) (string, N) {
 		)
 }
 
+func (c *Counter) Subscriptions(_ context.Context) (s domi.Sub[Msg]) { return s }
+
 func main() {
 	h := domi.Handler(newCounter)
 	addr := "127.0.0.1:3010"

@@ -3,6 +3,7 @@ package domi
 import (
 	"context"
 	"fmt"
+	"iter"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +19,7 @@ func (a *counterApp) Update(context.Context, int) Cmd[int] { a.n++; return Batch
 func (a *counterApp) View(context.Context) (string, Node) {
 	return "", Tag("div")()(Text(fmt.Sprintf("%d", a.n)))
 }
+func (a *counterApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
 
 // fragmentApp's View returns a Fragment so the framework treats its
 // members as separate top-level children of the mount.
@@ -30,6 +32,7 @@ func (a *fragmentApp) View(context.Context) (string, Node) {
 		Tag("div")()(Text(fmt.Sprintf("b%d", a.n))),
 	)
 }
+func (a *fragmentApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
 
 // newTestSession wires up a session for direct method tests, bypassing
 // the http surface. The session points at a default-configured server
@@ -399,5 +402,114 @@ func TestSessionSpawnRunsCmds(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("Cmd body never ran")
+	}
+}
+
+// subApp lets tests control the subscription set dynamically.
+// Subscriptions returns whatever sub is set to at the time.
+type subApp struct {
+	sub Sub[int]
+}
+
+func (a *subApp) Update(context.Context, int) Cmd[int]   { return Batch[int]() }
+func (a *subApp) View(context.Context) (string, Node)    { return "", Tag("div")()() }
+func (a *subApp) Subscriptions(context.Context) Sub[int] { return a.sub }
+
+type tickKey struct{ id string }
+
+// A subscription's event stream runs in its own goroutine and
+// dispatches Msgs through apply.
+func TestSessionSubStartsAndDispatches(t *testing.T) {
+	ready := make(chan struct{})
+	app := &subApp{sub: Subscription(tickKey{"a"}, func(ctx context.Context) iter.Seq[int] {
+		return func(yield func(int) bool) {
+			close(ready)
+			yield(42)
+		}
+	})}
+	s := newTestSession[int](app)
+	defer s.cancel()
+	// Initial diffSubs to wire up the subscription.
+	s.mu.Lock()
+	s.updateSubs(app.Subscriptions(s.ctx))
+	s.mu.Unlock()
+
+	select {
+	case <-ready:
+	case <-time.After(time.Second):
+		t.Fatal("subscription goroutine never started")
+	}
+	// Give apply time to process.
+	time.Sleep(20 * time.Millisecond)
+}
+
+// A subscription removed from the set has its context cancelled.
+func TestSessionSubCancelledOnRemoval(t *testing.T) {
+	app := &subApp{sub: Subscription(tickKey{"a"}, func(ctx context.Context) iter.Seq[int] {
+		return func(yield func(int) bool) {
+			<-ctx.Done()
+		}
+	})}
+	s := newTestSession[int](app)
+	defer s.cancel()
+
+	s.mu.Lock()
+	s.updateSubs(app.Subscriptions(s.ctx))
+	if len(s.subs) != 1 {
+		s.mu.Unlock()
+		t.Fatalf("expected 1 active sub, got %d", len(s.subs))
+	}
+	s.mu.Unlock()
+
+	// Remove all subscriptions.
+	app.sub = Sub[int]{}
+	s.mu.Lock()
+	s.updateSubs(app.Subscriptions(s.ctx))
+	if len(s.subs) != 0 {
+		s.mu.Unlock()
+		t.Fatalf("expected 0 active subs after removal, got %d", len(s.subs))
+	}
+	s.mu.Unlock()
+}
+
+// An unchanged key is not restarted across diffs.
+func TestSessionSubPersistsAcrossDiffs(t *testing.T) {
+	starts := make(chan struct{}, 10)
+	app := &subApp{sub: Subscription(tickKey{"a"}, func(ctx context.Context) iter.Seq[int] {
+		return func(yield func(int) bool) {
+			starts <- struct{}{}
+			<-ctx.Done()
+		}
+	})}
+	s := newTestSession[int](app)
+	defer s.cancel()
+
+	s.mu.Lock()
+	s.updateSubs(app.Subscriptions(s.ctx))
+	s.mu.Unlock()
+
+	<-starts // first start
+
+	// Diff again with the same key — should NOT restart.
+	s.mu.Lock()
+	s.updateSubs(app.Subscriptions(s.ctx))
+	s.mu.Unlock()
+
+	select {
+	case <-starts:
+		t.Fatal("subscription was restarted despite unchanged key")
+	case <-time.After(50 * time.Millisecond):
+		// good — no restart
+	}
+}
+
+// Subs composes multiple Sub values into one.
+func TestSubsComposition(t *testing.T) {
+	noop := func(context.Context) iter.Seq[int] { return func(func(int) bool) {} }
+	a := Subscription[int](tickKey{"a"}, noop)
+	b := Subscription[int](tickKey{"b"}, noop)
+	combined := Subs(a, b)
+	if len(combined.s) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(combined.s))
 	}
 }
