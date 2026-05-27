@@ -14,8 +14,9 @@ type App[Msg any] interface {
 	// in response to each Msg. It must not produce external
 	// side-effects, only update its internal state.
 	//
-	// The context carries the session ID (see [SessionID])
-	// and is cancelled when the session ends.
+	// The context carries the session ID (see SessionID)
+	// as well as values from the HTTP request context, if any.
+	// It is cancelled when the session ends.
 	//
 	// For external side-effects, such as database writes,
 	// Update should return a [Cmd].
@@ -24,8 +25,9 @@ type App[Msg any] interface {
 	// View returns the document title and body tree
 	// to be displayed in the browser.
 	//
-	// The context carries the session ID (see [SessionID])
-	// and is cancelled when the session ends.
+	// The context carries the session ID (see SessionID)
+	// as well as values from the HTTP request context, if any.
+	// It is cancelled when the session ends.
 	View(context.Context) (title string, n Node)
 
 	// Subscriptions returns the set of active subscriptions.
@@ -56,7 +58,7 @@ func Func[Msg any](f func() Msg) Cmd[Msg] {
 }
 
 // Batch returns a [Cmd] that runs each item in c concurrently.
-// The resulting [Msg] values are dispatched to Update serially.
+// The resulting Msg values are dispatched to Update serially.
 func Batch[Msg any](c ...Cmd[Msg]) Cmd[Msg] {
 	return Cmd[Msg]{
 		func(yield func(func() Msg) bool) {
