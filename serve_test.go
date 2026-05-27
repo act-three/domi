@@ -6,6 +6,7 @@ import (
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -46,10 +47,14 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 		ctx:    ctx,
 		cancel: cancel,
 		app:    app,
-		sv: &server[Msg]{config: handlerConfig{
-			replayWindow: replayWindow,
-			keepalive:    25 * time.Second,
-		}},
+		sv: &server[Msg]{
+			config: handlerConfig{
+				replayWindow: replayWindow,
+				keepalive:    25 * time.Second,
+			},
+			onURLChange:  func(*url.URL) Msg { var zero Msg; return zero },
+			onURLRequest: func(URLRequest) Msg { var zero Msg; return zero },
+		},
 		log:    make([]frame, replayWindow),
 		view:   lower(view),
 		active: time.Now(),
@@ -87,9 +92,14 @@ func TestHandlerDocumentOption(t *testing.T) {
 			body,
 		)
 	}
-	h := Handler(func(context.Context) (*counterApp, Cmd[int]) {
-		return &counterApp{}, Batch[int]()
-	}, Document(custom))
+	h := Handler(
+		func(context.Context, *url.URL) (*counterApp, Cmd[int]) {
+			return &counterApp{}, Batch[int]()
+		},
+		func(URLRequest) int { return 0 },
+		func(*url.URL) int { return 0 },
+		Document(custom),
+	)
 
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
@@ -155,7 +165,9 @@ func TestSessionIdleWatchTouchDefers(t *testing.T) {
 func TestServerSessionTimeoutNeverAttached(t *testing.T) {
 	const d = 50 * time.Millisecond
 	sv := newServer(
-		func(context.Context) (*counterApp, Cmd[int]) { return &counterApp{}, Batch[int]() },
+		func(context.Context, *url.URL) (*counterApp, Cmd[int]) { return &counterApp{}, Batch[int]() },
+		func(URLRequest) int { return 0 },
+		func(*url.URL) int { return 0 },
 		[]Option{SessionTimeout(d)},
 	)
 	sv.handleRoot(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))

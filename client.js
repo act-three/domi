@@ -112,6 +112,14 @@ export function applyPatch(root, p) {
       while (frag.firstChild) root.appendChild(frag.firstChild);
       return root;
     }
+    case 'push_url': {
+      history.pushState(null, '', p.value);
+      return root;
+    }
+    case 'replace_url': {
+      history.replaceState(null, '', p.value);
+      return root;
+    }
     default:
       console.warn('domi: unknown op', p);
       return root;
@@ -214,6 +222,62 @@ export function run() {
       }
     });
   }
+
+  // Link interception for SPA navigation. Intercepts clicks on <a>
+  // elements with same-origin hrefs and routes them through the
+  // server's onURLRequest callback instead of navigating. Skips
+  // modified clicks (ctrl/shift/alt/meta), non-left-button clicks,
+  // links with target attributes, download links, and links where an
+  // ancestor already has a data-msg-click handler (the app opted into
+  // explicit handling).
+  container.addEventListener('click', (e) => {
+    if (e.button !== 0 || e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return;
+    let a = e.target;
+    while (a && a !== container) {
+      if (a.tagName === 'A') break;
+      a = a.parentNode;
+    }
+    if (!a || a.tagName !== 'A') return;
+
+    // If a data-msg-click handler exists between the target and the
+    // <a>, the app explicitly handles this click — skip interception.
+    let el = e.target;
+    while (el && el !== a.parentNode) {
+      if (el.nodeType === 1 && el.dataset && el.dataset.msgClick) return;
+      el = el.parentNode;
+    }
+
+    const href = a.getAttribute('href');
+    if (!href) return;
+    const target = a.getAttribute('target');
+    if (target && target !== '_self') return;
+    if (a.hasAttribute('download')) return;
+
+    let url;
+    try { url = new URL(href, location.href); } catch { return; }
+    const internal = url.origin === location.origin;
+    if (!internal) return; // let external links navigate normally
+
+    e.preventDefault();
+    const urlStr = url.pathname + url.search + url.hash;
+    fetch(`/event/${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'urlRequest', url: urlStr, internal: true }),
+    }).catch((err) => console.error('domi: urlRequest POST failed', err));
+  });
+
+  // Browser back/forward: popstate fires when the user navigates
+  // through history. Send the new URL to the server so it can
+  // dispatch onURLChange and update the view.
+  window.addEventListener('popstate', () => {
+    const url = location.pathname + location.search + location.hash;
+    fetch(`/event/${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'urlChange', url }),
+    }).catch((err) => console.error('domi: urlChange POST failed', err));
+  });
 
   const sse = new EventSource(`/sse/${encodeURIComponent(sessionId)}`);
   sse.addEventListener('patch', (ev) => {
