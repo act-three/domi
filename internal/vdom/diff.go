@@ -69,6 +69,18 @@ func SetTitle(title string) Patch {
 	return Patch{p: patch{Op: "set_title", Value: title}}
 }
 
+// PushURL returns a Patch that calls history.pushState on the client,
+// adding an entry to the browser's navigation history.
+func PushURL(url string) Patch {
+	return Patch{p: patch{Op: "push_url", Value: url}}
+}
+
+// ReplaceURL returns a Patch that calls history.replaceState on the
+// client, replacing the current navigation history entry.
+func ReplaceURL(url string) Patch {
+	return Patch{p: patch{Op: "replace_url", Value: url}}
+}
+
 // Reset replaces the root's entire subtree with the given children.
 func Reset(children []Node) Patch {
 	var b strings.Builder

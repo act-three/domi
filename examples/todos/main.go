@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"ily.dev/domi"
@@ -43,7 +44,7 @@ type Todos struct {
 	nextID uint64
 }
 
-func newTodos(_ context.Context) (*Todos, domi.Cmd[Msg]) {
+func newTodos(_ context.Context, _ *url.URL) (*Todos, domi.Cmd[Msg]) {
 	t := &Todos{}
 	for _, s := range []string{"learn go generics", "spike domi", "ship something"} {
 		t.nextID++
@@ -118,7 +119,11 @@ func itemRow(it Item) N {
 }
 
 func main() {
-	h := domi.Handler(newTodos)
+	h := domi.Handler(
+		newTodos,
+		func(domi.URLRequest) Msg { return Msg{} },
+		func(*url.URL) Msg { return Msg{} },
+	)
 	addr := "127.0.0.1:3011"
 	log.Printf("todos listening on http://%s", addr)
 	log.Fatal(http.ListenAndServe(addr, h))

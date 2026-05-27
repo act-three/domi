@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 )
@@ -22,17 +23,35 @@ var clientJSPath = func() string {
 }()
 
 // Handler serves an [App].
+//
 // At the start of a session,
-// the returned Handler calls f
+// the returned Handler calls f,
+// providing the initial request URL,
 // to obtain a fresh App instance plus an initial [Cmd].
 // The context carries the session ID (see [SessionID])
 // and is cancelled when the session ends.
 // This instance is associated with the session,
 // so each browser gets its own independent state.
-func Handler[Msg any, A App[Msg]](f func(context.Context) (A, Cmd[Msg]), o ...Option) http.Handler {
-	sv := newServer(f, o)
+//
+// When the user clicks a link,
+// the framework intercepts the navigation
+// and calls onURLRequest to produce a Msg.
+// The app's Update decides how to handle the request,
+// typically by returning a [PushURL] or [ReplaceURL] command.
+//
+// When the URL changes
+// (from a navigation command or browser back/forward),
+// the framework calls onURLChange to produce a Msg.
+// The app's Update typically translates the URL into a route
+// and updates its state accordingly.
+func Handler[Msg any, A App[Msg]](
+	f func(context.Context, *url.URL) (A, Cmd[Msg]),
+	onURLRequest func(URLRequest) Msg,
+	onURLChange func(*url.URL) Msg,
+	o ...Option,
+) http.Handler {
+	sv := newServer(f, onURLRequest, onURLChange, o)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{$}", sv.handleRoot)
 	mux.HandleFunc("GET /sse/{id}", sv.handleSSE)
 	mux.HandleFunc("POST /event/{id}", sv.handleEvent)
 	mux.HandleFunc("GET "+clientJSPath, func(w http.ResponseWriter, req *http.Request) {
@@ -40,21 +59,31 @@ func Handler[Msg any, A App[Msg]](f func(context.Context) (A, Cmd[Msg]), o ...Op
 		w.Header().Set("Cache-Control", "max-age=31536000, immutable")
 		http.ServeContent(w, req, "domi.js", time.Time{}, bytes.NewReader(clientJS))
 	})
+	mux.HandleFunc("GET /", sv.handleRoot)
 	return mux
 }
 
 type server[Msg any] struct {
-	config handlerConfig
-	appf   func(context.Context) (App[Msg], Cmd[Msg])
+	config       handlerConfig
+	appf         func(context.Context, *url.URL) (App[Msg], Cmd[Msg])
+	onURLRequest func(URLRequest) Msg
+	onURLChange  func(*url.URL) Msg
 
 	mu sync.Mutex
 	m  map[string]*session[Msg]
 }
 
-func newServer[Msg any, A App[Msg]](f func(context.Context) (A, Cmd[Msg]), opts []Option) *server[Msg] {
+func newServer[Msg any, A App[Msg]](
+	f func(context.Context, *url.URL) (A, Cmd[Msg]),
+	onURLRequest func(URLRequest) Msg,
+	onURLChange func(*url.URL) Msg,
+	opts []Option,
+) *server[Msg] {
 	sv := &server[Msg]{
-		appf: func(ctx context.Context) (App[Msg], Cmd[Msg]) { return f(ctx) },
-		m:    make(map[string]*session[Msg]),
+		appf:         func(ctx context.Context, u *url.URL) (App[Msg], Cmd[Msg]) { return f(ctx, u) },
+		onURLRequest: onURLRequest,
+		onURLChange:  onURLChange,
+		m:            make(map[string]*session[Msg]),
 		config: handlerConfig{
 			document:       defaultDocument,
 			logger:         slog.Default(),

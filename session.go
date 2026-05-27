@@ -9,6 +9,7 @@ import (
 	"iter"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,7 +57,7 @@ type session[Msg any] struct {
 func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	appCtx := mergedContext{s.ctx, ctx}
-	app, cmd := s.sv.appf(appCtx)
+	app, cmd := s.sv.appf(appCtx, req.URL)
 	title, view := app.View(appCtx)
 	s.app = app
 	s.title, s.view = title, lower(view)
@@ -77,16 +78,17 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 }
 
 // spawn runs each Cmd body in its own goroutine and feeds the
-// resulting Msg back into apply.
+// resulting Msg and effect back into apply.
 func (s *session[Msg]) spawn(cmd Cmd[Msg]) {
 	for f := range cmd.s {
 		go func() {
-			s.apply(s.ctx, f())
+			msg, effect := f(s)
+			s.apply(s.ctx, msg, effect...)
 		}()
 	}
 }
 
-func (s *session[Msg]) apply(ctx context.Context, msg Msg) {
+func (s *session[Msg]) apply(ctx context.Context, msg Msg, extra ...vdom.Patch) {
 	// s.mu serializes the whole update cycle, including the user's Update
 	// and View. If those grow expensive, split state under a second lock.
 	s.mu.Lock()
@@ -98,6 +100,7 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg) {
 	if title != s.title {
 		ps = append(ps, vdom.SetTitle(title))
 	}
+	ps = append(ps, extra...)
 	if len(ps) > 0 {
 		s.head++
 		s.log[s.head%uint64(len(s.log))] = frame{seq: s.head, patches: ps}
@@ -151,14 +154,41 @@ func (s *session[Msg]) updateSubs(wanted Sub[Msg]) {
 func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	var envelope struct {
-		H string         `json:"h"`
-		E jsontext.Value `json:"e"`
+		H        string         `json:"h,omitempty"`
+		E        jsontext.Value `json:"e,omitempty"`
+		Type     string         `json:"type,omitempty"`
+		URL      string         `json:"url,omitempty"`
+		Internal bool           `json:"internal,omitempty"`
 	}
 	if err := json.UnmarshalRead(req.Body, &envelope); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	s.touch()
+
+	switch envelope.Type {
+	case "urlRequest":
+		u, err := url.Parse(envelope.URL)
+		if err != nil {
+			s.logger.WarnContext(ctx, "bad urlRequest URL", "url", envelope.URL, "error", err)
+			break
+		}
+		msg := s.sv.onURLRequest(URLRequest{URL: u, Internal: envelope.Internal})
+		go s.apply(mergedContext{s.ctx, ctx}, msg)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	case "urlChange":
+		u, err := url.Parse(envelope.URL)
+		if err != nil {
+			s.logger.WarnContext(ctx, "bad urlChange URL", "url", envelope.URL, "error", err)
+			break
+		}
+		msg := s.sv.onURLChange(u)
+		go s.apply(mergedContext{s.ctx, ctx}, msg)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	for h := range strings.SplitSeq(envelope.H, ",") {
 		if h == "" {
 			continue

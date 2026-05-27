@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 
 	"ily.dev/domi"
 	"ily.dev/domi/attr"
@@ -30,7 +31,7 @@ type Counter struct {
 	count int
 }
 
-func newCounter(_ context.Context) (*Counter, domi.Cmd[Msg]) {
+func newCounter(_ context.Context, _ *url.URL) (*Counter, domi.Cmd[Msg]) {
 	return &Counter{}, domi.Batch[Msg]()
 }
 
@@ -59,7 +60,11 @@ func (c *Counter) View(_ context.Context) (string, N) {
 func (c *Counter) Subscriptions(_ context.Context) (s domi.Sub[Msg]) { return s }
 
 func main() {
-	h := domi.Handler(newCounter)
+	h := domi.Handler(
+		newCounter,
+		func(domi.URLRequest) Msg { return Msg{} },
+		func(*url.URL) Msg { return Msg{} },
+	)
 	addr := "127.0.0.1:3010"
 	log.Printf("counter listening on http://%s", addr)
 	log.Fatal(http.ListenAndServe(addr, h))

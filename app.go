@@ -4,6 +4,8 @@ import (
 	"context"
 	"iter"
 	"slices"
+
+	"ily.dev/domi/internal/vdom"
 )
 
 // App is the state machine provided by a domi application.
@@ -45,8 +47,16 @@ type App[Msg any] interface {
 // The framework runs each Cmd in its own goroutine
 // and passes the resulting Msg back into Update.
 type Cmd[Msg any] struct {
-	s iter.Seq[func() Msg]
+	s iter.Seq[cmd[Msg]]
 }
+
+// cmd is the internal function type of a [Cmd].
+// It receives the session for access to framework state
+// (e.g. the onURLChange callback for navigation commands)
+// and returns both a Msg to dispatch through Update
+// and optional patches to append to the patch frame
+// (e.g. for navigation effects).
+type cmd[Msg any] func(*session[Msg]) (Msg, []vdom.Patch)
 
 // Func returns a [Cmd] that runs fn and dispatches its result back
 // into Update.
@@ -54,14 +64,18 @@ type Cmd[Msg any] struct {
 // The app should capture the context
 // from [Update] or the [Handler] constructor for f to use.
 func Func[Msg any](f func() Msg) Cmd[Msg] {
-	return Cmd[Msg]{slices.Values([]func() Msg{f})}
+	return Cmd[Msg]{slices.Values([]cmd[Msg]{
+		func(*session[Msg]) (Msg, []vdom.Patch) {
+			return f(), nil
+		},
+	})}
 }
 
 // Batch returns a [Cmd] that runs each item in c concurrently.
 // The resulting Msg values are dispatched to Update serially.
 func Batch[Msg any](c ...Cmd[Msg]) Cmd[Msg] {
 	return Cmd[Msg]{
-		func(yield func(func() Msg) bool) {
+		func(yield func(cmd[Msg]) bool) {
 			for _, c := range c {
 				for c := range c.s {
 					if !yield(c) {
