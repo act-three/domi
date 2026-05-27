@@ -2,7 +2,7 @@ package domi
 
 import (
 	"fmt"
-	urlpkg "net/url"
+	"net/url"
 	"slices"
 
 	"ily.dev/domi/internal/vdom"
@@ -18,7 +18,7 @@ import (
 // typically returns a [PushURL] command; for external requests it may
 // ignore the event or navigate with a full page load.
 type URLRequest struct {
-	URL      *urlpkg.URL
+	URL      *url.URL
 	Internal bool
 }
 
@@ -63,13 +63,13 @@ func ReplaceURL[Msg any](url string) Cmd[Msg] {
 // mustParseRelativeURL parses url and panics if it is malformed or
 // contains a scheme or host. Navigation URLs must be relative to the
 // application's origin.
-func mustParseRelativeURL(caller, url string) *urlpkg.URL {
-	u, err := urlpkg.Parse(url)
+func mustParseRelativeURL(caller, raw string) *url.URL {
+	u, err := url.Parse(raw)
 	if err != nil {
 		panic(fmt.Errorf("%s: %w", caller, err))
 	}
 	if u.Scheme != "" || u.Host != "" {
-		panic(fmt.Errorf("%s: url must be relative, got %q", caller, url))
+		panic(fmt.Errorf("%s: url must be relative, got %q", caller, raw))
 	}
 	return u
 }
