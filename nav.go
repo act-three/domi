@@ -1,6 +1,7 @@
 package domi
 
 import (
+	"crypto/rand"
 	"fmt"
 	"net/url"
 	"slices"
@@ -36,7 +37,8 @@ func PushURL[Msg any](url string) Cmd[Msg] {
 	href := u.String()
 	return Cmd[Msg]{slices.Values([]cmd[Msg]{
 		func(s *session[Msg]) (Msg, []vdom.Patch) {
-			return s.sv.onURLChange(u), []vdom.Patch{vdom.PushURL(href)}
+			id := rand.Text()
+			return s.sv.onURLChange(u), []vdom.Patch{vdom.PushURL(href, id)}
 		},
 	})}
 }

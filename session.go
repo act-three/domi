@@ -23,6 +23,7 @@ import (
 // reconnecting client can ask for everything after the seq it last saw.
 type frame struct {
 	seq     uint64
+	base    string // snapshot id this frame's patches are relative to
 	patches []vdom.Patch
 }
 
@@ -44,14 +45,25 @@ type session[Msg any] struct {
 	sv     *server[Msg]
 	logger *slog.Logger
 
-	mu     sync.Mutex // protects the following fields
-	title  string
-	view   []vdom.Node
-	log    []frame        // fixed-size ring; log[seq%len(log)] holds frame seq
-	head   uint64         // seq of the most recent frame; 0 if none
-	sse    *sseAttachment // nil if no current consumer
-	active time.Time
-	subs   map[any]context.CancelFunc // active subscription keys → cancel
+	mu           sync.Mutex // protects the following fields
+	title        string
+	view         []vdom.Node
+	log          []frame        // fixed-size ring; log[seq%len(log)] holds frame seq
+	head         uint64         // seq of the most recent frame; 0 if none
+	base         string         // snapshot id the client's DOM is built on; "" initially
+	sse          *sseAttachment // nil if no current consumer
+	active       time.Time
+	subs         map[any]context.CancelFunc // active subscription keys → cancel
+	snapshots    map[string]snapshot        // snapshot id → cached vdom
+	snapshotAge  []string                   // ring of ids in insertion order, for eviction
+	snapshotNext int                        // next write position in snapshotAge
+}
+
+const snapshotCacheSize = 30
+
+type snapshot struct {
+	view  []vdom.Node
+	title string
 }
 
 func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
@@ -100,10 +112,17 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, extra ...vdom.Patch) 
 	if title != s.title {
 		ps = append(ps, vdom.SetTitle(title))
 	}
+	// Cache the outgoing view before overwriting it.
+	for _, p := range extra {
+		if id := p.SnapshotID(); id != "" {
+			s.cacheSnapshot(id, s.view, s.title)
+			break
+		}
+	}
 	ps = append(ps, extra...)
 	if len(ps) > 0 {
 		s.head++
-		s.log[s.head%uint64(len(s.log))] = frame{seq: s.head, patches: ps}
+		s.log[s.head%uint64(len(s.log))] = frame{seq: s.head, base: s.base, patches: ps}
 		if s.sse != nil {
 			select {
 			case s.sse.ready <- struct{}{}:
@@ -154,11 +173,12 @@ func (s *session[Msg]) updateSubs(wanted Sub[Msg]) {
 func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	var envelope struct {
-		H        string         `json:"h,omitempty"`
-		E        jsontext.Value `json:"e,omitempty"`
-		Type     string         `json:"type,omitempty"`
-		URL      string         `json:"url,omitempty"`
-		Internal bool           `json:"internal,omitempty"`
+		H          string         `json:"h,omitempty"`
+		E          jsontext.Value `json:"e,omitempty"`
+		Type       string         `json:"type,omitempty"`
+		URL        string         `json:"url,omitempty"`
+		Internal   bool           `json:"internal,omitempty"`
+		SnapshotID string         `json:"snapshotId,omitempty"`
 	}
 	if err := json.UnmarshalRead(req.Body, &envelope); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -182,6 +202,9 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			s.logger.WarnContext(ctx, "bad urlChange URL", "url", envelope.URL, "error", err)
 			break
+		}
+		if envelope.SnapshotID != "" {
+			s.restoreSnapshot(envelope.SnapshotID)
 		}
 		msg := s.sv.onURLChange(u)
 		go s.apply(mergedContext{s.ctx, ctx}, msg)
@@ -259,8 +282,8 @@ func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	rc.Flush()
 
-	if resync, view, title, head := s.needsResync(seen); resync {
-		f := frame{seq: head, patches: []vdom.Patch{
+	if resync, view, title, head, base := s.needsResync(seen); resync {
+		f := frame{seq: head, base: base, patches: []vdom.Patch{
 			vdom.Reset(view),
 			vdom.SetTitle(title),
 		}}
@@ -333,18 +356,19 @@ func (s *session[Msg]) detachSSE(att *sseAttachment) {
 // decision so the caller can write the resync frame against a single
 // consistent snapshot — without it, head could advance between the
 // decision and the write.
-func (s *session[Msg]) needsResync(seen uint64) (resync bool, view []vdom.Node, title string, head uint64) {
+func (s *session[Msg]) needsResync(seen uint64) (resync bool, view []vdom.Node, title string, head uint64, base string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	head = s.head
+	base = s.base
 	oldest := uint64(1)
 	if n := uint64(len(s.log)); head >= n {
 		oldest = head - n + 1
 	}
 	if seen+1 < oldest || seen > head {
-		return true, s.view, s.title, head
+		return true, s.view, s.title, head, base
 	}
-	return false, nil, "", head
+	return false, nil, "", head, base
 }
 
 func (s *session[Msg]) framesSince(seen uint64) []frame {
@@ -362,7 +386,7 @@ func (s *session[Msg]) framesSince(seen uint64) []frame {
 }
 
 func writeFrame(w http.ResponseWriter, rc *http.ResponseController, f frame) error {
-	data, err := json.Marshal(f.patches)
+	data, err := json.Marshal([]any{f.base, f.patches})
 	if err != nil {
 		return err
 	}
@@ -371,4 +395,34 @@ func writeFrame(w http.ResponseWriter, rc *http.ResponseController, f frame) err
 	}
 	rc.Flush()
 	return nil
+}
+
+// cacheSnapshot stores a vdom snapshot under id, evicting the oldest
+// entry if the cache is at capacity. Must be called with s.mu held.
+func (s *session[Msg]) cacheSnapshot(id string, view []vdom.Node, title string) {
+	if s.snapshots == nil {
+		s.snapshots = make(map[string]snapshot, snapshotCacheSize)
+		s.snapshotAge = make([]string, snapshotCacheSize)
+	}
+	if old := s.snapshotAge[s.snapshotNext]; old != "" {
+		delete(s.snapshots, old)
+	}
+	s.snapshotAge[s.snapshotNext] = id
+	s.snapshotNext = (s.snapshotNext + 1) % snapshotCacheSize
+	s.snapshots[id] = snapshot{view: view, title: title}
+}
+
+// restoreSnapshot replaces s.view and s.title with the cached snapshot
+// for id, if present, and sets the session's base to id. The next
+// apply cycle diffs against the restored view, producing corrective
+// patches for any staleness. Frames committed under an older base
+// are dropped by the client.
+func (s *session[Msg]) restoreSnapshot(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.base = id
+	if sn, ok := s.snapshots[id]; ok {
+		s.view = sn.view
+		s.title = sn.title
+	}
 }

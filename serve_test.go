@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ily.dev/domi/internal/vdom"
 )
 
 // counterApp is a minimal App used in lifecycle tests. Each Update bumps n
@@ -524,4 +526,100 @@ func TestSubsComposition(t *testing.T) {
 	if len(combined.s) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(combined.s))
 	}
+}
+
+// apply with a push_url patch caches the outgoing s.view (not the
+// new view) under the patch's snapshot id.
+func TestSessionSnapshotCacheOnApply(t *testing.T) {
+	s := newTestSession(&counterApp{})
+	defer s.cancel()
+	origView := s.view
+	s.apply(s.ctx, 1, vdom.PushURL("/about", "snap1"))
+	s.mu.Lock()
+	sn, ok := s.snapshots["snap1"]
+	s.mu.Unlock()
+	if !ok {
+		t.Fatal("snapshot not cached after apply with push_url")
+	}
+	// The cached view should be the outgoing view, not the new one.
+	if len(sn.view) != len(origView) {
+		t.Fatalf("cached snapshot should be outgoing view (len %d), got len %d", len(origView), len(sn.view))
+	}
+}
+
+// restoreSnapshot swaps s.view and s.title to the cached values
+// and updates the epoch.
+func TestSessionSnapshotRestore(t *testing.T) {
+	s := newTestSession(&counterApp{})
+	defer s.cancel()
+	origView := s.view
+	origTitle := s.title
+
+	// Cache a different view under a snapshot id.
+	otherView := lower(Tag("div")()(Text("other")))
+	s.cacheSnapshot("snap1", otherView, "other title")
+
+	s.restoreSnapshot("snap1")
+	if s.title != "other title" {
+		t.Fatalf("expected title %q, got %q", "other title", s.title)
+	}
+	if s.base != "snap1" {
+		t.Fatalf("expected base %q, got %q", "snap1", s.base)
+	}
+
+	// Restoring a nonexistent id still updates the base but
+	// leaves view and title unchanged.
+	s.view = origView
+	s.title = origTitle
+	s.restoreSnapshot("nonexistent")
+	if s.title != origTitle {
+		t.Fatalf("restoreSnapshot with bad id changed title to %q", s.title)
+	}
+	if s.base != "nonexistent" {
+		t.Fatalf("expected base %q, got %q", "nonexistent", s.base)
+	}
+}
+
+// The snapshot cache evicts the oldest entries when full.
+func TestSessionSnapshotEviction(t *testing.T) {
+	s := newTestSession(&counterApp{})
+	defer s.cancel()
+	view := lower(Tag("div")()(Text("x")))
+	for i := range snapshotCacheSize + 5 {
+		s.cacheSnapshot(fmt.Sprintf("s%d", i), view, "t")
+	}
+	if len(s.snapshots) != snapshotCacheSize {
+		t.Fatalf("expected %d snapshots, got %d", snapshotCacheSize, len(s.snapshots))
+	}
+	// The first 5 should be evicted.
+	for i := range 5 {
+		if _, ok := s.snapshots[fmt.Sprintf("s%d", i)]; ok {
+			t.Fatalf("s%d should have been evicted", i)
+		}
+	}
+	// The rest should be present.
+	for i := 5; i < snapshotCacheSize+5; i++ {
+		if _, ok := s.snapshots[fmt.Sprintf("s%d", i)]; !ok {
+			t.Fatalf("s%d should be present", i)
+		}
+	}
+}
+
+// Frames carry the session's base so the client can drop stale frames.
+func TestSessionFrameBase(t *testing.T) {
+	s := newTestSession(&counterApp{})
+	defer s.cancel()
+	s.apply(s.ctx, 1) // base ""
+	s.mu.Lock()
+	if s.log[1].base != "" {
+		t.Fatalf("expected base %q, got %q", "", s.log[1].base)
+	}
+	s.base = "snap1"
+	s.mu.Unlock()
+	s.apply(s.ctx, 2) // base "snap1"
+	s.mu.Lock()
+	if s.log[2].base != "snap1" {
+		t.Fatalf("expected base %q, got %q", "snap1", s.log[2].base)
+	}
+	s.mu.Unlock()
 }
