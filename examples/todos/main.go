@@ -85,6 +85,8 @@ func (t *Todos) Update(_ context.Context, msg Msg) domi.Cmd[Msg] {
 	return domi.Batch[Msg]()
 }
 
+func (t *Todos) Subscriptions(_ context.Context) (s domi.Sub[Msg]) { return s }
+
 func (t *Todos) View(_ context.Context) (string, N) {
 	return "todos",
 		div(style("font-family:system-ui;padding:2rem;max-width:32rem"))(
