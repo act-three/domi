@@ -113,11 +113,12 @@ export function applyPatch(root, p) {
       return root;
     }
     case 'push_url': {
-      history.pushState(null, '', p.value);
+      // Handled by the SSE frame listener, which snapshots the
+      // outgoing DOM and manages history.state before patches apply.
       return root;
     }
     case 'replace_url': {
-      history.replaceState(null, '', p.value);
+      history.replaceState(history.state, '', p.value);
       return root;
     }
     default:
@@ -202,6 +203,22 @@ export function run() {
   // at [0], [1], …
   let root = container;
 
+  // Snapshot cache for instant back/forward. Maps snapshot ids
+  // (server-generated, stored in history.state) to innerHTML strings.
+  // `base` tracks which snapshot the client's DOM is built on top of
+  // ("" initially). The server tags each SSE frame with its base;
+  // the client drops frames whose base doesn't match.
+  const snapshots = new Map();
+  const SNAPSHOT_MAX = 30;
+  let base = '';
+  function cacheSnapshot(id, html) {
+    if (!id) return;
+    snapshots.set(id, html);
+    while (snapshots.size > SNAPSHOT_MAX) {
+      snapshots.delete(snapshots.keys().next().value);
+    }
+  }
+
   // Delegated listeners on the container: body stays put for the
   // session, so listeners don't have to migrate when patches mutate
   // its subtree.
@@ -268,25 +285,47 @@ export function run() {
   });
 
   // Browser back/forward: popstate fires when the user navigates
-  // through history. Send the new URL to the server so it can
-  // dispatch onURLChange and update the view.
-  window.addEventListener('popstate', () => {
+  // through history. If a cached snapshot exists, restore the DOM
+  // instantly and update the base so stale SSE frames are dropped;
+  // then notify the server so it can send corrective patches for
+  // any staleness.
+  window.addEventListener('popstate', (e) => {
     const url = location.pathname + location.search + location.hash;
+    const snapshotId = e.state && e.state.domiSnapshot;
+    if (snapshotId && snapshots.has(snapshotId)) {
+      base = snapshotId;
+      while (root.firstChild) root.removeChild(root.firstChild);
+      delete root.__domiChildren;
+      const frag = fragmentFromHTML(snapshots.get(snapshotId));
+      while (frag.firstChild) root.appendChild(frag.firstChild);
+    }
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'urlChange', url }),
+      body: JSON.stringify({ type: 'urlChange', url, snapshotId: snapshotId || '' }),
     }).catch((err) => console.error('domi: urlChange POST failed', err));
   });
 
   const sse = new EventSource(`/sse/${encodeURIComponent(sessionId)}`);
   sse.addEventListener('patch', (ev) => {
-    let patches;
+    let parsed;
     try {
-      patches = JSON.parse(ev.data);
+      parsed = JSON.parse(ev.data);
     } catch (e) {
       console.error('domi: bad patch JSON', ev.data, e);
       return;
+    }
+    const [frameBase, patches] = parsed;
+    if (frameBase !== base) return; // stale frame, computed against wrong DOM
+    // push_url: snapshot outgoing DOM, tag outgoing history entry,
+    // push new entry — all before any DOM patches apply.
+    for (const p of patches) {
+      if (p.op === 'push_url') {
+        cacheSnapshot(p.id, root.innerHTML);
+        history.replaceState({ domiSnapshot: p.id }, '', location.href);
+        history.pushState(null, '', p.value);
+        break;
+      }
     }
     for (const p of patches) root = applyPatch(root, p);
   });
