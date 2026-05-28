@@ -83,10 +83,6 @@ func ReplaceURL(url string) Patch {
 	return Patch{p: patch{Op: "replace_url", Value: url}}
 }
 
-// SnapshotID returns the snapshot id carried by push_url and
-// replace_url patches, or the empty string for all other ops.
-func (p Patch) SnapshotID() string { return p.p.ID }
-
 // Reset replaces the root's entire subtree with the given children.
 func Reset(children []Node) Patch {
 	var b strings.Builder

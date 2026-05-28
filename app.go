@@ -4,8 +4,6 @@ import (
 	"context"
 	"iter"
 	"slices"
-
-	"ily.dev/domi/internal/vdom"
 )
 
 // App is the state machine provided by a domi application.
@@ -53,10 +51,10 @@ type Cmd[Msg any] struct {
 // cmd is the internal function type of a [Cmd].
 // It receives the session for access to framework state
 // (e.g. the onURLChange callback for navigation commands)
-// and returns both a Msg to dispatch through Update
-// and optional patches to append to the patch frame
-// (e.g. for navigation effects).
-type cmd[Msg any] func(*session[Msg]) (Msg, []vdom.Patch)
+// and returns a Msg to dispatch through Update
+// and an optional [nav] describing a navigation side-effect
+// the framework should apply alongside the Msg.
+type cmd[Msg any] func(*session[Msg]) (Msg, *nav)
 
 // Func returns a [Cmd] that runs fn and dispatches its result back
 // into Update.
@@ -65,7 +63,7 @@ type cmd[Msg any] func(*session[Msg]) (Msg, []vdom.Patch)
 // from [Update] or the [Handler] constructor for f to use.
 func Func[Msg any](f func() Msg) Cmd[Msg] {
 	return Cmd[Msg]{slices.Values([]cmd[Msg]{
-		func(*session[Msg]) (Msg, []vdom.Patch) {
+		func(*session[Msg]) (Msg, *nav) {
 			return f(), nil
 		},
 	})}
