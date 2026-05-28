@@ -85,13 +85,31 @@ func (app *App) Update(_ context.Context, msg Msg) domi.Cmd[Msg] {
 }
 
 func (app *App) View(_ context.Context) (string, N) {
+	return app.view()
+}
+
+func (app *App) Subscriptions(_ context.Context) (s domi.Sub[Msg]) { return s }
+
+// Preview renders the page for url without mutating state — for
+// instant navigation when the user hovers over a link. NotFound
+// routes are denied so the click falls back to normal navigation
+// rather than racing the user to a 404.
+func (app *App) Preview(_ context.Context, u *url.URL) (string, N, bool) {
+	preview := *app
+	preview.applyRoute(u)
+	if preview.route == NotFound {
+		return "", nil, false
+	}
+	t, v := preview.view()
+	return t, v, true
+}
+
+func (app *App) view() (string, N) {
 	return app.title(), div(attr.Style("font-family:system-ui;max-width:40rem;margin:0 auto;padding:2rem"))(
 		navbar(),
 		app.page(),
 	)
 }
-
-func (app *App) Subscriptions(_ context.Context) (s domi.Sub[Msg]) { return s }
 
 func (app *App) title() string {
 	switch app.route {

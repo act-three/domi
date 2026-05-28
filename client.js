@@ -232,6 +232,37 @@ export function run() {
     base = id;
   }
 
+  // Prefetch cache for instant forward navigation. At most one entry:
+  // hovering a different link evicts it. The entry holds the preview
+  // snapshot id and the timestamp for dedup/expiry.
+  //
+  // prefetching holds the url of the most recent in-flight prefetch
+  // (cleared when its preview SSE event lands). pendingClick holds
+  // the url of a click that fired before its preview arrived; the SSE
+  // preview handler navigates immediately when a matching preview
+  // arrives.
+  const PREVIEW_TTL = 5000; // ms
+  let preview = null; // { url, previewId, at }
+  let prefetching = ''; // url of an in-flight prefetch
+  let pendingClick = ''; // url awaiting an in-flight preview
+
+  // navigateToPreview applies a prefetched navigation: swap in the
+  // preview snapshot, push history state, and notify the server with
+  // a urlChange (not urlRequest — the navigation decision was made
+  // in Preview at hover time). The server restores the preview
+  // snapshot and dispatches onURLChange to update its state. The
+  // outgoing snapshot was cached on both sides at preview-event
+  // arrival time.
+  function navigateToPreview(url, previewId) {
+    restoreSnapshot(previewId);
+    history.pushState(null, '', url);
+    fetch(`/event/${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'urlChange', url, snapshotId: previewId }),
+    }).catch((err) => console.error('domi: urlChange POST failed', err));
+  }
+
   // Delegated listeners on the container: body stays put for the
   // session, so listeners don't have to migrate when patches mutate
   // its subtree.
@@ -290,11 +321,55 @@ export function run() {
 
     e.preventDefault();
     const urlStr = url.pathname + url.search + url.hash;
+    // Fresh preview cached: navigate instantly.
+    if (preview && preview.url === urlStr && Date.now() - preview.at < PREVIEW_TTL) {
+      const { previewId } = preview;
+      preview = null;
+      navigateToPreview(urlStr, previewId);
+      return;
+    }
+    // Preview in flight for this URL: wait. The SSE preview handler
+    // navigates as soon as it arrives.
+    if (prefetching === urlStr) {
+      pendingClick = urlStr;
+      return;
+    }
+    // No preview cached or in flight: normal navigation.
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ type: 'urlRequest', url: urlStr, internal: true }),
     }).catch((err) => console.error('domi: urlRequest POST failed', err));
+  });
+
+  // Hover handler: send a prefetch when the cursor enters an internal
+  // <a>. Dedup against the active preview; same URL within TTL is
+  // reused. Hovering a different link replaces the preview (the client
+  // holds at most one preloaded page).
+  container.addEventListener('mouseover', (e) => {
+    let a = e.target;
+    while (a && a !== container) {
+      if (a.tagName === 'A') break;
+      a = a.parentNode;
+    }
+    if (!a || a.tagName !== 'A') return;
+    const href = a.getAttribute('href');
+    if (!href) return;
+    const target = a.getAttribute('target');
+    if (target && target !== '_self') return;
+    if (a.hasAttribute('download')) return;
+    let url;
+    try { url = new URL(href, location.href); } catch { return; }
+    if (url.origin !== location.origin) return;
+    const urlStr = url.pathname + url.search + url.hash;
+    if (preview && preview.url === urlStr && Date.now() - preview.at < PREVIEW_TTL) return;
+    if (prefetching === urlStr) return; // already in flight
+    prefetching = urlStr;
+    fetch(`/event/${encodeURIComponent(sessionId)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'prefetch', url: urlStr }),
+    }).catch((err) => console.error('domi: prefetch POST failed', err));
   });
 
   // Browser back/forward: popstate fires when the user navigates
@@ -315,18 +390,17 @@ export function run() {
 
   const sse = new EventSource(`/sse/${encodeURIComponent(sessionId)}`);
   sse.addEventListener('patch', (ev) => {
-    let parsed;
+    let f;
     try {
-      parsed = JSON.parse(ev.data);
+      f = JSON.parse(ev.data);
     } catch (e) {
       console.error('domi: bad patch JSON', ev.data, e);
       return;
     }
-    const [frameBase, patches] = parsed;
-    if (frameBase !== base) return; // stale frame, computed against wrong DOM
-    // push_url: snapshot outgoing DOM, tag outgoing history entry,
-    // push new entry — all before any DOM patches apply.
-    for (const p of patches) {
+    if (f.base !== base) return; // stale frame, computed against wrong DOM
+    // push_url: snapshot the outgoing DOM and update history before
+    // the patches transform root to the new page.
+    for (const p of f.patches) {
       if (p.op === 'push_url') {
         cacheSnapshot(p.id, root);
         history.replaceState({ domiSnapshot: p.id }, '', location.href);
@@ -334,7 +408,57 @@ export function run() {
         break;
       }
     }
-    for (const p of patches) root = applyPatch(root, p);
+    for (const p of f.patches) root = applyPatch(root, p);
+  });
+  // Preview frames: build two snapshots that match the server's at
+  // prefetch time. The outgoing snapshot is root as it stands now
+  // (which equals server's s.view at prefetch time — guaranteed by
+  // the base check above plus SSE ordering). The preview snapshot is
+  // built by cloning root and applying the prefetch's patches. If the
+  // user has already clicked this link, navigate now.
+  sse.addEventListener('preview', (ev) => {
+    let f;
+    try {
+      f = JSON.parse(ev.data);
+    } catch (e) {
+      console.error('domi: bad preview JSON', ev.data, e);
+      return;
+    }
+    if (f.base !== base) return; // stale: live DOM has diverged
+    cacheSnapshot(f.outgoing, root);
+    const clone = root.cloneNode(true);
+    let cur = clone;
+    for (const p of f.patches) cur = applyPatch(cur, p);
+    cacheSnapshot(f.target, cur);
+    preview = { url: f.url, previewId: f.target, at: Date.now() };
+    if (prefetching === f.url) prefetching = '';
+    if (pendingClick === f.url) {
+      pendingClick = '';
+      preview = null;
+      navigateToPreview(f.url, f.target);
+    }
+  });
+  // Deny: the app's Preview returned ok=false for this URL. Clear
+  // the in-flight prefetch state and, if the user already clicked,
+  // fall back to normal navigation so the app's onURLRequest gets
+  // a chance to deny or redirect.
+  sse.addEventListener('deny', (ev) => {
+    let f;
+    try {
+      f = JSON.parse(ev.data);
+    } catch (e) {
+      console.error('domi: bad deny JSON', ev.data, e);
+      return;
+    }
+    if (prefetching === f.url) prefetching = '';
+    if (pendingClick === f.url) {
+      pendingClick = '';
+      fetch(`/event/${encodeURIComponent(sessionId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'urlRequest', url: f.url, internal: true }),
+      }).catch((err) => console.error('domi: urlRequest POST failed', err));
+    }
   });
   // A non-2xx response — the server's signal that the session is
   // permanently gone — moves the EventSource to CLOSED and fires
