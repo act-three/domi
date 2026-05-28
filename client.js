@@ -204,19 +204,32 @@ export function run() {
   let root = container;
 
   // Snapshot cache for instant back/forward. Maps snapshot ids
-  // (server-generated, stored in history.state) to innerHTML strings.
+  // (server-generated, stored in history.state) to DocumentFragments
+  // holding detached clones of the page's children.
   // `base` tracks which snapshot the client's DOM is built on top of
   // ("" initially). The server tags each SSE frame with its base;
   // the client drops frames whose base doesn't match.
   const snapshots = new Map();
   const SNAPSHOT_MAX = 30;
   let base = '';
-  function cacheSnapshot(id, html) {
+  function cacheSnapshot(id, source) {
     if (!id) return;
-    snapshots.set(id, html);
+    const frag = document.createDocumentFragment();
+    for (const child of source.childNodes) frag.appendChild(child.cloneNode(true));
+    snapshots.set(id, frag);
     while (snapshots.size > SNAPSHOT_MAX) {
       snapshots.delete(snapshots.keys().next().value);
     }
+  }
+  function restoreSnapshot(id) {
+    const cached = snapshots.get(id);
+    if (!cached) return;
+    while (root.firstChild) root.removeChild(root.firstChild);
+    delete root.__domiChildren;
+    // Clone-on-restore keeps the cache intact for future restores.
+    const fresh = cached.cloneNode(true);
+    while (fresh.firstChild) root.appendChild(fresh.firstChild);
+    base = id;
   }
 
   // Delegated listeners on the container: body stays put for the
@@ -292,13 +305,7 @@ export function run() {
   window.addEventListener('popstate', (e) => {
     const url = location.pathname + location.search + location.hash;
     const snapshotId = e.state && e.state.domiSnapshot;
-    if (snapshotId && snapshots.has(snapshotId)) {
-      base = snapshotId;
-      while (root.firstChild) root.removeChild(root.firstChild);
-      delete root.__domiChildren;
-      const frag = fragmentFromHTML(snapshots.get(snapshotId));
-      while (frag.firstChild) root.appendChild(frag.firstChild);
-    }
+    if (snapshotId) restoreSnapshot(snapshotId);
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -321,7 +328,7 @@ export function run() {
     // push new entry — all before any DOM patches apply.
     for (const p of patches) {
       if (p.op === 'push_url') {
-        cacheSnapshot(p.id, root.innerHTML);
+        cacheSnapshot(p.id, root);
         history.replaceState({ domiSnapshot: p.id }, '', location.href);
         history.pushState(null, '', p.value);
         break;
@@ -338,4 +345,3 @@ export function run() {
     if (sse.readyState === EventSource.CLOSED) location.reload();
   };
 }
-
