@@ -10,8 +10,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"ily.dev/domi/internal/vdom"
 )
 
 // counterApp is a minimal App used in lifecycle tests. Each Update bumps n
@@ -68,7 +66,7 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 func TestSessionApplyFragmentAtRoot(t *testing.T) {
 	s := newTestSession(&fragmentApp{})
 	defer s.cancel()
-	s.apply(s.ctx, 1)
+	s.apply(s.ctx, 1, nil)
 	if s.head != 1 {
 		t.Fatalf("expected head=1 after one apply, got %d", s.head)
 	}
@@ -242,9 +240,9 @@ func TestSessionApplyRingBuffer(t *testing.T) {
 	s.sv.config.replayWindow = window
 	s.log = make([]frame, window)
 	defer s.cancel()
-	s.apply(s.ctx, 1) // seq 1 → log[1]
-	s.apply(s.ctx, 2) // seq 2 → log[0] (overwrites zero-value)
-	s.apply(s.ctx, 3) // seq 3 → log[1] (overwrites seq 1)
+	s.apply(s.ctx, 1, nil) // seq 1 → log[1]
+	s.apply(s.ctx, 2, nil) // seq 2 → log[0] (overwrites zero-value)
+	s.apply(s.ctx, 3, nil) // seq 3 → log[1] (overwrites seq 1)
 	if s.head != 3 {
 		t.Fatalf("expected head=3, got %d", s.head)
 	}
@@ -269,9 +267,9 @@ func TestSessionSSEFreshClient(t *testing.T) {
 func TestSessionSSEReplayWithinWindow(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	s.apply(s.ctx, 1)
-	s.apply(s.ctx, 2)
-	s.apply(s.ctx, 3)
+	s.apply(s.ctx, 1, nil)
+	s.apply(s.ctx, 2, nil)
+	s.apply(s.ctx, 3, nil)
 	out := runSSE(t, s, "1", 30*time.Millisecond)
 	if !strings.Contains(out, "id: 2") || !strings.Contains(out, "id: 3") {
 		t.Fatalf("expected frames 2 and 3 in output, got: %s", out)
@@ -292,10 +290,10 @@ func TestSessionSSEResyncOutOfWindow(t *testing.T) {
 	defer s.cancel()
 	// Four apply calls overflow the window of 2, so the oldest two
 	// frames are gone from the ring. Client at seq 1 needs them.
-	s.apply(s.ctx, 1)
-	s.apply(s.ctx, 2)
-	s.apply(s.ctx, 3)
-	s.apply(s.ctx, 4)
+	s.apply(s.ctx, 1, nil)
+	s.apply(s.ctx, 2, nil)
+	s.apply(s.ctx, 3, nil)
+	s.apply(s.ctx, 4, nil)
 	out := runSSE(t, s, "1", 30*time.Millisecond)
 	if !strings.Contains(out, `"op":"reset"`) {
 		t.Fatalf("expected reset patch for out-of-window client, got: %s", out)
@@ -314,7 +312,7 @@ func TestSessionSSEResyncOutOfWindow(t *testing.T) {
 func TestSessionSSEResyncAheadOfHead(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	s.apply(s.ctx, 1)
+	s.apply(s.ctx, 1, nil)
 	out := runSSE(t, s, "42", 30*time.Millisecond)
 	if !strings.Contains(out, `"op":"reset"`) {
 		t.Fatalf("expected reset for stale client, got: %s", out)
@@ -528,18 +526,18 @@ func TestSubsComposition(t *testing.T) {
 	}
 }
 
-// apply with a push_url patch caches the outgoing s.view (not the
-// new view) under the patch's snapshot id.
+// apply with a push nav caches the outgoing s.view (not the new
+// view) under the nav's outgoing snapshot id.
 func TestSessionSnapshotCacheOnApply(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
 	origView := s.view
-	s.apply(s.ctx, 1, vdom.PushURL("/about", "snap1"))
+	s.apply(s.ctx, 1, &nav{push: "/about", outgoingID: "snap1"})
 	s.mu.Lock()
 	sn, ok := s.snapshots["snap1"]
 	s.mu.Unlock()
 	if !ok {
-		t.Fatal("snapshot not cached after apply with push_url")
+		t.Fatal("snapshot not cached after apply with push nav")
 	}
 	// The cached view should be the outgoing view, not the new one.
 	if len(sn.view) != len(origView) {
@@ -609,14 +607,14 @@ func TestSessionSnapshotEviction(t *testing.T) {
 func TestSessionFrameBase(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	s.apply(s.ctx, 1) // base ""
+	s.apply(s.ctx, 1, nil) // base ""
 	s.mu.Lock()
 	if s.log[1].base != "" {
 		t.Fatalf("expected base %q, got %q", "", s.log[1].base)
 	}
 	s.base = "snap1"
 	s.mu.Unlock()
-	s.apply(s.ctx, 2) // base "snap1"
+	s.apply(s.ctx, 2, nil) // base "snap1"
 	s.mu.Lock()
 	if s.log[2].base != "snap1" {
 		t.Fatalf("expected base %q, got %q", "snap1", s.log[2].base)

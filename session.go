@@ -59,6 +59,17 @@ type session[Msg any] struct {
 	snapshotNext int                        // next write position in snapshotAge
 }
 
+// nav is the optional navigation side-effect attached to a [cmd]
+// return value. apply synthesizes a push_url patch from push and
+// outgoingID, or a replace_url patch from replace, then commits the
+// patch into the next frame alongside any DOM patches from the
+// Update/View cycle.
+type nav struct {
+	push       string // PushURL target URL, or empty
+	replace    string // ReplaceURL target URL, or empty
+	outgoingID string // for push: id to cache outgoing s.view under
+}
+
 const snapshotCacheSize = 30
 
 type snapshot struct {
@@ -90,17 +101,17 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 }
 
 // spawn runs each Cmd body in its own goroutine and feeds the
-// resulting Msg and effect back into apply.
+// resulting Msg and optional nav back into apply.
 func (s *session[Msg]) spawn(cmd Cmd[Msg]) {
 	for f := range cmd.s {
 		go func() {
-			msg, effect := f(s)
-			s.apply(s.ctx, msg, effect...)
+			msg, n := f(s)
+			s.apply(s.ctx, msg, n)
 		}()
 	}
 }
 
-func (s *session[Msg]) apply(ctx context.Context, msg Msg, extra ...vdom.Patch) {
+func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 	// s.mu serializes the whole update cycle, including the user's Update
 	// and View. If those grow expensive, split state under a second lock.
 	s.mu.Lock()
@@ -112,14 +123,20 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, extra ...vdom.Patch) 
 	if title != s.title {
 		ps = append(ps, vdom.SetTitle(title))
 	}
-	// Cache the outgoing view before overwriting it.
-	for _, p := range extra {
-		if id := p.SnapshotID(); id != "" {
-			s.cacheSnapshot(id, s.view, s.title)
-			break
+
+	// Push: cache outgoing s.view under outgoingID before it's
+	// overwritten, then synthesize the push_url patch. Replace: just
+	// synthesize the replace_url patch.
+	if n != nil {
+		switch {
+		case n.push != "":
+			s.cacheSnapshot(n.outgoingID, s.view, s.title)
+			ps = append(ps, vdom.PushURL(n.push, n.outgoingID))
+		case n.replace != "":
+			ps = append(ps, vdom.ReplaceURL(n.replace))
 		}
 	}
-	ps = append(ps, extra...)
+
 	if len(ps) > 0 {
 		s.head++
 		s.log[s.head%uint64(len(s.log))] = frame{seq: s.head, base: s.base, patches: ps}
@@ -164,7 +181,7 @@ func (s *session[Msg]) updateSubs(wanted Sub[Msg]) {
 				if ctx.Err() != nil {
 					break
 				}
-				s.apply(s.ctx, msg)
+				s.apply(s.ctx, msg, nil)
 			}
 		}()
 	}
@@ -194,7 +211,7 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 			break
 		}
 		msg := s.sv.onURLRequest(URLRequest{URL: u, Internal: envelope.Internal})
-		go s.apply(mergedContext{s.ctx, ctx}, msg)
+		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	case "urlChange":
@@ -207,7 +224,7 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 			s.restoreSnapshot(envelope.SnapshotID)
 		}
 		msg := s.sv.onURLChange(u)
-		go s.apply(mergedContext{s.ctx, ctx}, msg)
+		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -231,7 +248,7 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 			)
 			continue
 		}
-		go s.apply(mergedContext{s.ctx, ctx}, msg)
+		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/url"
 	"slices"
-
-	"ily.dev/domi/internal/vdom"
 )
 
 // A URLRequest represents a user clicking a link in the browser.
@@ -36,9 +34,8 @@ func PushURL[Msg any](url string) Cmd[Msg] {
 	u := mustParseRelativeURL("domi.PushURL", url)
 	href := u.String()
 	return Cmd[Msg]{slices.Values([]cmd[Msg]{
-		func(s *session[Msg]) (Msg, []vdom.Patch) {
-			id := rand.Text()
-			return s.sv.onURLChange(u), []vdom.Patch{vdom.PushURL(href, id)}
+		func(s *session[Msg]) (Msg, *nav) {
+			return s.sv.onURLChange(u), &nav{push: href, outgoingID: rand.Text()}
 		},
 	})}
 }
@@ -56,8 +53,8 @@ func ReplaceURL[Msg any](url string) Cmd[Msg] {
 	u := mustParseRelativeURL("domi.ReplaceURL", url)
 	href := u.String()
 	return Cmd[Msg]{slices.Values([]cmd[Msg]{
-		func(s *session[Msg]) (Msg, []vdom.Patch) {
-			return s.sv.onURLChange(u), []vdom.Patch{vdom.ReplaceURL(href)}
+		func(s *session[Msg]) (Msg, *nav) {
+			return s.sv.onURLChange(u), &nav{replace: href}
 		},
 	})}
 }
