@@ -3,6 +3,7 @@ package domi
 import (
 	"context"
 	"iter"
+	"net/url"
 	"slices"
 )
 
@@ -39,6 +40,23 @@ type App[Msg any] interface {
 	// as well as values from the HTTP request context, if any.
 	// It is cancelled when the session ends.
 	Subscriptions(context.Context) Sub[Msg]
+
+	// Preview returns the document title and body tree
+	// that would be displayed if the browser navigated
+	// to the given URL, and whether the navigation is allowed.
+	// It must not modify the App's state.
+	//
+	// The framework calls Preview to pre-render pages
+	// the user is likely to visit (e.g. on link hover),
+	// so navigation appears instant when the link is clicked.
+	// When ok is false the framework discards the title and view
+	// and the user's click falls back to normal navigation,
+	// giving the app a chance to deny or redirect.
+	//
+	// The context carries the session ID (see SessionID)
+	// as well as values from the HTTP request context, if any.
+	// It is cancelled when the session ends.
+	Preview(context.Context, *url.URL) (title string, n Node, ok bool)
 }
 
 // A Cmd is a deferred side-effect that eventually produces a Msg.

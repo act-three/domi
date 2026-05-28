@@ -21,6 +21,10 @@ func (a *counterApp) View(context.Context) (string, Node) {
 	return "", Tag("div")()(Text(fmt.Sprintf("%d", a.n)))
 }
 func (a *counterApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
+func (a *counterApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
+	t, v := a.View(ctx)
+	return t, v, true
+}
 
 // fragmentApp's View returns a Fragment so the framework treats its
 // members as separate top-level children of the mount.
@@ -34,6 +38,10 @@ func (a *fragmentApp) View(context.Context) (string, Node) {
 	)
 }
 func (a *fragmentApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
+func (a *fragmentApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
+	t, v := a.View(ctx)
+	return t, v, true
+}
 
 // newTestSession wires up a session for direct method tests, bypassing
 // the http surface. The session points at a default-configured server
@@ -74,8 +82,8 @@ func TestSessionApplyFragmentAtRoot(t *testing.T) {
 	// set_text patches. The exact shape isn't the contract — what matters
 	// is that *both* top-level siblings were diffed, not just one.
 	f := s.log[1%uint64(len(s.log))]
-	if n := len(f.patches); n < 2 {
-		t.Fatalf("expected patches for both Fragment siblings, got %d: %+v", n, f.patches)
+	if n := len(f.Patches); n < 2 {
+		t.Fatalf("expected patches for both Fragment siblings, got %d: %+v", n, f.Patches)
 	}
 }
 
@@ -426,6 +434,10 @@ type subApp struct {
 func (a *subApp) Update(context.Context, int) Cmd[int]   { return Batch[int]() }
 func (a *subApp) View(context.Context) (string, Node)    { return "", Tag("div")()() }
 func (a *subApp) Subscriptions(context.Context) Sub[int] { return a.sub }
+func (a *subApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
+	t, v := a.View(ctx)
+	return t, v, true
+}
 
 type tickKey struct{ id string }
 
@@ -609,15 +621,15 @@ func TestSessionFrameBase(t *testing.T) {
 	defer s.cancel()
 	s.apply(s.ctx, 1, nil) // base ""
 	s.mu.Lock()
-	if s.log[1].base != "" {
-		t.Fatalf("expected base %q, got %q", "", s.log[1].base)
+	if s.log[1].Base != "" {
+		t.Fatalf("expected base %q, got %q", "", s.log[1].Base)
 	}
 	s.base = "snap1"
 	s.mu.Unlock()
 	s.apply(s.ctx, 2, nil) // base "snap1"
 	s.mu.Lock()
-	if s.log[2].base != "snap1" {
-		t.Fatalf("expected base %q, got %q", "snap1", s.log[2].base)
+	if s.log[2].Base != "snap1" {
+		t.Fatalf("expected base %q, got %q", "snap1", s.log[2].Base)
 	}
 	s.mu.Unlock()
 }

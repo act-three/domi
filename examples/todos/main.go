@@ -88,6 +88,10 @@ func (t *Todos) Update(_ context.Context, msg Msg) domi.Cmd[Msg] {
 
 func (t *Todos) Subscriptions(_ context.Context) (s domi.Sub[Msg]) { return s }
 
+func (t *Todos) Preview(ctx context.Context, _ *url.URL) (string, N, bool) {
+	return "", nil, false
+}
+
 func (t *Todos) View(_ context.Context) (string, N) {
 	return "todos",
 		div(style("font-family:system-ui;padding:2rem;max-width:32rem"))(

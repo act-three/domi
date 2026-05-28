@@ -2,6 +2,7 @@ package domi
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
@@ -21,11 +22,30 @@ import (
 // frame is one entry in a session's patch log: the seq is monotonic per
 // session and travels back to the client as the SSE event id, so a
 // reconnecting client can ask for everything after the seq it last saw.
+//
+// kind distinguishes patch frames (Patches apply in-place against the
+// client's root) from preview frames (the client clones root, applies
+// Patches to the clone, and caches the result under Target as a
+// snapshot keyed by URL for instant navigation on click; Outgoing is
+// the pre-allocated snapshot id the client uses to cache the outgoing
+// DOM when it restores the preview at click time).
 type frame struct {
-	seq     uint64
-	base    string // snapshot id this frame's patches are relative to
-	patches []vdom.Patch
+	seq      uint64       // SSE event id
+	kind     frameKind    // SSE event name
+	Base     string       `json:"base"`
+	Patches  []vdom.Patch `json:"patches"`
+	Target   string       `json:"target,omitempty"`
+	Outgoing string       `json:"outgoing,omitempty"`
+	URL      string       `json:"url,omitempty"`
 }
+
+type frameKind string
+
+const (
+	framePatch   frameKind = "patch"
+	framePreview frameKind = "preview"
+	frameDeny    frameKind = "deny" // prefetch was denied for URL
+)
 
 // Each new SSE request builds a fresh sseAttachment and evicts any
 // previous one by cancelling its ctx. At most one consumer ever reads
@@ -138,14 +158,7 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 	}
 
 	if len(ps) > 0 {
-		s.head++
-		s.log[s.head%uint64(len(s.log))] = frame{seq: s.head, base: s.base, patches: ps}
-		if s.sse != nil {
-			select {
-			case s.sse.ready <- struct{}{}:
-			default:
-			}
-		}
+		s.appendFrame(frame{kind: framePatch, Base: s.base, Patches: ps})
 	}
 	s.view = next
 	s.title = title
@@ -212,6 +225,15 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		}
 		msg := s.sv.onURLRequest(URLRequest{URL: u, Internal: envelope.Internal})
 		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	case "prefetch":
+		u, err := url.Parse(envelope.URL)
+		if err != nil {
+			s.logger.WarnContext(ctx, "bad prefetch URL", "url", envelope.URL, "error", err)
+			break
+		}
+		go s.prefetch(mergedContext{s.ctx, ctx}, u)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	case "urlChange":
@@ -300,7 +322,7 @@ func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 	rc.Flush()
 
 	if resync, view, title, head, base := s.needsResync(seen); resync {
-		f := frame{seq: head, base: base, patches: []vdom.Patch{
+		f := frame{seq: head, kind: framePatch, Base: base, Patches: []vdom.Patch{
 			vdom.Reset(view),
 			vdom.SetTitle(title),
 		}}
@@ -403,11 +425,11 @@ func (s *session[Msg]) framesSince(seen uint64) []frame {
 }
 
 func writeFrame(w http.ResponseWriter, rc *http.ResponseController, f frame) error {
-	data, err := json.Marshal([]any{f.base, f.patches})
+	data, err := json.Marshal(f)
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "id: %d\nevent: patch\ndata: %s\n\n", f.seq, data); err != nil {
+	if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", f.seq, f.kind, data); err != nil {
 		return err
 	}
 	rc.Flush()
@@ -441,5 +463,57 @@ func (s *session[Msg]) restoreSnapshot(id string) {
 	if sn, ok := s.snapshots[id]; ok {
 		s.view = sn.view
 		s.title = sn.title
+	}
+}
+
+// prefetch renders a Preview for u, caches it alongside the current
+// view (which becomes the outgoing snapshot if the user clicks the
+// link), and queues a preview frame so the client can build its own
+// matching snapshots for instant navigation.
+//
+// Caching the outgoing view at prefetch time — rather than at click
+// time — keeps server and client agreed on its contents: the SSE
+// stream guarantees that when the client processes the preview frame,
+// its root reflects exactly s.view at this moment, so cacheSnapshot
+// on each side stores the same view.
+func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	title, view, ok := s.app.Preview(ctx, u)
+	if !ok {
+		s.appendFrame(frame{kind: frameDeny, URL: u.String()})
+		return
+	}
+	next := lower(view)
+	previewID := rand.Text()
+	outgoingID := rand.Text()
+	s.cacheSnapshot(previewID, next, title)
+	s.cacheSnapshot(outgoingID, s.view, s.title)
+	ps := vdom.Diff(s.view, next)
+	if title != s.title {
+		ps = append(ps, vdom.SetTitle(title))
+	}
+	s.appendFrame(frame{
+		kind:     framePreview,
+		Base:     s.base,
+		Target:   previewID,
+		Outgoing: outgoingID,
+		URL:      u.String(),
+		Patches:  ps,
+	})
+}
+
+// appendFrame commits f to the patch log with the next sequence
+// number and signals any waiting SSE consumer. Must be called with
+// s.mu held.
+func (s *session[Msg]) appendFrame(f frame) {
+	s.head++
+	f.seq = s.head
+	s.log[s.head%uint64(len(s.log))] = f
+	if s.sse != nil {
+		select {
+		case s.sse.ready <- struct{}{}:
+		default:
+		}
 	}
 }
