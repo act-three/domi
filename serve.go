@@ -64,7 +64,13 @@ func Handler[Msg any, A App[Msg]](
 }
 
 type server[Msg any] struct {
-	config       handlerConfig
+	// Config. Never changed after init. Safe to read concurrently.
+	document       func(title string, body Node) Node
+	logger         *slog.Logger
+	sessionTimeout time.Duration
+	replayWindow   int
+	keepalive      time.Duration
+
 	appf         func(context.Context, *url.URL) (App[Msg], Cmd[Msg])
 	onURLRequest func(URLRequest) Msg
 	onURLChange  func(*url.URL) Msg
@@ -80,30 +86,29 @@ func newServer[Msg any, A App[Msg]](
 	opts []Option,
 ) *server[Msg] {
 	sv := &server[Msg]{
+		document:       defaultDocument,
+		logger:         slog.Default(),
+		sessionTimeout: 48 * time.Hour,
+		replayWindow:   128,
+		keepalive:      25 * time.Second,
+
 		appf:         func(ctx context.Context, u *url.URL) (App[Msg], Cmd[Msg]) { return f(ctx, u) },
 		onURLRequest: onURLRequest,
 		onURLChange:  onURLChange,
 		m:            make(map[string]*session[Msg]),
-		config: handlerConfig{
-			document:       defaultDocument,
-			logger:         slog.Default(),
-			sessionTimeout: 48 * time.Hour,
-			replayWindow:   128,
-			keepalive:      25 * time.Second,
-		},
 	}
 	for _, o := range opts {
 		switch o := o.(type) {
 		case documentOption:
-			sv.config.document = o.f
+			sv.document = o.f
 		case sessionTimeoutOption:
-			sv.config.sessionTimeout = o.d
+			sv.sessionTimeout = o.d
 		case replayWindowOption:
-			sv.config.replayWindow = o.n
+			sv.replayWindow = o.n
 		case keepaliveOption:
-			sv.config.keepalive = o.d
+			sv.keepalive = o.d
 		case loggerOption:
-			sv.config.logger = o.l
+			sv.logger = o.l
 		}
 	}
 	return sv
@@ -118,12 +123,12 @@ func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 		cancel: cancel,
 		id:     id,
 		sv:     sv,
-		logger: sv.config.logger.With("session", id),
-		log:    make([]frame, sv.config.replayWindow),
+		logger: sv.logger.With("session", id),
+		log:    make([]frame, sv.replayWindow),
 		active: time.Now(),
 	}
 	sv.put(id, s)
-	go s.idleWatch(sv.config.sessionTimeout)
+	go s.idleWatch(sv.sessionTimeout)
 	go func() {
 		<-ctx.Done()
 		sv.delete(id)

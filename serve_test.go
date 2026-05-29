@@ -57,10 +57,9 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 		cancel: cancel,
 		app:    app,
 		sv: &server[Msg]{
-			config: handlerConfig{
-				replayWindow: replayWindow,
-				keepalive:    25 * time.Second,
-			},
+			replayWindow: replayWindow,
+			keepalive:    25 * time.Second,
+
 			onURLChange:  func(*url.URL) Msg { var zero Msg; return zero },
 			onURLRequest: func(URLRequest) Msg { var zero Msg; return zero },
 		},
@@ -246,7 +245,7 @@ func runSSE[Msg any](t *testing.T, s *session[Msg], lastEventID string, d time.D
 func TestSessionApplyRingBuffer(t *testing.T) {
 	const window = 2
 	s := newTestSession(&counterApp{})
-	s.sv.config.replayWindow = window
+	s.sv.replayWindow = window
 	s.log = make([]frame, window)
 	defer s.cancel()
 	s.apply(s.ctx, 1, nil) // seq 1 → log[1]
@@ -294,7 +293,7 @@ func TestSessionSSEReplayWithinWindow(t *testing.T) {
 func TestSessionSSEResyncOutOfWindow(t *testing.T) {
 	const window = 2
 	s := newTestSession(&counterApp{})
-	s.sv.config.replayWindow = window
+	s.sv.replayWindow = window
 	s.log = make([]frame, window)
 	defer s.cancel()
 	// Four apply calls overflow the window of 2, so the oldest two
@@ -361,7 +360,7 @@ func TestSessionSSEDisconnectDoesNotCancel(t *testing.T) {
 // patches flowing.
 func TestSessionSSEKeepalive(t *testing.T) {
 	s := newTestSession(&counterApp{})
-	s.sv.config.keepalive = 10 * time.Millisecond
+	s.sv.keepalive = 10 * time.Millisecond
 	defer s.cancel()
 	out := runSSE(t, s, "", 50*time.Millisecond)
 	if !strings.Contains(out, ": keepalive") {
