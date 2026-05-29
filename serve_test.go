@@ -2,7 +2,6 @@ package domi
 
 import (
 	"context"
-	"encoding/json/v2"
 	"fmt"
 	"iter"
 	"net/http"
@@ -44,6 +43,20 @@ func (a *fragmentApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bo
 	return t, v, true
 }
 
+// titledApp changes both its body and its document title each Update, so
+// frames carry a SetTitle effect alongside the DOM patches.
+type titledApp struct{ n int }
+
+func (a *titledApp) Update(context.Context, int) Cmd[int] { a.n++; return Batch[int]() }
+func (a *titledApp) View(context.Context) (string, Node) {
+	return fmt.Sprintf("title-%d", a.n), Tag("div")()(Text(fmt.Sprintf("%d", a.n)))
+}
+func (a *titledApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
+func (a *titledApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
+	t, v := a.View(ctx)
+	return t, v, true
+}
+
 // newTestSession wires up a session for direct method tests, bypassing
 // the http surface. The session points at a default-configured server
 // so apply, idleWatch, and friends can read config fields without going
@@ -79,11 +92,15 @@ func TestSessionApplyFragmentAtRoot(t *testing.T) {
 		t.Fatalf("expected head=1 after one apply, got %d", s.head)
 	}
 	// Each <div> child's text changes (a0→a1, b0→b1), producing two
-	// set_text patches. The exact shape isn't the contract — what matters
-	// is that *both* top-level siblings were diffed, not just one.
+	// patches inside the frame's single ApplyPatch effect. The exact
+	// shape isn't the contract — what matters is that *both* top-level
+	// siblings were diffed, not just one.
 	f := s.log[1%uint64(len(s.log))]
-	if n := len(f.Patches); n < 2 {
-		t.Fatalf("expected patches for both Fragment siblings, got %d: %+v", n, f.Patches)
+	if len(f.Effects) != 1 || f.Effects[0].Type != effectApplyPatch {
+		t.Fatalf("expected one ApplyPatch effect, got %+v", f.Effects)
+	}
+	if n := len(f.Effects[0].Patches); n < 2 {
+		t.Fatalf("expected patches for both Fragment siblings, got %d: %+v", n, f.Effects[0].Patches)
 	}
 }
 
@@ -265,8 +282,8 @@ func TestSessionSSEFreshClient(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
 	out := runSSE(t, s, "", 30*time.Millisecond)
-	if strings.Contains(out, "event: patch") {
-		t.Fatalf("expected no patches for fresh empty session, got: %s", out)
+	if strings.Contains(out, "event: effect") {
+		t.Fatalf("expected no effect frames for fresh empty session, got: %s", out)
 	}
 }
 
@@ -579,9 +596,8 @@ func TestLoadCmdProducesLoadNav(t *testing.T) {
 	}
 }
 
-// apply with a load nav emits a single full-page navigation patch and,
-// because the document is replaced wholesale, runs neither Update nor
-// onURLChange.
+// apply with a load nav emits a lone LoadURL effect and, because the
+// document is replaced wholesale, runs neither Update nor onURLChange.
 func TestSessionApplyLoadNav(t *testing.T) {
 	app := &counterApp{}
 	s := newTestSession[int](app)
@@ -602,18 +618,55 @@ func TestSessionApplyLoadNav(t *testing.T) {
 		t.Fatalf("expected one frame after load nav, got head=%d", s.head)
 	}
 	f := s.log[1%uint64(len(s.log))]
-	if len(f.Patches) != 1 {
-		t.Fatalf("expected exactly one patch, got %d: %+v", len(f.Patches), f.Patches)
+	if len(f.Effects) != 1 || f.Effects[0].Type != effectLoadURL {
+		t.Fatalf("expected a lone LoadURL effect, got %+v", f.Effects)
 	}
-	data, err := json.Marshal(f.Patches[0])
-	if err != nil {
-		t.Fatal(err)
+	if f.Effects[0].URL != target {
+		t.Fatalf("LoadURL effect URL = %q, want %q", f.Effects[0].URL, target)
 	}
-	if !strings.Contains(string(data), `"Op":"Load"`) {
-		t.Fatalf("expected a load patch, got %s", data)
+}
+
+// apply orders the effects so the client snapshots the outgoing page
+// before it mutates: PushURL leads, the DOM Patch follows, and SetTitle
+// trails (so the outgoing snapshot still captures the old title).
+func TestSessionApplyEffectOrder(t *testing.T) {
+	s := newTestSession[int](&titledApp{})
+	defer s.cancel()
+	s.apply(s.ctx, 1, &nav{push: "/about", outgoingID: "snap1"})
+
+	f := s.log[1%uint64(len(s.log))]
+	if len(f.Effects) != 3 {
+		t.Fatalf("expected PushURL, Patch, SetTitle effects, got %+v", f.Effects)
 	}
-	if !strings.Contains(string(data), target) {
-		t.Fatalf("load patch missing target %q, got %s", target, data)
+	if e := f.Effects[0]; e.Type != effectPushURL || e.URL != "/about" || e.ID != "snap1" {
+		t.Fatalf("effect[0] should be PushURL{/about, snap1}, got %+v", e)
+	}
+	if e := f.Effects[1]; e.Type != effectApplyPatch || len(e.Patches) == 0 {
+		t.Fatalf("effect[1] should be a non-empty ApplyPatch, got %+v", e)
+	}
+	if e := f.Effects[2]; e.Type != effectSetTitle || e.Title != "title-1" {
+		t.Fatalf("effect[2] should be SetTitle{title-1}, got %+v", e)
+	}
+}
+
+// A preview frame carries the previewed page's title as data and holds
+// no effects, so building the snapshot never touches the live document
+// (the title only changes when the user navigates and it's restored).
+func TestSessionPreviewCarriesTitleAsData(t *testing.T) {
+	s := newTestSession[int](&titledApp{})
+	defer s.cancel()
+	u, _ := url.Parse("/next")
+	s.prefetch(s.ctx, u)
+
+	f := s.log[1%uint64(len(s.log))]
+	if f.kind != framePreview {
+		t.Fatalf("expected a preview frame, got kind %q", f.kind)
+	}
+	if f.Title != "title-0" {
+		t.Fatalf("preview Title = %q, want the previewed page's title %q", f.Title, "title-0")
+	}
+	if len(f.Effects) != 0 {
+		t.Fatalf("preview frame must hold no effects, got %+v", f.Effects)
 	}
 }
 

@@ -55,37 +55,66 @@ type sseAttachment struct {
 // session and travels back to the client as the SSE event id, so a
 // reconnecting client can ask for everything after the seq it last saw.
 //
-// kind distinguishes patch frames (Patches apply in-place against the
-// client's root) from preview frames (the client clones root, applies
-// Patches to the clone, and caches the result under Target as a
-// snapshot keyed by URL for instant navigation on click; Outgoing is
-// the pre-allocated snapshot id the client uses to cache the outgoing
-// DOM when it restores the preview at click time).
+// kind distinguishes the two ways the client consumes a frame:
+//
+//   - effect frames carry Effects: ordered side-effects the client runs
+//     in turn against the live document (apply DOM patches, set the
+//     title, push/replace history, or navigate away).
+//   - preview frames carry Patches and Title: a pure description of a
+//     page the client builds by cloning root, applying Patches to the
+//     clone, and caching the result (with Title) under Target as a
+//     snapshot for instant navigation on click. Outgoing is the
+//     pre-allocated id under which the client caches the current page
+//     before swapping the preview in. A preview frame holds no Effects,
+//     so building it can never touch the live document.
 type frame struct {
 	seq      uint64    // SSE event id
 	kind     frameKind // SSE event name
 	Base     string
-	Patches  []vdom.Patch
-	Target   string `json:",omitempty"`
-	Outgoing string `json:",omitempty"`
-	URL      string `json:",omitempty"`
+	Effects  []effect     `json:",omitempty"` // effect frames
+	Patches  []vdom.Patch `json:",omitempty"` // preview frames
+	Title    string       `json:",omitempty"` // preview frames
+	Target   string       `json:",omitempty"`
+	Outgoing string       `json:",omitempty"`
+	URL      string       `json:",omitempty"`
 }
 
 type frameKind string
 
 const (
-	framePatch   frameKind = "patch"
+	frameEffect  frameKind = "effect"
 	framePreview frameKind = "preview"
 	frameDeny    frameKind = "deny" // prefetch was denied for URL
 )
 
+// effect is one side-effect in an effect frame, run by the client in
+// list order against the live document: apply DOM patches, set the
+// title, update history, or navigate away. Type selects which of the
+// remaining fields carry its data.
+type effect struct {
+	Type    effectType
+	Patches []vdom.Patch `json:",omitempty"` // ApplyPatch: DOM patches to apply
+	Title   string       `json:",omitempty"` // SetTitle: the new document title
+	URL     string       `json:",omitempty"` // PushURL/ReplaceURL/LoadURL target
+	ID      string       `json:",omitempty"` // PushURL: outgoing snapshot id
+}
+
+type effectType string
+
+const (
+	effectApplyPatch effectType = "ApplyPatch" // apply DOM patches to the live tree
+	effectSetTitle   effectType = "SetTitle"   // set document.title
+	effectPushURL    effectType = "PushURL"    // snapshot outgoing page, then history.pushState
+	effectReplaceURL effectType = "ReplaceURL" // history.replaceState
+	effectLoadURL    effectType = "LoadURL"    // full-page navigation, leaving the session
+)
+
 // nav is the optional navigation side-effect attached to a [cmd]
-// return value. apply synthesizes a push_url patch from push and
-// outgoingID, or a replace_url patch from replace, then commits the
-// patch into the next frame alongside any DOM patches from the
-// Update/View cycle. A load is handled separately: it replaces the
-// whole document, so apply emits the load patch on its own without an
-// Update/View cycle.
+// return value. apply turns push/outgoingID into a PushURL effect or
+// replace into a ReplaceURL effect, ordered ahead of the DOM patches in
+// the next frame. A load is handled separately: it replaces the whole
+// document, so apply emits a lone LoadURL effect without an Update/View
+// cycle.
 type nav struct {
 	push       string // PushURL target URL, or empty
 	replace    string // ReplaceURL target URL, or empty
@@ -142,36 +171,43 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 
 	// A load is a full-page browser navigation: the document is replaced
 	// wholesale, so there's no Update to run, view to diff, or
-	// subscriptions to reconcile. Emit the load patch and return; the
-	// accompanying msg is the zero value and is intentionally dropped.
+	// subscriptions to reconcile. Emit a lone LoadURL effect and return;
+	// the accompanying msg is the zero value and is intentionally dropped.
 	if n != nil && n.load != "" {
-		s.appendFrame(frame{kind: framePatch, Base: s.base, Patches: []vdom.Patch{vdom.Load(n.load)}})
+		// No Base: a LoadURL frame has no DOM patches, so the client runs
+		// it regardless of which snapshot its tree is built on.
+		s.appendFrame(frame{kind: frameEffect, Effects: []effect{{Type: effectLoadURL, URL: n.load}}})
 		return
 	}
 
 	cmd := s.app.Update(ctx, msg)
 	title, view := s.app.View(ctx)
 	next := lower(view)
-	ps := vdom.Diff(s.view, next)
-	if title != s.title {
-		ps = append(ps, vdom.SetTitle(title))
-	}
+	patches := vdom.Diff(s.view, next)
 
-	// Push: cache outgoing s.view under outgoingID before it's
-	// overwritten, then synthesize the push_url patch. Replace: just
-	// synthesize the replace_url patch.
+	// Effect order is the client's execution order. A PushURL goes first
+	// so the client snapshots the outgoing page (its current DOM and
+	// title) and updates history before the DOM patches mutate it; the
+	// SetTitle goes last so that snapshot still captures the old title.
+	var effects []effect
 	if n != nil {
 		switch {
 		case n.push != "":
 			s.cacheSnapshot(n.outgoingID, s.view, s.title)
-			ps = append(ps, vdom.PushURL(n.push, n.outgoingID))
+			effects = append(effects, effect{Type: effectPushURL, URL: n.push, ID: n.outgoingID})
 		case n.replace != "":
-			ps = append(ps, vdom.ReplaceURL(n.replace))
+			effects = append(effects, effect{Type: effectReplaceURL, URL: n.replace})
 		}
 	}
+	if len(patches) > 0 {
+		effects = append(effects, effect{Type: effectApplyPatch, Patches: patches})
+	}
+	if title != s.title {
+		effects = append(effects, effect{Type: effectSetTitle, Title: title})
+	}
 
-	if len(ps) > 0 {
-		s.appendFrame(frame{kind: framePatch, Base: s.base, Patches: ps})
+	if len(effects) > 0 {
+		s.appendFrame(frame{kind: frameEffect, Base: s.base, Effects: effects})
 	}
 	s.view = next
 	s.title = title
@@ -335,9 +371,9 @@ func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 	rc.Flush()
 
 	if resync, view, title, head, base := s.needsResync(seen); resync {
-		f := frame{seq: head, kind: framePatch, Base: base, Patches: []vdom.Patch{
-			vdom.Reset(view),
-			vdom.SetTitle(title),
+		f := frame{seq: head, kind: frameEffect, Base: base, Effects: []effect{
+			{Type: effectApplyPatch, Patches: []vdom.Patch{vdom.Reset(view)}},
+			{Type: effectSetTitle, Title: title},
 		}}
 		if err := writeFrame(w, rc, f); err != nil {
 			s.logger.DebugContext(req.Context(), "sse", "error", err)
@@ -490,17 +526,19 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 	outgoingID := rand.Text()
 	s.cacheSnapshot(previewID, next, title)
 	s.cacheSnapshot(outgoingID, s.view, s.title)
-	ps := vdom.Diff(s.view, next)
-	if title != s.title {
-		ps = append(ps, vdom.SetTitle(title))
-	}
+	// The preview frame describes the target page as a value: the DOM
+	// patches that build it from the current view, plus its title. The
+	// client applies the patches to a clone and caches it with the title
+	// — no live document is touched, so the title only changes if and
+	// when the user actually navigates and the snapshot is restored.
 	s.appendFrame(frame{
 		kind:     framePreview,
 		Base:     s.base,
 		Target:   previewID,
 		Outgoing: outgoingID,
 		URL:      u.String(),
-		Patches:  ps,
+		Patches:  vdom.Diff(s.view, next),
+		Title:    title,
 	})
 }
 
