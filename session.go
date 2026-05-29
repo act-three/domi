@@ -19,6 +19,38 @@ import (
 	"ily.dev/domi/internal/vdom"
 )
 
+type session[Msg any] struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	id     string
+	app    App[Msg]
+	sv     *server[Msg]
+	logger *slog.Logger
+
+	mu           sync.Mutex // protects the following fields
+	title        string
+	view         []vdom.Node
+	log          []frame        // fixed-size ring; log[seq%len(log)] holds frame seq
+	head         uint64         // seq of the most recent frame; 0 if none
+	base         string         // snapshot id the client's DOM is built on; "" initially
+	sse          *sseAttachment // nil if no current consumer
+	active       time.Time
+	subs         map[any]context.CancelFunc // active subscription keys → cancel
+	snapshots    map[string]snapshot        // snapshot id → cached vdom
+	snapshotAge  []string                   // ring of ids in insertion order, for eviction
+	snapshotNext int                        // next write position in snapshotAge
+}
+
+// Each new SSE request builds a fresh sseAttachment and evicts any
+// previous one by cancelling its ctx. At most one consumer ever reads
+// from ready, so signals can't race across reconnects.
+type sseAttachment struct {
+	ctx    context.Context
+	cancel context.CancelFunc
+	ready  chan struct{}
+}
+
 // frame is one entry in a session's patch log: the seq is monotonic per
 // session and travels back to the client as the SSE event id, so a
 // reconnecting client can ask for everything after the seq it last saw.
@@ -46,38 +78,6 @@ const (
 	framePreview frameKind = "preview"
 	frameDeny    frameKind = "deny" // prefetch was denied for URL
 )
-
-// Each new SSE request builds a fresh sseAttachment and evicts any
-// previous one by cancelling its ctx. At most one consumer ever reads
-// from ready, so signals can't race across reconnects.
-type sseAttachment struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-	ready  chan struct{}
-}
-
-type session[Msg any] struct {
-	ctx    context.Context
-	cancel context.CancelFunc
-
-	id     string
-	app    App[Msg]
-	sv     *server[Msg]
-	logger *slog.Logger
-
-	mu           sync.Mutex // protects the following fields
-	title        string
-	view         []vdom.Node
-	log          []frame        // fixed-size ring; log[seq%len(log)] holds frame seq
-	head         uint64         // seq of the most recent frame; 0 if none
-	base         string         // snapshot id the client's DOM is built on; "" initially
-	sse          *sseAttachment // nil if no current consumer
-	active       time.Time
-	subs         map[any]context.CancelFunc // active subscription keys → cancel
-	snapshots    map[string]snapshot        // snapshot id → cached vdom
-	snapshotAge  []string                   // ring of ids in insertion order, for eviction
-	snapshotNext int                        // next write position in snapshotAge
-}
 
 // nav is the optional navigation side-effect attached to a [cmd]
 // return value. apply synthesizes a push_url patch from push and
@@ -111,7 +111,7 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	s.spawn(cmd)
 
 	body := Tag("body")(Name("data-domi-session")(s.id))(view)
-	root := lowerOne(s.sv.config.document(title, body))
+	root := lowerOne(s.sv.document(title, body))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if _, err := io.WriteString(w, "<!doctype html>"); err != nil {
 		s.logger.DebugContext(ctx, "response", "error", err)
@@ -362,7 +362,7 @@ func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 			return
 		case <-req.Context().Done():
 			return
-		case <-time.After(s.sv.config.keepalive):
+		case <-time.After(s.sv.keepalive):
 			if _, err := io.WriteString(w, ": keepalive\n\n"); err != nil {
 				s.logger.DebugContext(req.Context(), "sse", "error", err)
 				return
@@ -435,18 +435,6 @@ func (s *session[Msg]) framesSince(seen uint64) []frame {
 		out = append(out, s.log[q%n])
 	}
 	return out
-}
-
-func writeFrame(w http.ResponseWriter, rc *http.ResponseController, f frame) error {
-	data, err := json.Marshal(f)
-	if err != nil {
-		return err
-	}
-	if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", f.seq, f.kind, data); err != nil {
-		return err
-	}
-	rc.Flush()
-	return nil
 }
 
 // cacheSnapshot stores a vdom snapshot under id, evicting the oldest
@@ -529,4 +517,16 @@ func (s *session[Msg]) appendFrame(f frame) {
 		default:
 		}
 	}
+}
+
+func writeFrame(w http.ResponseWriter, rc *http.ResponseController, f frame) error {
+	data, err := json.Marshal(f)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", f.seq, f.kind, data); err != nil {
+		return err
+	}
+	rc.Flush()
+	return nil
 }

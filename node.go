@@ -2,51 +2,14 @@ package domi
 
 import (
 	"fmt"
-	"hash/fnv"
 	"iter"
 	"slices"
-	"strconv"
 	"strings"
-	"sync"
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 	"ily.dev/domi/internal/vdom"
 )
-
-var (
-	// Bypass annotates a link to use the browser's built-in navigation,
-	// rather than going through the framework.
-	Bypass = Bool("data-domi-bypass")
-)
-
-// Process-wide registry of event-handler messages, keyed by a content
-// hash of the marshaled Msg JSON. On() inserts; serve.go's handleEvent
-// looks up. The map is content-addressable, so identical Msgs from any
-// session share a slot; size is bounded by the number of distinct Msg
-// values constructed by all running apps, which is small in practice
-// (TEA apps have a handful of variants, sometimes parameterized by IDs).
-var (
-	handlersMu sync.RWMutex
-	handlers   = map[string][]byte{}
-)
-
-func registerHandler(raw []byte) string {
-	h := fnv.New64a()
-	h.Write(raw)
-	key := strconv.FormatUint(h.Sum64(), 16)
-	handlersMu.Lock()
-	handlers[key] = raw
-	handlersMu.Unlock()
-	return key
-}
-
-func lookupHandler(key string) ([]byte, bool) {
-	handlersMu.RLock()
-	raw, ok := handlers[key]
-	handlersMu.RUnlock()
-	return raw, ok
-}
 
 // A Node is an HTML node,
 // a [Text], [Raw], [Tag], [Keyed], or [Fragment].
@@ -63,19 +26,46 @@ type node interface {
 	lowered() vdom.Node
 }
 
-// element is the domi-side wrapper around [vdom.Element]: a zero-cost
-// type def that adds isNode and lowered. Construction uses struct
-// literals with vdom.Element's field names; lowering is a free cast.
-type element vdom.Element
-
-func (element) isNode()              {}
-func (e element) lowered() vdom.Node { return vdom.Element(e) }
-
 // raw is the domi-side wrapper around [vdom.Raw].
 type raw vdom.Raw
 
 func (raw) isNode()              {}
 func (r raw) lowered() vdom.Node { return vdom.Raw(r) }
+
+// Raw returns a node whose content is written verbatim, without HTML
+// escaping. Use Raw for trusted HTML: inline SVG, pre-sanitized
+// markdown output, or fragments from third-party HTML generators.
+// Never pass user-controlled input to Raw without prior sanitization.
+//
+// The content must produce exactly one DOM node when parsed: either a
+// text string containing no markup, or a single properly nested HTML
+// element with explicit closing tags. Raw panics if the content is
+// empty, contains multiple top-level nodes, or has unclosed tags.
+func Raw(s string) Node {
+	if s == "" {
+		panic("domi: Raw: empty string produces no DOM nodes")
+	}
+	ctx := &html.Node{Type: html.ElementNode, DataAtom: atom.Body, Data: "body"}
+	nodes, err := html.ParseFragment(strings.NewReader(s), ctx)
+	if err != nil {
+		panic("domi: Raw: " + err.Error())
+	}
+	if len(nodes) != 1 {
+		panic(fmt.Sprintf("domi: Raw: content must produce exactly one DOM node, got %d", len(nodes)))
+	}
+	return raw(vdom.Raw(s))
+}
+
+// Text returns a text node. The string is escaped for safe embedding
+// in HTML; use [Raw] for pre-escaped or trusted content.
+func Text(s string) Node {
+	return raw(vdom.Text(s))
+}
+
+// Textf returns a text node formatted with [fmt.Sprintf].
+func Textf(format string, a ...any) Node {
+	return Text(fmt.Sprintf(format, a...))
+}
 
 // Element is the partially-applied builder returned by Tag(name)(attrs).
 // Calling it with children produces a finished element node; an Element
@@ -84,6 +74,14 @@ func (r raw) lowered() vdom.Node { return vdom.Raw(r) }
 type Element func(...Node) Node
 
 func (Element) isNode() {}
+
+// element is the domi-side wrapper around [vdom.Element]: a zero-cost
+// type def that adds isNode and lowered. Construction uses struct
+// literals with vdom.Element's field names; lowering is a free cast.
+type element vdom.Element
+
+func (element) isNode()              {}
+func (e element) lowered() vdom.Node { return vdom.Element(e) }
 
 // Tag returns a curried builder for an HTML element with the given name.
 // Its first call takes attributes, and the second takes children.
@@ -102,47 +100,6 @@ func Tag(name string) func(...Attr) Element {
 		return func(children ...Node) Node {
 			return element(vdom.NewElement(name, a, lower(children...), nil))
 		}
-	}
-}
-
-// Text returns a text node. The string is escaped for safe embedding
-// in HTML; use [Raw] for pre-escaped or trusted content.
-func Text(s string) Node {
-	return raw(vdom.Text(s))
-}
-
-// Textf returns a text node formatted with [fmt.Sprintf].
-func Textf(format string, a ...any) Node {
-	return Text(fmt.Sprintf(format, a...))
-}
-
-// Raw returns a node whose content is written verbatim, without HTML
-// escaping. Use Raw for trusted HTML: inline SVG, pre-sanitized
-// markdown output, or fragments from third-party HTML generators.
-// Never pass user-controlled input to Raw without prior sanitization.
-//
-// The content must produce exactly one DOM node when parsed: either a
-// text string containing no markup, or a single properly nested HTML
-// element with explicit closing tags. Raw panics if the content is
-// empty, contains multiple top-level nodes, or has unclosed tags.
-func Raw(s string) Node {
-	validateRaw(s)
-	return raw(vdom.Raw(s))
-}
-
-// validateRaw panics if s does not produce exactly one DOM node when
-// parsed as HTML in a flow-content context (a <body> child).
-func validateRaw(s string) {
-	if s == "" {
-		panic("domi: Raw: empty string produces no DOM nodes")
-	}
-	ctx := &html.Node{Type: html.ElementNode, DataAtom: atom.Body, Data: "body"}
-	nodes, err := html.ParseFragment(strings.NewReader(s), ctx)
-	if err != nil {
-		panic("domi: Raw: " + err.Error())
-	}
-	if len(nodes) != 1 {
-		panic(fmt.Sprintf("domi: Raw: content must produce exactly one DOM node, got %d", len(nodes)))
 	}
 }
 
@@ -248,131 +205,4 @@ func lowerOne(n Node) vdom.Node {
 		panic(fmt.Sprintf("domi: expected 1 node, got %d", len(out)))
 	}
 	return out[0]
-}
-
-// An Attr is an HTML attribute.
-//
-// In rendered output,
-// a single attribute name does not appear more than once
-// on any given element:
-//
-//  1. For each combining attribute,
-//     the framework combines the values into a single value.
-//     See [RegisterCombining] for more.
-//  2. Event handlers are combined internally.
-//  3. For all other attributes,
-//     only the first occurrence appears.
-type Attr interface {
-	isAttr()
-}
-
-// attr is the domi-side wrapper around [vdom.Attr]: a zero-cost type
-// def that adds isAttr. Construction uses struct literals with
-// vdom.Attr's field names; lowering is a free cast.
-type attr vdom.Attr
-
-func (attr) isAttr() {}
-
-// Name returns a builder for an HTML attribute with the given name. (e.g. class).
-// Call it to obtain an [Attr] with the given value (e.g. class="foo").
-func Name(name string) func(value string) Attr {
-	return func(value string) Attr {
-		return attr{Name: name, Value: value}
-	}
-}
-
-// Bool returns a builder for a boolean HTML attribute. For standard
-// boolean attributes (disabled, checked, …), true means present
-// (name-only) and false means absent:
-//
-//	Tag("input")(attr.Disabled(true))()   // <input disabled>
-//	Tag("input")(attr.Disabled(false))()  // <input>
-//
-// For enumerated boolean attributes (contenteditable, draggable,
-// spellcheck, translate), true and false emit the corresponding
-// string value instead:
-//
-//	Tag("div")(attr.ContentEditable(true))()   // <div contenteditable="true">
-//	Tag("div")(attr.ContentEditable(false))()  // <div contenteditable="false">
-func Bool(name string) func(bool) Attr {
-	if enumeratedBool[name] {
-		return func(v bool) Attr {
-			if v {
-				return attr{Name: name, Value: "true"}
-			}
-			return attr{Name: name, Value: "false"}
-		}
-	}
-	return func(v bool) Attr {
-		if v {
-			return attr{Name: name}
-		}
-		return Group()
-	}
-}
-
-// enumeratedBool is the set of HTML attributes that take the string
-// values "true" and "false" rather than using presence/absence
-// semantics. These look boolean but are technically enumerated
-// attributes in the HTML spec.
-var enumeratedBool = map[string]bool{
-	"contenteditable": true,
-	"draggable":       true,
-	"spellcheck":      true,
-	"translate":       true,
-}
-
-// group is the lowered form of a [Group]: a sequence of vdom.Attrs that
-// splats into a parent's attribute list. group satisfies Attr but not
-// attr — the parent collects it into its own Attrs slice rather than
-// walking it as an interior attribute. Nested groups compose by
-// chaining iter.Seqs, so flattening is lazy and adds no per-level
-// overhead.
-type group iter.Seq[vdom.Attr]
-
-func (group) isAttr() {}
-
-// A Group is a sequence of HTML attributes.
-// It contributes its contents
-// to its parent's child list in order,
-// as if they had been written there directly.
-//
-// Groups may be nested arbitrarily.
-func Group(a ...Attr) Attr {
-	return group(func(yield func(vdom.Attr) bool) {
-		for _, a := range a {
-			switch v := a.(type) {
-			case attr:
-				if !yield(vdom.Attr(v)) {
-					return
-				}
-			case group:
-				for inner := range v {
-					if !yield(inner) {
-						return
-					}
-				}
-			default:
-				panic(fmt.Sprintf("domi: cannot lower %T", a))
-			}
-		}
-	})
-}
-
-// RegisterCombining registers name as a "combining" attribute.
-// When a combining attribute appears more than once in an HTML node,
-// the values are combined, separated by sep,
-// into a single attribute in the rendered output.
-//
-// RegisterCombining must be called before Handler.
-// This is typically done in an init function in packages
-// that define custom attributes.
-//
-// The initial set of combining attributes is:
-//
-//	name  sep
-//	class " "
-//	style ";"
-func RegisterCombining(name, sep string) {
-	vdom.RegisterCombining(name, sep)
 }

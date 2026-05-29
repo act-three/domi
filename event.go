@@ -3,7 +3,10 @@ package domi
 import (
 	"encoding/json/v2"
 	"fmt"
+	"hash/fnv"
 	"reflect"
+	"strconv"
+	"sync"
 )
 
 // On returns a builder for an attribute that binds msg to event
@@ -71,3 +74,31 @@ func eventFieldIndex(v reflect.Value) []int {
 	}
 	return nil
 }
+
+func registerHandler(raw []byte) string {
+	h := fnv.New64a()
+	h.Write(raw)
+	key := strconv.FormatUint(h.Sum64(), 16)
+	handlersMu.Lock()
+	handlers[key] = raw
+	handlersMu.Unlock()
+	return key
+}
+
+func lookupHandler(key string) ([]byte, bool) {
+	handlersMu.RLock()
+	raw, ok := handlers[key]
+	handlersMu.RUnlock()
+	return raw, ok
+}
+
+// Process-wide registry of event-handler messages, keyed by a content
+// hash of the marshaled Msg JSON. On() inserts; serve.go's handleEvent
+// looks up. The map is content-addressable, so identical Msgs from any
+// session share a slot; size is bounded by the number of distinct Msg
+// values constructed by all running apps, which is small in practice
+// (TEA apps have a handful of variants, sometimes parameterized by IDs).
+var (
+	handlersMu sync.RWMutex
+	handlers   = map[string][]byte{}
+)
