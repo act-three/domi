@@ -174,7 +174,7 @@ function postEnvelope(sessionId, h, e) {
   fetch(`/event/${encodeURIComponent(sessionId)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ Handler: h, Event: e }),
+    body: JSON.stringify({ Type: 'Dispatch', Handler: h, Event: e }),
   }).catch((err) => console.error('domi: event POST failed', err));
 }
 

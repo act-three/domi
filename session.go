@@ -251,10 +251,18 @@ func (s *session[Msg]) updateSubs(wanted Sub[Msg]) {
 
 func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
+
+	type msgType string
+	const (
+		msgDispatch   msgType = "Dispatch"   // a DOM event Msg
+		msgURLRequest msgType = "URLRequest" // a link click
+		msgPrefetch   msgType = "Prefetch"   // a link hover
+		msgURLChange  msgType = "URLChange"  // a history navigation
+	)
 	var envelope struct {
+		Type       msgType        `json:",omitempty"`
 		Handler    string         `json:",omitempty"`
 		Event      jsontext.Value `json:",omitempty"`
-		Type       string         `json:",omitempty"`
 		URL        string         `json:",omitempty"`
 		Internal   bool           `json:",omitempty"`
 		SnapshotID string         `json:",omitempty"`
@@ -266,7 +274,9 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 	s.touch()
 
 	switch envelope.Type {
-	case "URLRequest":
+	case msgDispatch:
+		s.dispatch(ctx, envelope.Handler, envelope.Event)
+	case msgURLRequest:
 		u, err := url.Parse(envelope.URL)
 		if err != nil {
 			s.logger.WarnContext(ctx, "bad URLRequest URL", "url", envelope.URL, "error", err)
@@ -274,21 +284,17 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		}
 		msg := s.sv.onURLRequest(URLRequest{URL: u, Internal: envelope.Internal})
 		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
-		w.WriteHeader(http.StatusNoContent)
-		return
-	case "Prefetch":
+	case msgPrefetch:
 		u, err := url.Parse(envelope.URL)
 		if err != nil {
 			s.logger.WarnContext(ctx, "bad Prefetch URL", "url", envelope.URL, "error", err)
 			break
 		}
 		go s.prefetch(mergedContext{s.ctx, ctx}, u)
-		w.WriteHeader(http.StatusNoContent)
-		return
-	case "URLChange":
+	case msgURLChange:
 		u, err := url.Parse(envelope.URL)
 		if err != nil {
-			s.logger.WarnContext(ctx, "bad urlChange URL", "url", envelope.URL, "error", err)
+			s.logger.WarnContext(ctx, "bad URLChange URL", "url", envelope.URL, "error", err)
 			break
 		}
 		if envelope.SnapshotID != "" {
@@ -296,32 +302,39 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		}
 		msg := s.sv.onURLChange(u)
 		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
-		w.WriteHeader(http.StatusNoContent)
+	default:
+		s.logger.WarnContext(ctx, "unknown client message", "type", string(envelope.Type))
+		http.Error(w, "unknown type", http.StatusBadRequest)
 		return
 	}
+	w.WriteHeader(http.StatusNoContent)
+}
 
-	for h := range strings.SplitSeq(envelope.Handler, ",") {
-		if h == "" {
+// dispatch applies the app Msg for each handler key in a Dispatch
+// message. The keys are comma-separated; each names a registered
+// handler whose Msg is rebuilt from the event payload and fed to Update.
+func (s *session[Msg]) dispatch(ctx context.Context, handler string, event jsontext.Value) {
+	for key := range strings.SplitSeq(handler, ",") {
+		if key == "" {
 			continue
 		}
-		raw, ok := lookupHandler(h)
+		raw, ok := lookupHandler(key)
 		if !ok {
-			s.logger.WarnContext(ctx, "unknown msg", "key", h)
+			s.logger.WarnContext(ctx, "unknown msg", "key", key)
 			continue
 		}
-		msg, err := unmarshalMsg[Msg](raw, envelope.Event)
+		msg, err := unmarshalMsg[Msg](raw, event)
 		if err != nil {
 			s.logger.WarnContext(ctx, "msg unmarshal",
-				"key", h,
+				"key", key,
 				"error", err,
 				"msg", string(raw),
-				"event", string(envelope.Event),
+				"event", string(event),
 			)
 			continue
 		}
 		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
 	}
-	w.WriteHeader(http.StatusNoContent)
 }
 
 // touch defers the idle timeout.

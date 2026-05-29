@@ -146,6 +146,36 @@ func TestHandlerDocumentOption(t *testing.T) {
 	}
 }
 
+// A Dispatch message routes to the handler named by its key, rebuilds
+// that handler's Msg, and applies it — landing as a frame.
+func TestHandleEventDispatch(t *testing.T) {
+	s := newTestSession(&counterApp{})
+	defer s.cancel()
+
+	key := registerHandler([]byte("1")) // an int Msg for counterApp
+	body := fmt.Sprintf(`{"Type":"Dispatch","Handler":%q}`, key)
+	rec := httptest.NewRecorder()
+	s.handleEvent(rec, httptest.NewRequest("POST", "/event/x", strings.NewReader(body)))
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	// apply runs in a goroutine; wait for the dispatched Msg to land.
+	deadline := time.Now().Add(time.Second)
+	for {
+		s.mu.Lock()
+		head := s.head
+		s.mu.Unlock()
+		if head == 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Dispatch did not apply a Msg (no frame produced)")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // idleWatch cancels the session once activity falls behind by d.
 func TestSessionIdleWatchFires(t *testing.T) {
 	const d = 50 * time.Millisecond
