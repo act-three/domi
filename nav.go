@@ -59,6 +59,39 @@ func ReplaceURL[Msg any](url string) Cmd[Msg] {
 	})}
 }
 
+// Load returns a [Cmd] that triggers a full-page browser navigation
+// to url, leaving the current session behind. Unlike [PushURL] and
+// [ReplaceURL], which update the history of the running application,
+// Load performs a real navigation (window.location): the browser
+// discards the current document and fetches a fresh one. The url may
+// therefore be absolute and cross-origin.
+//
+// Load is the escape hatch for links the application does not route
+// itself — logging out, leaving for an external site, or following a
+// same-origin link served outside the domi app. The app returns it
+// from Update in response to a [URLRequest] it decides not to handle
+// internally. To opt a link out of interception ahead of time, without
+// a server round trip, give the anchor the data-domi-bypass attribute
+// instead.
+func Load[Msg any](url string) Cmd[Msg] {
+	mustParseURL("domi.Load", url)
+	return Cmd[Msg]{slices.Values([]cmd[Msg]{
+		func(s *session[Msg]) (Msg, *nav) {
+			var zero Msg
+			return zero, &nav{load: url}
+		},
+	})}
+}
+
+// mustParseURL parses url and panics if it is malformed. Unlike
+// [mustParseRelativeURL] it permits a scheme and host: a [Load] target
+// may be any absolute or relative URL the browser can navigate to.
+func mustParseURL(caller, raw string) {
+	if _, err := url.Parse(raw); err != nil {
+		panic(fmt.Errorf("%s: %w", caller, err))
+	}
+}
+
 // mustParseRelativeURL parses url and panics if it is malformed or
 // contains a scheme or host. Navigation URLs must be relative to the
 // application's origin.

@@ -83,6 +83,14 @@ func ReplaceURL(url string) Patch {
 	return Patch{p: patch{Op: "replace_url", Value: url}}
 }
 
+// Load returns a Patch that triggers a full-page browser navigation to
+// url via window.location, leaving the session behind. Unlike
+// [PushURL], which updates history in place, the browser fetches a
+// fresh document; url may therefore be absolute and cross-origin.
+func Load(url string) Patch {
+	return Patch{p: patch{Op: "load", Value: url}}
+}
+
 // Reset replaces the root's entire subtree with the given children.
 func Reset(children []Node) Patch {
 	var b strings.Builder

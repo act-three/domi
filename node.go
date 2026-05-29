@@ -14,6 +14,12 @@ import (
 	"ily.dev/domi/internal/vdom"
 )
 
+var (
+	// Bypass annotates a link to use the browser's built-in navigation,
+	// rather than going through the framework.
+	Bypass = Bool("data-domi-bypass")
+)
+
 // Process-wide registry of event-handler messages, keyed by a content
 // hash of the marshaled Msg JSON. On() inserts; serve.go's handleEvent
 // looks up. The map is content-addressable, so identical Msgs from any

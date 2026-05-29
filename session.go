@@ -83,10 +83,13 @@ type session[Msg any] struct {
 // return value. apply synthesizes a push_url patch from push and
 // outgoingID, or a replace_url patch from replace, then commits the
 // patch into the next frame alongside any DOM patches from the
+// Update/View cycle. A load is handled separately: it replaces the
+// whole document, so apply emits the load patch on its own without an
 // Update/View cycle.
 type nav struct {
 	push       string // PushURL target URL, or empty
 	replace    string // ReplaceURL target URL, or empty
+	load       string // Load target URL (full-page navigation), or empty
 	outgoingID string // for push: id to cache outgoing s.view under
 }
 
@@ -136,6 +139,16 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 	// and View. If those grow expensive, split state under a second lock.
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// A load is a full-page browser navigation: the document is replaced
+	// wholesale, so there's no Update to run, view to diff, or
+	// subscriptions to reconcile. Emit the load patch and return; the
+	// accompanying msg is the zero value and is intentionally dropped.
+	if n != nil && n.load != "" {
+		s.appendFrame(frame{kind: framePatch, Base: s.base, Patches: []vdom.Patch{vdom.Load(n.load)}})
+		return
+	}
+
 	cmd := s.app.Update(ctx, msg)
 	title, view := s.app.View(ctx)
 	next := lower(view)
