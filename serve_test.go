@@ -303,7 +303,7 @@ func TestSessionSSEResyncOutOfWindow(t *testing.T) {
 	s.apply(s.ctx, 3, nil)
 	s.apply(s.ctx, 4, nil)
 	out := runSSE(t, s, "1", 30*time.Millisecond)
-	if !strings.Contains(out, `"op":"reset"`) {
+	if !strings.Contains(out, `"Op":"Reset"`) {
 		t.Fatalf("expected reset patch for out-of-window client, got: %s", out)
 	}
 	if !strings.Contains(out, "id: 4\n") {
@@ -322,7 +322,7 @@ func TestSessionSSEResyncAheadOfHead(t *testing.T) {
 	defer s.cancel()
 	s.apply(s.ctx, 1, nil)
 	out := runSSE(t, s, "42", 30*time.Millisecond)
-	if !strings.Contains(out, `"op":"reset"`) {
+	if !strings.Contains(out, `"Op":"Reset"`) {
 		t.Fatalf("expected reset for stale client, got: %s", out)
 	}
 }
@@ -609,7 +609,7 @@ func TestSessionApplyLoadNav(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), `"op":"load"`) {
+	if !strings.Contains(string(data), `"Op":"Load"`) {
 		t.Fatalf("expected a load patch, got %s", data)
 	}
 	if !strings.Contains(string(data), target) {

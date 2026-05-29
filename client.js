@@ -35,93 +35,93 @@ function walk(root, path) {
 }
 
 // applyPatch applies a single patch to the tree rooted at `root` and
-// returns the (possibly new) root. The root only changes when a `replace`
+// returns the (possibly new) root. The root only changes when a `Replace`
 // patch at path [] swaps the top-level element — callers must thread the
 // returned value back in for the next patch.
 export function applyPatch(root, p) {
-  switch (p.op) {
-    case 'replace': {
-      const node = walk(root, p.path);
-      const newNode = fragmentFromHTML(p.html).firstChild;
+  switch (p.Op) {
+    case 'Replace': {
+      const node = walk(root, p.Path);
+      const newNode = fragmentFromHTML(p.HTML).firstChild;
       if (node.parentNode) node.parentNode.replaceChild(newNode, node);
       return node === root ? newNode : root;
     }
-    case 'set_title': {
-      document.title = p.value;
+    case 'SetTitle': {
+      document.title = p.Value;
       return root;
     }
-    case 'set_attr': {
+    case 'SetAttr': {
       // Coerce undefined → "" so name-only / empty-valued attrs land as
-      // present-with-empty-string. The wire omits `value` when it's the
+      // present-with-empty-string. The wire omits `Value` when it's the
       // empty string (omitempty on the Go side), so a missing field here
       // means "set this attribute to empty", not "set it to undefined".
-      walk(root, p.path).setAttribute(p.name, p.value ?? '');
+      walk(root, p.Path).setAttribute(p.Name, p.Value ?? '');
       return root;
     }
-    case 'remove_attr': {
-      walk(root, p.path).removeAttribute(p.name);
+    case 'RemoveAttr': {
+      walk(root, p.Path).removeAttribute(p.Name);
       return root;
     }
-    case 'insert_child': {
-      const parent = walk(root, p.path);
-      const newNode = fragmentFromHTML(p.html).firstChild;
-      if (p.key != null) {
+    case 'InsertChild': {
+      const parent = walk(root, p.Path);
+      const newNode = fragmentFromHTML(p.HTML).firstChild;
+      if (p.Key != null) {
         const map = childMap(parent);
-        const anchor = p.before ? map.get(p.before) : null;
+        const anchor = p.Before ? map.get(p.Before) : null;
         parent.insertBefore(newNode, anchor || null);
-        map.set(p.key, newNode);
+        map.set(p.Key, newNode);
       } else {
-        parent.insertBefore(newNode, parent.childNodes[p.idx] || null);
+        parent.insertBefore(newNode, parent.childNodes[p.Index] || null);
       }
       return root;
     }
-    case 'remove_child': {
-      const parent = walk(root, p.path);
-      if (p.key != null) {
+    case 'RemoveChild': {
+      const parent = walk(root, p.Path);
+      if (p.Key != null) {
         const map = childMap(parent);
-        const node = map.get(p.key);
+        const node = map.get(p.Key);
         if (node) {
           parent.removeChild(node);
-          map.delete(p.key);
+          map.delete(p.Key);
         }
       } else {
-        parent.removeChild(parent.childNodes[p.idx]);
+        parent.removeChild(parent.childNodes[p.Index]);
       }
       return root;
     }
-    case 'move_child': {
-      const parent = walk(root, p.path);
-      if (p.key != null) {
+    case 'MoveChild': {
+      const parent = walk(root, p.Path);
+      if (p.Key != null) {
         const map = childMap(parent);
-        const node = map.get(p.key);
-        const anchor = p.before ? map.get(p.before) : null;
+        const node = map.get(p.Key);
+        const anchor = p.Before ? map.get(p.Before) : null;
         if (node) parent.insertBefore(node, anchor || null);
       } else {
-        const node = parent.childNodes[p.from];
+        const node = parent.childNodes[p.From];
         parent.removeChild(node);
-        parent.insertBefore(node, parent.childNodes[p.to] || null);
+        parent.insertBefore(node, parent.childNodes[p.To] || null);
       }
       return root;
     }
-    case 'reset': {
+    case 'Reset': {
       // The root (and its delegated listeners) survives the rebuild, so
       // the session keeps working after a server-driven full resync.
       while (root.firstChild) root.removeChild(root.firstChild);
       delete root.__domiChildren;
-      const frag = fragmentFromHTML(p.html);
+      const frag = fragmentFromHTML(p.HTML);
       while (frag.firstChild) root.appendChild(frag.firstChild);
       return root;
     }
-    case 'push_url': {
+    case 'PushURL': {
       // Handled by the SSE frame listener, which snapshots the
       // outgoing DOM and manages history.state before patches apply.
       return root;
     }
-    case 'replace_url': {
-      history.replaceState(history.state, '', p.value);
+    case 'ReplaceURL': {
+      history.replaceState(history.state, '', p.Value);
       return root;
     }
-    case 'load': {
+    case 'Load': {
       // Handled by the SSE patch frame listener, which navigates before
       // the DOM patches would apply. A no-op here keeps applyPatch free
       // of navigation side-effects, so the preview clone path can never
@@ -189,7 +189,7 @@ function postEnvelope(sessionId, h, e) {
   fetch(`/event/${encodeURIComponent(sessionId)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ h, e }),
+    body: JSON.stringify({ Handler: h, Event: e }),
   }).catch((err) => console.error('domi: event POST failed', err));
 }
 
@@ -255,7 +255,7 @@ export function run() {
 
   // navigateToPreview applies a prefetched navigation: swap in the
   // preview snapshot, push history state, and notify the server with
-  // a urlChange (not urlRequest — the navigation decision was made
+  // a URLChange (not URLRequest — the navigation decision was made
   // in Preview at hover time). The server restores the preview
   // snapshot and dispatches onURLChange to update its state. The
   // outgoing snapshot was cached on both sides at preview-event
@@ -266,7 +266,7 @@ export function run() {
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'urlChange', url, snapshotId: previewId }),
+      body: JSON.stringify({ Type: 'URLChange', URL: url, SnapshotID: previewId }),
     }).catch((err) => console.error('domi: urlChange POST failed', err));
   }
 
@@ -348,7 +348,7 @@ export function run() {
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'urlRequest', url: urlStr, internal: true }),
+      body: JSON.stringify({ Type: 'URLRequest', URL: urlStr, Internal: true }),
     }).catch((err) => console.error('domi: urlRequest POST failed', err));
   });
 
@@ -379,7 +379,7 @@ export function run() {
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'prefetch', url: urlStr }),
+      body: JSON.stringify({ Type: 'Prefetch', URL: urlStr }),
     }).catch((err) => console.error('domi: prefetch POST failed', err));
   });
 
@@ -395,7 +395,7 @@ export function run() {
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'urlChange', url, snapshotId: snapshotId || '' }),
+      body: JSON.stringify({ Type: 'URLChange', URL: url, SnapshotID: snapshotId || '' }),
     }).catch((err) => console.error('domi: urlChange POST failed', err));
   });
 
@@ -408,25 +408,25 @@ export function run() {
       console.error('domi: bad patch JSON', ev.data, e);
       return;
     }
-    if (f.base !== base) return; // stale frame, computed against wrong DOM
-    // Navigation control ops act before the DOM patches. push_url
+    if (f.Base !== base) return; // stale frame, computed against wrong DOM
+    // Navigation control ops act before the DOM patches. PushURL
     // snapshots the outgoing DOM and updates history, then lets the
-    // patches transform root to the new page. load abandons the
+    // patches transform root to the new page. Load abandons the
     // document entirely, so it navigates and skips the patches, which
     // would only mutate a tree that's about to be discarded.
-    for (const p of f.patches) {
-      if (p.op === 'push_url') {
-        cacheSnapshot(p.id, root);
-        history.replaceState({ domiSnapshot: p.id }, '', location.href);
-        history.pushState(null, '', p.value);
+    for (const p of f.Patches) {
+      if (p.Op === 'push_url') {
+        cacheSnapshot(p.ID, root);
+        history.replaceState({ domiSnapshot: p.ID }, '', location.href);
+        history.pushState(null, '', p.Value);
         break;
       }
-      if (p.op === 'load') {
-        window.location.assign(p.value);
+      if (p.Op === 'load') {
+        window.location.assign(p.Value);
         return;
       }
     }
-    for (const p of f.patches) root = applyPatch(root, p);
+    for (const p of f.Patches) root = applyPatch(root, p);
   });
   // Preview frames: build two snapshots that match the server's at
   // prefetch time. The outgoing snapshot is root as it stands now
@@ -442,18 +442,18 @@ export function run() {
       console.error('domi: bad preview JSON', ev.data, e);
       return;
     }
-    if (f.base !== base) return; // stale: live DOM has diverged
-    cacheSnapshot(f.outgoing, root);
+    if (f.Base !== base) return; // stale: live DOM has diverged
+    cacheSnapshot(f.Outgoing, root);
     const clone = root.cloneNode(true);
     let cur = clone;
-    for (const p of f.patches) cur = applyPatch(cur, p);
-    cacheSnapshot(f.target, cur);
-    preview = { url: f.url, previewId: f.target, at: Date.now() };
-    if (prefetching === f.url) prefetching = '';
-    if (pendingClick === f.url) {
+    for (const p of f.Patches) cur = applyPatch(cur, p);
+    cacheSnapshot(f.Target, cur);
+    preview = { url: f.URL, previewId: f.Target, at: Date.now() };
+    if (prefetching === f.URL) prefetching = '';
+    if (pendingClick === f.URL) {
       pendingClick = '';
       preview = null;
-      navigateToPreview(f.url, f.target);
+      navigateToPreview(f.URL, f.Target);
     }
   });
   // Deny: the app's Preview returned ok=false for this URL. Clear
@@ -468,13 +468,13 @@ export function run() {
       console.error('domi: bad deny JSON', ev.data, e);
       return;
     }
-    if (prefetching === f.url) prefetching = '';
-    if (pendingClick === f.url) {
+    if (prefetching === f.URL) prefetching = '';
+    if (pendingClick === f.URL) {
       pendingClick = '';
       fetch(`/event/${encodeURIComponent(sessionId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: 'urlRequest', url: f.url, internal: true }),
+        body: JSON.stringify({ Type: 'URLRequest', URL: f.URL, Internal: true }),
       }).catch((err) => console.error('domi: urlRequest POST failed', err));
     }
   });

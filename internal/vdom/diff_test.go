@@ -45,11 +45,11 @@ func diffOne(old, new Node) []patch {
 func countOps(patches []patch) (inserts, removes, moves int) {
 	for _, p := range patches {
 		switch p.Op {
-		case "insert_child":
+		case "InsertChild":
 			inserts++
-		case "remove_child":
+		case "RemoveChild":
 			removes++
-		case "move_child":
+		case "MoveChild":
 			moves++
 		}
 	}
@@ -67,7 +67,7 @@ func TestTextChange(t *testing.T) {
 	a := el("div", tx("hi"))
 	b := el("div", tx("bye"))
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "replace" || got[0].HTML != "bye" {
+	if len(got) != 1 || got[0].Op != "Replace" || got[0].HTML != "bye" {
 		t.Fatalf("unexpected: %+v", got)
 	}
 }
@@ -76,7 +76,7 @@ func TestTagChangeReplaces(t *testing.T) {
 	a := el("div")
 	b := el("span")
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "replace" {
+	if len(got) != 1 || got[0].Op != "Replace" {
 		t.Fatalf("unexpected: %+v", got)
 	}
 }
@@ -86,11 +86,11 @@ func TestKeyedReorder(t *testing.T) {
 	b := keyedList("c", "a", "b")
 	got := diffOne(a, b)
 	for _, p := range got {
-		if p.Op == "move_child" {
+		if p.Op == "MoveChild" {
 			return
 		}
 	}
-	t.Fatalf("expected at least one move_child, got %+v", got)
+	t.Fatalf("expected at least one MoveChild, got %+v", got)
 }
 
 func TestKeyedInsertMiddle(t *testing.T) {
@@ -98,11 +98,11 @@ func TestKeyedInsertMiddle(t *testing.T) {
 	b := keyedList("a", "b", "c")
 	got := diffOne(a, b)
 	for _, p := range got {
-		if p.Op == "insert_child" && p.Key == "b" && p.Before == "c" {
+		if p.Op == "InsertChild" && p.Key == "b" && p.Before == "c" {
 			return
 		}
 	}
-	t.Fatalf("expected insert_child key=b before=c, got %+v", got)
+	t.Fatalf("expected InsertChild key=b before=c, got %+v", got)
 }
 
 func TestKeyedRemove(t *testing.T) {
@@ -110,19 +110,19 @@ func TestKeyedRemove(t *testing.T) {
 	b := keyedList("a", "c")
 	got := diffOne(a, b)
 	for _, p := range got {
-		if p.Op == "remove_child" && p.Key == "b" {
+		if p.Op == "RemoveChild" && p.Key == "b" {
 			return
 		}
 	}
-	t.Fatalf("expected remove_child key=b, got %+v", got)
+	t.Fatalf("expected RemoveChild key=b, got %+v", got)
 }
 
 func TestAttrAdded(t *testing.T) {
 	a := el("div")
 	b := NewElement("div", attrs(at("class", "x")), nil, nil)
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "set_attr" || got[0].Name != "class" || got[0].Value != "x" {
-		t.Fatalf("expected single set_attr, got %+v", got)
+	if len(got) != 1 || got[0].Op != "SetAttr" || got[0].Name != "class" || got[0].Value != "x" {
+		t.Fatalf("expected single SetAttr, got %+v", got)
 	}
 }
 
@@ -130,8 +130,8 @@ func TestAttrChanged(t *testing.T) {
 	a := NewElement("div", attrs(at("class", "x")), nil, nil)
 	b := NewElement("div", attrs(at("class", "y")), nil, nil)
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "set_attr" || got[0].Value != "y" {
-		t.Fatalf("expected set_attr to y, got %+v", got)
+	if len(got) != 1 || got[0].Op != "SetAttr" || got[0].Value != "y" {
+		t.Fatalf("expected SetAttr to y, got %+v", got)
 	}
 }
 
@@ -139,8 +139,8 @@ func TestAttrRemoved(t *testing.T) {
 	a := NewElement("div", attrs(at("class", "x")), nil, nil)
 	b := el("div")
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "remove_attr" || got[0].Name != "class" {
-		t.Fatalf("expected remove_attr, got %+v", got)
+	if len(got) != 1 || got[0].Op != "RemoveAttr" || got[0].Name != "class" {
+		t.Fatalf("expected RemoveAttr, got %+v", got)
 	}
 }
 
@@ -148,7 +148,7 @@ func TestReplacePatchCarriesHTML(t *testing.T) {
 	a := el("div")
 	b := el("span", tx("hi"))
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "replace" {
+	if len(got) != 1 || got[0].Op != "Replace" {
 		t.Fatalf("expected single replace, got %+v", got)
 	}
 	if got[0].HTML != "<span>hi</span>" {
@@ -160,8 +160,8 @@ func TestInsertChildPatchCarriesHTML(t *testing.T) {
 	a := el("ul")
 	b := el("ul", el("li", tx("one")))
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "insert_child" {
-		t.Fatalf("expected single insert_child, got %+v", got)
+	if len(got) != 1 || got[0].Op != "InsertChild" {
+		t.Fatalf("expected single InsertChild, got %+v", got)
 	}
 	if got[0].HTML != "<li>one</li>" {
 		t.Fatalf("expected rendered HTML, got %q", got[0].HTML)
@@ -270,7 +270,7 @@ func TestKeyedReverseMinimalMoves(t *testing.T) {
 	}
 	// All emitted moves should be keyed (no positional from/to fields used).
 	for _, p := range got {
-		if p.Op == "move_child" && p.From != nil {
+		if p.Op == "MoveChild" && p.From != nil {
 			t.Fatalf("expected keyed move, got positional: %+v", p)
 		}
 	}
@@ -286,9 +286,9 @@ func TestKeyedRule4TailToHead(t *testing.T) {
 		t.Fatalf("want exactly 1 move; got ins=%d rm=%d mv=%d  patches=%+v", ins, rm, mv, got)
 	}
 	for _, p := range got {
-		if p.Op == "move_child" {
+		if p.Op == "MoveChild" {
 			if p.Key != "d" || p.Before != "a" {
-				t.Fatalf("want move_child key=d before=a, got %+v", p)
+				t.Fatalf("want MoveChild key=d before=a, got %+v", p)
 			}
 		}
 	}
@@ -337,7 +337,7 @@ func TestKeyedOnlyInsertsAnchorOrder(t *testing.T) {
 	got := diffOne(old, next)
 	var inserts []patch
 	for _, p := range got {
-		if p.Op == "insert_child" {
+		if p.Op == "InsertChild" {
 			inserts = append(inserts, p)
 		}
 	}
@@ -356,12 +356,12 @@ func TestKeyedOnlyInsertsAnchorOrder(t *testing.T) {
 // before the positional diff runs, because the HTML parser merges them
 // into a single DOM Text node. Without coalescing, positional indices
 // computed against the Go count walk off the end of the DOM's childNodes
-// (e.g. `remove_child idx=2` when the DOM only has 2 childNodes).
+// (e.g. `RemoveChild index=2` when the DOM only has 2 childNodes).
 //
 // Setup: old = div containing [text "a", text "b", span] — 3 Go
 // children, but 2 DOM childNodes after parsing (text "ab" + span).
 // next = div containing just [span]. Coalesce should normalize old to
-// 2 children, yielding remove_child idx=1 + replace at [0].
+// 2 children, yielding RemoveChild index=1 + replace at [0].
 func TestAdjacentTextCoalescesBeforePositionalDiff(t *testing.T) {
 	old := el("div", tx("a"), tx("b"), el("span"))
 	next := el("div", el("span"))
@@ -369,10 +369,10 @@ func TestAdjacentTextCoalescesBeforePositionalDiff(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected 2 patches (one remove + one replace), got %d: %+v", len(got), got)
 	}
-	if got[0].Op != "remove_child" || got[0].Idx == nil || *got[0].Idx != 1 {
-		t.Fatalf("expected first patch remove_child idx=1, got %+v", got[0])
+	if got[0].Op != "RemoveChild" || got[0].Index == nil || *got[0].Index != 1 {
+		t.Fatalf("expected first patch RemoveChild index=1, got %+v", got[0])
 	}
-	if got[1].Op != "replace" || len(got[1].Path) != 1 || got[1].Path[0] != 0 {
+	if got[1].Op != "Replace" || len(got[1].Path) != 1 || got[1].Path[0] != 0 {
 		t.Fatalf("expected second patch replace at [0], got %+v", got[1])
 	}
 }
@@ -399,13 +399,13 @@ func TestDiffPathNotAliasedAcrossSiblings(t *testing.T) {
 	next := plain(plain(plain(plain(leaf("new"), leaf("a"), leaf("b"), leaf("c")))))
 	got := diffOne(old, next)
 	if len(got) != 1 {
-		t.Fatalf("expected 1 set_attr patch on first leaf, got %d: %+v", len(got), got)
+		t.Fatalf("expected 1 SetAttr patch on first leaf, got %d: %+v", len(got), got)
 	}
-	if got[0].Op != "set_attr" {
-		t.Fatalf("expected set_attr, got %q", got[0].Op)
+	if got[0].Op != "SetAttr" {
+		t.Fatalf("expected SetAttr, got %q", got[0].Op)
 	}
 	if !slices.Equal(got[0].Path, []int{0, 0, 0, 0}) {
-		t.Fatalf("set_attr should target first leaf at [0,0,0,0], got %v", got[0].Path)
+		t.Fatalf("SetAttr should target first leaf at [0,0,0,0], got %v", got[0].Path)
 	}
 }
 
@@ -422,7 +422,7 @@ func TestRawContentChange(t *testing.T) {
 	a := el("div", Raw("<b>hi</b>"))
 	b := el("div", Raw("<i>bye</i>"))
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "replace" || got[0].HTML != "<i>bye</i>" {
+	if len(got) != 1 || got[0].Op != "Replace" || got[0].HTML != "<i>bye</i>" {
 		t.Fatalf("unexpected: %+v", got)
 	}
 }
@@ -431,7 +431,7 @@ func TestRawToText(t *testing.T) {
 	a := el("div", Raw("<b>hi</b>"))
 	b := el("div", tx("plain"))
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "replace" {
+	if len(got) != 1 || got[0].Op != "Replace" {
 		t.Fatalf("expected replace, got %+v", got)
 	}
 }
@@ -440,7 +440,7 @@ func TestTextToRaw(t *testing.T) {
 	a := el("div", tx("plain"))
 	b := el("div", Raw("<b>hi</b>"))
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "replace" {
+	if len(got) != 1 || got[0].Op != "Replace" {
 		t.Fatalf("expected replace, got %+v", got)
 	}
 }
@@ -449,7 +449,7 @@ func TestRawToElement(t *testing.T) {
 	a := el("div", Raw("<b>hi</b>"))
 	b := el("div", el("span"))
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "replace" {
+	if len(got) != 1 || got[0].Op != "Replace" {
 		t.Fatalf("expected replace, got %+v", got)
 	}
 }
@@ -458,7 +458,7 @@ func TestElementToRaw(t *testing.T) {
 	a := el("div", el("span"))
 	b := el("div", Raw("<b>hi</b>"))
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "replace" {
+	if len(got) != 1 || got[0].Op != "Replace" {
 		t.Fatalf("expected replace, got %+v", got)
 	}
 }
@@ -468,7 +468,7 @@ func TestRawNotCoalescedWithText(t *testing.T) {
 	a := el("div", tx("a"), Raw("<b>x</b>"), tx("c"))
 	b := el("div", tx("a"), Raw("<b>y</b>"), tx("c"))
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "replace" {
+	if len(got) != 1 || got[0].Op != "Replace" {
 		t.Fatalf("expected single replace for changed Raw, got %+v", got)
 	}
 	if !slices.Equal(got[0].Path, []int{1}) {

@@ -302,8 +302,8 @@ func patchDebug(patches []patch) string {
 		if p.Before != "" {
 			fmt.Fprintf(&b, " before=%s", p.Before)
 		}
-		if p.Idx != nil {
-			fmt.Fprintf(&b, " idx=%d", *p.Idx)
+		if p.Index != nil {
+			fmt.Fprintf(&b, " index=%d", *p.Index)
 		}
 		if p.From != nil {
 			fmt.Fprintf(&b, " from=%d to=%d", *p.From, *p.To)
