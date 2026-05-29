@@ -483,3 +483,32 @@ func TestRegularBoolStillUsesPresenceAbsence(t *testing.T) {
 		t.Fatalf("regular bool should use presence, not value: %q", got)
 	}
 }
+
+// ---- Opaque tests ----
+
+// Opaque marks a keyed child client-owned: the framework freezes it and
+// its subtree, emitting no patches even as the contents change. This pins
+// the public Opaque attribute to the differ's freeze behavior end to end.
+func TestOpaqueKeyedChildFreezes(t *testing.T) {
+	build := func(body string) []vdom.Node {
+		return lower(Keyed("main")()(func(yield func(string, Node) bool) {
+			yield("player", Tag("div")(Opaque, Name("data-controller")("player"))(Text(body)))
+		}))
+	}
+	if got := vdom.Diff(build("first"), build("second")); len(got) != 0 {
+		t.Fatalf("opaque keyed child must freeze, got %+v", got)
+	}
+}
+
+// An opaque node placed positionally rather than as a keyed child panics,
+// so the safety property can't be requested where the differ can't honor
+// it. The panic originates in the vdom layer but surfaces here at the
+// Tag construction that introduced the violation.
+func TestOpaquePositionalPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for opaque non-keyed node")
+		}
+	}()
+	_ = lowerOne(Tag("section")()(Tag("div")(Opaque)(Text("x"))))
+}
