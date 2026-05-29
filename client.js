@@ -121,6 +121,13 @@ export function applyPatch(root, p) {
       history.replaceState(history.state, '', p.value);
       return root;
     }
+    case 'load': {
+      // Handled by the SSE patch frame listener, which navigates before
+      // the DOM patches would apply. A no-op here keeps applyPatch free
+      // of navigation side-effects, so the preview clone path can never
+      // trigger a real page load.
+      return root;
+    }
     default:
       console.warn('domi: unknown op', p);
       return root;
@@ -288,9 +295,11 @@ export function run() {
   // elements with same-origin hrefs and routes them through the
   // server's onURLRequest callback instead of navigating. Skips
   // modified clicks (ctrl/shift/alt/meta), non-left-button clicks,
-  // links with target attributes, download links, and links where an
-  // ancestor already has a data-msg-click handler (the app opted into
-  // explicit handling).
+  // links with target attributes, download links, links carrying the
+  // data-domi-bypass attribute (the app opted out of interception so
+  // the browser navigates normally), and links where an ancestor
+  // already has a data-msg-click handler (the app opted into explicit
+  // handling).
   container.addEventListener('click', (e) => {
     if (e.button !== 0 || e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return;
     let a = e.target;
@@ -313,6 +322,7 @@ export function run() {
     const target = a.getAttribute('target');
     if (target && target !== '_self') return;
     if (a.hasAttribute('download')) return;
+    if (a.hasAttribute('data-domi-bypass')) return;
 
     let url;
     try { url = new URL(href, location.href); } catch { return; }
@@ -358,6 +368,7 @@ export function run() {
     const target = a.getAttribute('target');
     if (target && target !== '_self') return;
     if (a.hasAttribute('download')) return;
+    if (a.hasAttribute('data-domi-bypass')) return;
     let url;
     try { url = new URL(href, location.href); } catch { return; }
     if (url.origin !== location.origin) return;
@@ -398,14 +409,21 @@ export function run() {
       return;
     }
     if (f.base !== base) return; // stale frame, computed against wrong DOM
-    // push_url: snapshot the outgoing DOM and update history before
-    // the patches transform root to the new page.
+    // Navigation control ops act before the DOM patches. push_url
+    // snapshots the outgoing DOM and updates history, then lets the
+    // patches transform root to the new page. load abandons the
+    // document entirely, so it navigates and skips the patches, which
+    // would only mutate a tree that's about to be discarded.
     for (const p of f.patches) {
       if (p.op === 'push_url') {
         cacheSnapshot(p.id, root);
         history.replaceState({ domiSnapshot: p.id }, '', location.href);
         history.pushState(null, '', p.value);
         break;
+      }
+      if (p.op === 'load') {
+        window.location.assign(p.value);
+        return;
       }
     }
     for (const p of f.patches) root = applyPatch(root, p);

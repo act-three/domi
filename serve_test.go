@@ -2,6 +2,7 @@ package domi
 
 import (
 	"context"
+	"encoding/json/v2"
 	"fmt"
 	"iter"
 	"net/http"
@@ -554,6 +555,66 @@ func TestSessionSnapshotCacheOnApply(t *testing.T) {
 	// The cached view should be the outgoing view, not the new one.
 	if len(sn.view) != len(origView) {
 		t.Fatalf("cached snapshot should be outgoing view (len %d), got len %d", len(origView), len(sn.view))
+	}
+}
+
+// Load wires up a nav whose load target is the requested URL, leaving
+// the dispatched Msg as the zero value. The url may be absolute and
+// cross-origin, unlike PushURL/ReplaceURL.
+func TestLoadCmdProducesLoadNav(t *testing.T) {
+	s := newTestSession(&counterApp{})
+	defer s.cancel()
+	const target = "https://example.com/logout"
+	var got *nav
+	for f := range Load[int](target).s {
+		_, got = f(s)
+	}
+	if got == nil {
+		t.Fatal("Load produced no nav")
+	}
+	if got.load != target {
+		t.Fatalf("nav.load = %q, want %q", got.load, target)
+	}
+	if got.push != "" || got.replace != "" {
+		t.Fatalf("Load nav set push/replace: %+v", got)
+	}
+}
+
+// apply with a load nav emits a single full-page navigation patch and,
+// because the document is replaced wholesale, runs neither Update nor
+// onURLChange.
+func TestSessionApplyLoadNav(t *testing.T) {
+	app := &counterApp{}
+	s := newTestSession[int](app)
+	defer s.cancel()
+	var changed int
+	s.sv.onURLChange = func(*url.URL) int { changed++; return 0 }
+
+	const target = "https://example.com/logout"
+	s.apply(s.ctx, 1, &nav{load: target})
+
+	if app.n != 0 {
+		t.Fatalf("Update ran for a load nav (counter=%d), want 0", app.n)
+	}
+	if changed != 0 {
+		t.Fatalf("onURLChange ran for a load nav (count=%d), want 0", changed)
+	}
+	if s.head != 1 {
+		t.Fatalf("expected one frame after load nav, got head=%d", s.head)
+	}
+	f := s.log[1%uint64(len(s.log))]
+	if len(f.Patches) != 1 {
+		t.Fatalf("expected exactly one patch, got %d: %+v", len(f.Patches), f.Patches)
+	}
+	data, err := json.Marshal(f.Patches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"op":"load"`) {
+		t.Fatalf("expected a load patch, got %s", data)
+	}
+	if !strings.Contains(string(data), target) {
+		t.Fatalf("load patch missing target %q, got %s", target, data)
 	}
 }
 

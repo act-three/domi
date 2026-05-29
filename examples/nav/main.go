@@ -76,7 +76,8 @@ func (app *App) Update(_ context.Context, msg Msg) domi.Cmd[Msg] {
 		if msg.URLRequest.Internal {
 			return domi.PushURL[Msg](msg.URLRequest.URL.String())
 		}
-		return domi.Batch[Msg]()
+		// External links escape the SPA with a full page load.
+		return domi.Load[Msg](msg.URLRequest.URL.String())
 	}
 	if msg.URLChange != nil {
 		app.applyRoute(msg.URLChange)
