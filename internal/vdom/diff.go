@@ -12,12 +12,15 @@ import (
 // this package, so a Patch can be passed to json.Marshal and nothing
 // else.
 //
+// Applying a Patch is a pure mutation of the target DOM subtree: it
+// touches only nodes reachable from the root it is applied to, with no
+// document-, history-, or browser-level effects. A patch list can
+// therefore be replayed against a detached clone to build a tree off to
+// the side.
+//
 // `Replace` and `InsertChild` carry a pre-rendered HTML fragment
 // rather than a serialized Node — the client parses it via a
 // <template> element.
-//
-// `SetTitle` is the lone non-DOM op: it sets document.title and
-// carries no path. Produced by [SetTitle].
 //
 // InsertChild / RemoveChild / MoveChild come in two flavours,
 // chosen by which diff function produced them:
@@ -61,34 +64,6 @@ func Diff(old, new []Node) []Patch {
 		out[i] = Patch{p: p}
 	}
 	return out
-}
-
-// SetTitle returns a Patch that sets document.title on the client.
-// Apply order matches the surrounding patch list, so callers can place
-// it before or after DOM patches as needed.
-func SetTitle(title string) Patch {
-	return Patch{p: patch{Op: "SetTitle", Value: title}}
-}
-
-// PushURL returns a Patch that calls history.pushState on the client,
-// adding an entry to the browser's navigation history.
-// The id identifies this snapshot for later restoration on popstate.
-func PushURL(url, id string) Patch {
-	return Patch{p: patch{Op: "PushURL", Value: url, ID: id}}
-}
-
-// ReplaceURL returns a Patch that calls history.replaceState on the
-// client, replacing the current navigation history entry.
-func ReplaceURL(url string) Patch {
-	return Patch{p: patch{Op: "ReplaceURL", Value: url}}
-}
-
-// Load returns a Patch that triggers a full-page browser navigation to
-// url via window.location, leaving the session behind. Unlike
-// [PushURL], which updates history in place, the browser fetches a
-// fresh document; url may therefore be absolute and cross-origin.
-func Load(url string) Patch {
-	return Patch{p: patch{Op: "Load", Value: url}}
 }
 
 // Reset replaces the root's entire subtree with the given children.

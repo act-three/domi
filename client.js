@@ -38,6 +38,11 @@ function walk(root, path) {
 // returns the (possibly new) root. The root only changes when a `Replace`
 // patch at path [] swaps the top-level element — callers must thread the
 // returned value back in for the next patch.
+//
+// Every op is a pure DOM mutation of `root` alone — no document-level or
+// navigation side-effects — so it is safe to run against a detached
+// clone, as preview snapshot construction does. Document-level changes
+// travel as effects in an effect frame, run only against the live page.
 export function applyPatch(root, p) {
   switch (p.Op) {
     case 'Replace': {
@@ -45,10 +50,6 @@ export function applyPatch(root, p) {
       const newNode = fragmentFromHTML(p.HTML).firstChild;
       if (node.parentNode) node.parentNode.replaceChild(newNode, node);
       return node === root ? newNode : root;
-    }
-    case 'SetTitle': {
-      document.title = p.Value;
-      return root;
     }
     case 'SetAttr': {
       // Coerce undefined → "" so name-only / empty-valued attrs land as
@@ -110,22 +111,6 @@ export function applyPatch(root, p) {
       delete root.__domiChildren;
       const frag = fragmentFromHTML(p.HTML);
       while (frag.firstChild) root.appendChild(frag.firstChild);
-      return root;
-    }
-    case 'PushURL': {
-      // Handled by the SSE frame listener, which snapshots the
-      // outgoing DOM and manages history.state before patches apply.
-      return root;
-    }
-    case 'ReplaceURL': {
-      history.replaceState(history.state, '', p.Value);
-      return root;
-    }
-    case 'Load': {
-      // Handled by the SSE patch frame listener, which navigates before
-      // the DOM patches would apply. A no-op here keeps applyPatch free
-      // of navigation side-effects, so the preview clone path can never
-      // trigger a real page load.
       return root;
     }
     default:
@@ -211,19 +196,21 @@ export function run() {
   let root = container;
 
   // Snapshot cache for instant back/forward. Maps snapshot ids
-  // (server-generated, stored in history.state) to DocumentFragments
-  // holding detached clones of the page's children.
+  // (server-generated, stored in history.state) to { frag, title }: a
+  // DocumentFragment holding detached clones of the page's children,
+  // plus its document title. A snapshot is the whole page as data —
+  // restoring it sets both the DOM and the title.
   // `base` tracks which snapshot the client's DOM is built on top of
   // ("" initially). The server tags each SSE frame with its base;
   // the client drops frames whose base doesn't match.
   const snapshots = new Map();
   const SNAPSHOT_MAX = 30;
   let base = '';
-  function cacheSnapshot(id, source) {
+  function cacheSnapshot(id, source, title) {
     if (!id) return;
     const frag = document.createDocumentFragment();
     for (const child of source.childNodes) frag.appendChild(child.cloneNode(true));
-    snapshots.set(id, frag);
+    snapshots.set(id, { frag, title });
     while (snapshots.size > SNAPSHOT_MAX) {
       snapshots.delete(snapshots.keys().next().value);
     }
@@ -234,8 +221,9 @@ export function run() {
     while (root.firstChild) root.removeChild(root.firstChild);
     delete root.__domiChildren;
     // Clone-on-restore keeps the cache intact for future restores.
-    const fresh = cached.cloneNode(true);
+    const fresh = cached.frag.cloneNode(true);
     while (fresh.firstChild) root.appendChild(fresh.firstChild);
+    document.title = cached.title ?? '';
     base = id;
   }
 
@@ -400,33 +388,48 @@ export function run() {
   });
 
   const sse = new EventSource(`/sse/${encodeURIComponent(sessionId)}`);
-  sse.addEventListener('patch', (ev) => {
+  sse.addEventListener('effect', (ev) => {
     let f;
     try {
       f = JSON.parse(ev.data);
     } catch (e) {
-      console.error('domi: bad patch JSON', ev.data, e);
+      console.error('domi: bad effect JSON', ev.data, e);
       return;
     }
-    if (f.Base !== base) return; // stale frame, computed against wrong DOM
-    // Navigation control ops act before the DOM patches. PushURL
-    // snapshots the outgoing DOM and updates history, then lets the
-    // patches transform root to the new page. Load abandons the
-    // document entirely, so it navigates and skips the patches, which
-    // would only mutate a tree that's about to be discarded.
-    for (const p of f.Patches) {
-      if (p.Op === 'push_url') {
-        cacheSnapshot(p.ID, root);
-        history.replaceState({ domiSnapshot: p.ID }, '', location.href);
-        history.pushState(null, '', p.Value);
-        break;
-      }
-      if (p.Op === 'load') {
-        window.location.assign(p.Value);
-        return;
+    // An ApplyPatch effect's DOM patches were diffed against a specific base;
+    // if the client's tree has since moved to another snapshot the frame
+    // is stale and must be dropped whole, since its other effects belong
+    // to that same transition. A frame with no patches doesn't depend on
+    // the DOM, so it runs regardless of base.
+    if (f.Effects.some((e) => e.Type === 'ApplyPatch') && f.Base !== base) return;
+    // Run the effects in the order the server chose. PushURL leads any
+    // DOM patches so the outgoing page (current DOM + title) is
+    // snapshotted before it changes; SetTitle trails them so that
+    // snapshot still holds the old title. LoadURL abandons the document,
+    // so it returns without touching the remaining effects.
+    for (const eff of f.Effects) {
+      switch (eff.Type) {
+        case 'ApplyPatch':
+          for (const p of eff.Patches) root = applyPatch(root, p);
+          break;
+        case 'SetTitle':
+          document.title = eff.Title ?? '';
+          break;
+        case 'PushURL':
+          cacheSnapshot(eff.ID, root, document.title);
+          history.replaceState({ domiSnapshot: eff.ID }, '', location.href);
+          history.pushState(null, '', eff.URL);
+          break;
+        case 'ReplaceURL':
+          history.replaceState(history.state, '', eff.URL);
+          break;
+        case 'LoadURL':
+          window.location.assign(eff.URL);
+          return;
+        default:
+          console.warn('domi: unknown effect', eff);
       }
     }
-    for (const p of f.Patches) root = applyPatch(root, p);
   });
   // Preview frames: build two snapshots that match the server's at
   // prefetch time. The outgoing snapshot is root as it stands now
@@ -443,11 +446,15 @@ export function run() {
       return;
     }
     if (f.Base !== base) return; // stale: live DOM has diverged
-    cacheSnapshot(f.Outgoing, root);
+    // The outgoing snapshot is the live page as it stands now (its DOM
+    // and current title). The target snapshot is built by applying the
+    // preview's pure DOM patches to a clone and pairing it with the
+    // title the server sent as data — nothing touches the live document.
+    cacheSnapshot(f.Outgoing, root, document.title);
     const clone = root.cloneNode(true);
     let cur = clone;
-    for (const p of f.Patches) cur = applyPatch(cur, p);
-    cacheSnapshot(f.Target, cur);
+    for (const p of f.Patches ?? []) cur = applyPatch(cur, p);
+    cacheSnapshot(f.Target, cur, f.Title);
     preview = { url: f.URL, previewId: f.Target, at: Date.now() };
     if (prefetching === f.URL) prefetching = '';
     if (pendingClick === f.URL) {
