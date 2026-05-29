@@ -12,18 +12,18 @@ import (
 // this package, so a Patch can be passed to json.Marshal and nothing
 // else.
 //
-// `replace` and `insert_child` carry a pre-rendered HTML fragment
+// `Replace` and `InsertChild` carry a pre-rendered HTML fragment
 // rather than a serialized Node — the client parses it via a
 // <template> element.
 //
-// `set_title` is the lone non-DOM op: it sets document.title and
+// `SetTitle` is the lone non-DOM op: it sets document.title and
 // carries no path. Produced by [SetTitle].
 //
-// insert_child / remove_child / move_child come in two flavours,
+// InsertChild / RemoveChild / MoveChild come in two flavours,
 // chosen by which diff function produced them:
 //
 //   - Positional (from diffPositional, for unkeyed children): use
-//     Idx / From / To to address siblings by position. The pointer
+//     Index / From / To to address siblings by position. The pointer
 //     types let the encoder distinguish "no index" (omitted) from
 //     "index 0" (emitted as 0).
 //   - Identity-based (from diffKeyed, for keyed children): use Key /
@@ -38,17 +38,17 @@ func (p Patch) MarshalJSONTo(enc *jsontext.Encoder) error {
 }
 
 type patch struct {
-	Op     string `json:"op"`
-	Path   []int  `json:"path"`
-	Value  string `json:"value,omitempty"`
-	Name   string `json:"name,omitempty"`
-	HTML   string `json:"html,omitempty"`
-	Idx    *int   `json:"idx,omitempty"`
-	From   *int   `json:"from,omitempty"`
-	To     *int   `json:"to,omitempty"`
-	Key    string `json:"key,omitempty"`
-	Before string `json:"before,omitempty"`
-	ID     string `json:"id,omitempty"`
+	Op     string
+	Path   []int
+	Value  string `json:",omitempty"`
+	Name   string `json:",omitempty"`
+	HTML   string `json:",omitempty"`
+	Index  *int   `json:",omitempty"`
+	From   *int   `json:",omitempty"`
+	To     *int   `json:",omitempty"`
+	Key    string `json:",omitempty"`
+	Before string `json:",omitempty"`
+	ID     string `json:",omitempty"`
 }
 
 // Diff produces the minimal patch list that transforms old into new.
@@ -67,20 +67,20 @@ func Diff(old, new []Node) []Patch {
 // Apply order matches the surrounding patch list, so callers can place
 // it before or after DOM patches as needed.
 func SetTitle(title string) Patch {
-	return Patch{p: patch{Op: "set_title", Value: title}}
+	return Patch{p: patch{Op: "SetTitle", Value: title}}
 }
 
 // PushURL returns a Patch that calls history.pushState on the client,
 // adding an entry to the browser's navigation history.
 // The id identifies this snapshot for later restoration on popstate.
 func PushURL(url, id string) Patch {
-	return Patch{p: patch{Op: "push_url", Value: url, ID: id}}
+	return Patch{p: patch{Op: "PushURL", Value: url, ID: id}}
 }
 
 // ReplaceURL returns a Patch that calls history.replaceState on the
 // client, replacing the current navigation history entry.
 func ReplaceURL(url string) Patch {
-	return Patch{p: patch{Op: "replace_url", Value: url}}
+	return Patch{p: patch{Op: "ReplaceURL", Value: url}}
 }
 
 // Load returns a Patch that triggers a full-page browser navigation to
@@ -88,7 +88,7 @@ func ReplaceURL(url string) Patch {
 // [PushURL], which updates history in place, the browser fetches a
 // fresh document; url may therefore be absolute and cross-origin.
 func Load(url string) Patch {
-	return Patch{p: patch{Op: "load", Value: url}}
+	return Patch{p: patch{Op: "Load", Value: url}}
 }
 
 // Reset replaces the root's entire subtree with the given children.
@@ -97,7 +97,7 @@ func Reset(children []Node) Patch {
 	for _, c := range children {
 		_ = RenderTo(&b, c)
 	}
-	return Patch{p: patch{Op: "reset", HTML: b.String()}}
+	return Patch{p: patch{Op: "Reset", HTML: b.String()}}
 }
 
 func diffNode(old, new Node, path []int, out []patch) []patch {
@@ -105,7 +105,7 @@ func diffNode(old, new Node, path []int, out []patch) []patch {
 	case Raw:
 		n, isRaw := new.(Raw)
 		if !isRaw || o != n {
-			return append(out, patch{Op: "replace", Path: slices.Clone(path), HTML: Render(new)})
+			return append(out, patch{Op: "Replace", Path: slices.Clone(path), HTML: Render(new)})
 		}
 	case Element:
 		// Replace on tag mismatch, or on keyed-vs-positional mismatch.
@@ -115,7 +115,7 @@ func diffNode(old, new Node, path []int, out []patch) []patch {
 		// is simpler than reconstructing the per-parent Map<key, child>.
 		n, isElement := new.(Element)
 		if !isElement || o.tag != n.tag || (o.keys == nil) != (n.keys == nil) {
-			return append(out, patch{Op: "replace", Path: slices.Clone(path), HTML: Render(new)})
+			return append(out, patch{Op: "Replace", Path: slices.Clone(path), HTML: Render(new)})
 		}
 		out = diffAttrs(o.attrs, n.attrs, path, out)
 		if o.keys != nil {
@@ -127,7 +127,7 @@ func diffNode(old, new Node, path []int, out []patch) []patch {
 	return out
 }
 
-// diffAttrs emits set_attr and remove_attr patches for changes
+// diffAttrs emits SetAttr and RemoveAttr patches for changes
 // between old and new. Both slices are sorted by name (guaranteed by
 // NewElement), so a single merge-scan suffices with no maps.
 func diffAttrs(old, new []Attr, path []int, out []patch) []patch {
@@ -135,38 +135,38 @@ func diffAttrs(old, new []Attr, path []int, out []patch) []patch {
 	for i < len(old) && j < len(new) {
 		switch strings.Compare(old[i].Name, new[j].Name) {
 		case -1:
-			out = append(out, patch{Op: "remove_attr", Path: slices.Clone(path), Name: old[i].Name})
+			out = append(out, patch{Op: "RemoveAttr", Path: slices.Clone(path), Name: old[i].Name})
 			i++
 		case +1:
-			out = append(out, patch{Op: "set_attr", Path: slices.Clone(path), Name: new[j].Name, Value: new[j].Value})
+			out = append(out, patch{Op: "SetAttr", Path: slices.Clone(path), Name: new[j].Name, Value: new[j].Value})
 			j++
 		default:
 			if old[i].Value != new[j].Value {
-				out = append(out, patch{Op: "set_attr", Path: slices.Clone(path), Name: new[j].Name, Value: new[j].Value})
+				out = append(out, patch{Op: "SetAttr", Path: slices.Clone(path), Name: new[j].Name, Value: new[j].Value})
 			}
 			i++
 			j++
 		}
 	}
 	for ; i < len(old); i++ {
-		out = append(out, patch{Op: "remove_attr", Path: slices.Clone(path), Name: old[i].Name})
+		out = append(out, patch{Op: "RemoveAttr", Path: slices.Clone(path), Name: old[i].Name})
 	}
 	for ; j < len(new); j++ {
-		out = append(out, patch{Op: "set_attr", Path: slices.Clone(path), Name: new[j].Name, Value: new[j].Value})
+		out = append(out, patch{Op: "SetAttr", Path: slices.Clone(path), Name: new[j].Name, Value: new[j].Value})
 	}
 	return out
 }
 
 func diffPositional(old, new []Node, path []int, out []patch) []patch {
 	for i := len(old) - 1; i >= len(new); i-- {
-		out = append(out, patch{Op: "remove_child", Path: slices.Clone(path), Idx: &i})
+		out = append(out, patch{Op: "RemoveChild", Path: slices.Clone(path), Index: &i})
 	}
 	common := min(len(old), len(new))
 	for i := range common {
 		out = diffNode(old[i], new[i], append(path, i), out)
 	}
 	for i := len(old); i < len(new); i++ {
-		out = append(out, patch{Op: "insert_child", Path: slices.Clone(path), Idx: &i, HTML: Render(new[i])})
+		out = append(out, patch{Op: "InsertChild", Path: slices.Clone(path), Index: &i, HTML: Render(new[i])})
 	}
 	return out
 }
@@ -222,7 +222,7 @@ func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, o
 			// Rule 3: old head moved to new tail. Move it to land just
 			// before whatever sits past the unhandled tail.
 			k := oldKeys[oldStart]
-			out = append(out, patch{Op: "move_child", Path: slices.Clone(path), Key: k, Before: beforeKey()})
+			out = append(out, patch{Op: "MoveChild", Path: slices.Clone(path), Key: k, Before: beforeKey()})
 			deferred = append(deferred, deferredMatch{oldKids[oldStart], newKids[newEnd], newEnd})
 			oldStart++
 			newEnd--
@@ -232,7 +232,7 @@ func diffKeyed(oldKids, newKids []Node, oldKeys, newKeys []string, path []int, o
 			// the key-based equivalent of Snabbdom's
 			// insertBefore(oldEnd.elm, oldStart.elm).
 			k := oldKeys[oldEnd]
-			out = append(out, patch{Op: "move_child", Path: slices.Clone(path), Key: k, Before: oldKeys[oldStart]})
+			out = append(out, patch{Op: "MoveChild", Path: slices.Clone(path), Key: k, Before: oldKeys[oldStart]})
 			deferred = append(deferred, deferredMatch{oldKids[oldEnd], newKids[newStart], newStart})
 			oldEnd--
 			newStart++
@@ -261,14 +261,14 @@ middle:
 			if i+1 < len(newKeys) {
 				before = newKeys[i+1]
 			}
-			out = append(out, patch{Op: "insert_child", Path: slices.Clone(path), Key: newKeys[i], HTML: Render(newKids[i]), Before: before})
+			out = append(out, patch{Op: "InsertChild", Path: slices.Clone(path), Key: newKeys[i], HTML: Render(newKids[i]), Before: before})
 		}
 		return emitDeferred(out)
 	}
 	if newStart > newEnd {
 		// Only removes left.
 		for i := oldStart; i <= oldEnd; i++ {
-			out = append(out, patch{Op: "remove_child", Path: slices.Clone(path), Key: oldKeys[i]})
+			out = append(out, patch{Op: "RemoveChild", Path: slices.Clone(path), Key: oldKeys[i]})
 		}
 		return emitDeferred(out)
 	}
@@ -308,7 +308,7 @@ middle:
 	// identity-based removes don't depend on sibling positions).
 	for i := oldStart; i <= oldEnd; i++ {
 		if _, ok := keyToNewIdx[oldKeys[i]]; !ok {
-			out = append(out, patch{Op: "remove_child", Path: slices.Clone(path), Key: oldKeys[i]})
+			out = append(out, patch{Op: "RemoveChild", Path: slices.Clone(path), Key: oldKeys[i]})
 		}
 	}
 
@@ -329,7 +329,7 @@ middle:
 		}
 
 		if newToOld[i] == 0 {
-			out = append(out, patch{Op: "insert_child", Path: slices.Clone(path), Key: newKeys[newIdx], HTML: Render(newKids[newIdx]), Before: before})
+			out = append(out, patch{Op: "InsertChild", Path: slices.Clone(path), Key: newKeys[newIdx], HTML: Render(newKids[newIdx]), Before: before})
 			continue
 		}
 		if !moved {
@@ -339,7 +339,7 @@ middle:
 			lisIdx--
 			continue
 		}
-		out = append(out, patch{Op: "move_child", Path: slices.Clone(path), Key: newKeys[newIdx], Before: before})
+		out = append(out, patch{Op: "MoveChild", Path: slices.Clone(path), Key: newKeys[newIdx], Before: before})
 	}
 
 	return emitDeferred(out)

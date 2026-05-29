@@ -62,13 +62,13 @@ type sseAttachment struct {
 // the pre-allocated snapshot id the client uses to cache the outgoing
 // DOM when it restores the preview at click time).
 type frame struct {
-	seq      uint64       // SSE event id
-	kind     frameKind    // SSE event name
-	Base     string       `json:"base"`
-	Patches  []vdom.Patch `json:"patches"`
-	Target   string       `json:"target,omitempty"`
-	Outgoing string       `json:"outgoing,omitempty"`
-	URL      string       `json:"url,omitempty"`
+	seq      uint64    // SSE event id
+	kind     frameKind // SSE event name
+	Base     string
+	Patches  []vdom.Patch
+	Target   string `json:",omitempty"`
+	Outgoing string `json:",omitempty"`
+	URL      string `json:",omitempty"`
 }
 
 type frameKind string
@@ -216,12 +216,12 @@ func (s *session[Msg]) updateSubs(wanted Sub[Msg]) {
 func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	var envelope struct {
-		H          string         `json:"h,omitempty"`
-		E          jsontext.Value `json:"e,omitempty"`
-		Type       string         `json:"type,omitempty"`
-		URL        string         `json:"url,omitempty"`
-		Internal   bool           `json:"internal,omitempty"`
-		SnapshotID string         `json:"snapshotId,omitempty"`
+		Handler    string         `json:",omitempty"`
+		Event      jsontext.Value `json:",omitempty"`
+		Type       string         `json:",omitempty"`
+		URL        string         `json:",omitempty"`
+		Internal   bool           `json:",omitempty"`
+		SnapshotID string         `json:",omitempty"`
 	}
 	if err := json.UnmarshalRead(req.Body, &envelope); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -230,26 +230,26 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 	s.touch()
 
 	switch envelope.Type {
-	case "urlRequest":
+	case "URLRequest":
 		u, err := url.Parse(envelope.URL)
 		if err != nil {
-			s.logger.WarnContext(ctx, "bad urlRequest URL", "url", envelope.URL, "error", err)
+			s.logger.WarnContext(ctx, "bad URLRequest URL", "url", envelope.URL, "error", err)
 			break
 		}
 		msg := s.sv.onURLRequest(URLRequest{URL: u, Internal: envelope.Internal})
 		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
 		w.WriteHeader(http.StatusNoContent)
 		return
-	case "prefetch":
+	case "Prefetch":
 		u, err := url.Parse(envelope.URL)
 		if err != nil {
-			s.logger.WarnContext(ctx, "bad prefetch URL", "url", envelope.URL, "error", err)
+			s.logger.WarnContext(ctx, "bad Prefetch URL", "url", envelope.URL, "error", err)
 			break
 		}
 		go s.prefetch(mergedContext{s.ctx, ctx}, u)
 		w.WriteHeader(http.StatusNoContent)
 		return
-	case "urlChange":
+	case "URLChange":
 		u, err := url.Parse(envelope.URL)
 		if err != nil {
 			s.logger.WarnContext(ctx, "bad urlChange URL", "url", envelope.URL, "error", err)
@@ -264,7 +264,7 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	for h := range strings.SplitSeq(envelope.H, ",") {
+	for h := range strings.SplitSeq(envelope.Handler, ",") {
 		if h == "" {
 			continue
 		}
@@ -273,13 +273,13 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 			s.logger.WarnContext(ctx, "unknown msg", "key", h)
 			continue
 		}
-		msg, err := unmarshalMsg[Msg](raw, envelope.E)
+		msg, err := unmarshalMsg[Msg](raw, envelope.Event)
 		if err != nil {
 			s.logger.WarnContext(ctx, "msg unmarshal",
 				"key", h,
 				"error", err,
 				"msg", string(raw),
-				"event", string(envelope.E),
+				"event", string(envelope.Event),
 			)
 			continue
 		}
