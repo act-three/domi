@@ -71,6 +71,10 @@ func Textf(format string, a ...any) Node {
 // Calling it with children produces a finished element node; an Element
 // with no children is itself a [Node], so childless tags can appear in a
 // parent's child list without a trailing empty children call.
+//
+// Child nodes must not use the [Opaque] attr.
+// If a child node is opaque, Element panics.
+// See [Keyed] to use opaque nodes.
 type Element func(...Node) Node
 
 func (Element) isNode() {}
@@ -94,6 +98,10 @@ func (e element) lowered() vdom.Node { return vdom.Element(e) }
 //	Div()(Text("a"), Br(), Text("b"))
 //
 // Helpers for common tags can be found in [ily.dev/domi/html].
+//
+// Child nodes must not use the [Opaque] attr.
+// If a child node is opaque, Tag panics.
+// See [Keyed] to use opaque nodes.
 func Tag(name string) func(...Attr) Element {
 	return func(attrs ...Attr) Element {
 		a := iter.Seq[vdom.Attr](Group(attrs...).(group))
@@ -123,6 +131,9 @@ func Tag(name string) func(...Attr) Element {
 // cannot be keyed, and Keyed panics on a non-element child. Keys must
 // be unique within the sequence and stable across renders for the same
 // logical item.
+//
+// A child of Keyed can optionally use the [Opaque] attr.
+// See [Opaque] for details on its behavior.
 func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 	return func(attrs ...Attr) func(iter.Seq2[string, Node]) Node {
 		a := iter.Seq[vdom.Attr](Group(attrs...).(group))

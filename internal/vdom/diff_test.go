@@ -475,3 +475,149 @@ func TestRawNotCoalescedWithText(t *testing.T) {
 		t.Fatalf("replace should target child 1, got path %v", got[0].Path)
 	}
 }
+
+// ---- opaque (client-owned) subtree tests ----
+
+// okEntry is one child of an [okeyed] parent: a key and the text its
+// opaque child wraps.
+type okEntry struct{ key, body string }
+
+// okeyed builds a keyed <main> whose children are opaque <div>s, one per
+// entry, each carrying its key and wrapping its body text. Marking the
+// children opaque lets a test mutate their bodies (or attrs) and assert
+// the differ leaves them alone.
+func okeyed(entries ...okEntry) Element {
+	children := make([]Node, len(entries))
+	keys := make([]string, len(entries))
+	for i, e := range entries {
+		keys[i] = e.key
+		children[i] = NewElement("div",
+			attrs(at("data-domi-key", e.key), at(attrOpaque, "")),
+			[]Node{tx(e.body)}, nil)
+	}
+	return NewElement("main", attrs(), children, keys)
+}
+
+// An opaque keyed child is frozen: its body changes but the differ emits
+// nothing, because the client owns the subtree.
+func TestOpaqueFreezesSubtree(t *testing.T) {
+	a := okeyed(okEntry{"v", "first"})
+	b := okeyed(okEntry{"v", "second"})
+	if got := diffOne(a, b); len(got) != 0 {
+		t.Fatalf("opaque subtree must be frozen, got %+v", got)
+	}
+}
+
+// Freezing covers the element's own attributes too, not just its
+// descendants.
+func TestOpaqueFreezesOwnAttrs(t *testing.T) {
+	child := func(class string) Node {
+		return NewElement("div",
+			attrs(at("class", class), at("data-domi-key", "v"), at(attrOpaque, "")),
+			nil, nil)
+	}
+	a := NewElement("main", attrs(), []Node{child("x")}, []string{"v"})
+	b := NewElement("main", attrs(), []Node{child("y")}, []string{"v"})
+	if got := diffOne(a, b); len(got) != 0 {
+		t.Fatalf("opaque element's own attrs must be frozen, got %+v", got)
+	}
+}
+
+// Inserting a sibling ahead of an opaque node leaves the opaque node
+// untouched: the keyed differ matches it by key regardless of its new
+// position, so the fresh sibling can't clobber the client-owned DOM.
+// This is the case positional diffing could not honor.
+func TestOpaqueSurvivesSiblingInsert(t *testing.T) {
+	a := okeyed(okEntry{"k", "body"})
+	b := okeyed(okEntry{"n", "new"}, okEntry{"k", "body"})
+	got := diffOne(a, b)
+	ins, rm, mv := countOps(got)
+	if ins != 1 || rm != 0 || mv != 0 {
+		t.Fatalf("want a single insert, got ins=%d rm=%d mv=%d: %+v", ins, rm, mv, got)
+	}
+	for _, p := range got {
+		if p.Op == "Replace" {
+			t.Fatalf("opaque node must not be replaced by an inserted sibling: %+v", got)
+		}
+	}
+}
+
+// Reordering opaque siblings moves the live nodes (MoveChild) rather than
+// rebuilding them, so their client-owned state survives the reshuffle.
+func TestOpaqueReorderMovesNotRebuilds(t *testing.T) {
+	a := okeyed(okEntry{"a", "A"}, okEntry{"b", "B"})
+	b := okeyed(okEntry{"b", "B"}, okEntry{"a", "A"})
+	got := diffOne(a, b)
+	if _, _, mv := countOps(got); mv == 0 {
+		t.Fatalf("want at least one move, got %+v", got)
+	}
+	for _, p := range got {
+		if p.Op == "Replace" {
+			t.Fatalf("reorder must move, not replace, opaque nodes: %+v", got)
+		}
+	}
+}
+
+// Changing an opaque node's key remounts it: the keyed differ removes the
+// old node and inserts a freshly rendered one, so client code can
+// re-initialize against the new server markup.
+func TestOpaqueKeyChangeRemounts(t *testing.T) {
+	a := okeyed(okEntry{"v1", "first"})
+	b := okeyed(okEntry{"v2", "second"})
+	got := diffOne(a, b)
+	ins, rm, _ := countOps(got)
+	if ins != 1 || rm != 1 {
+		t.Fatalf("want remove+insert remount, got %+v", got)
+	}
+	var insKey, rmKey string
+	for _, p := range got {
+		switch p.Op {
+		case "InsertChild":
+			insKey = p.Key
+		case "RemoveChild":
+			rmKey = p.Key
+		}
+	}
+	if rmKey != "v1" || insKey != "v2" {
+		t.Fatalf("want remove v1 + insert v2, got remove %q insert %q", rmKey, insKey)
+	}
+}
+
+// Toggling opacity off for the same key hands the subtree back to the
+// framework with a clean Replace.
+func TestOpaqueToggleReplaces(t *testing.T) {
+	opaque := NewElement("main", attrs(), []Node{
+		NewElement("div", attrs(at("data-domi-key", "k"), at(attrOpaque, "")), []Node{tx("x")}, nil),
+	}, []string{"k"})
+	plain := NewElement("main", attrs(), []Node{
+		NewElement("div", attrs(at("data-domi-key", "k")), []Node{tx("x")}, nil),
+	}, []string{"k"})
+	got := diffOne(opaque, plain)
+	if len(got) != 1 || got[0].Op != "Replace" || !slices.Equal(got[0].Path, []int{0}) {
+		t.Fatalf("opacity toggle should Replace at [0], got %+v", got)
+	}
+}
+
+// Opacity is honored only on keyed children: an opaque node in a
+// positional parent panics at construction.
+func TestOpaquePositionalChildPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for opaque positional child")
+		}
+	}()
+	opaque := NewElement("div", attrs(at(attrOpaque, "")), nil, nil)
+	_ = NewElement("section", attrs(), []Node{opaque}, nil)
+}
+
+// A top-level opaque node has no keyed parent to give it identity, so the
+// differ rejects it at the root.
+func TestOpaqueRootPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for opaque root node")
+		}
+	}()
+	opaque := NewElement("div", attrs(at(attrOpaque, "")), nil, nil)
+	_ = Diff(nil, []Node{opaque})
+}

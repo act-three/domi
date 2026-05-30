@@ -35,9 +35,18 @@ type Element struct {
 	attrs    []Attr
 	children []Node
 	keys     []string
+
+	// opaque marks the element as ignored by the differ.
+	// It is rendered once and thereafter no patches are emitted
+	// (until its eventual removal, if any).
+	opaque bool
 }
 
 func (Element) vdomNode() {}
+
+// attrOpaque marks an element as client-owned; its presence sets
+// [Element.opaque]. See [ily.dev/domi.Opaque] for the contract.
+const attrOpaque = "data-domi-opaque"
 
 // NewElement constructs an [Element]. Pass nil for keys to build a
 // positional element; pass a slice (even empty) parallel to children
@@ -48,10 +57,23 @@ func NewElement(tag string, attrs iter.Seq[Attr], children []Node, keys []string
 	a := slices.Collect(attrs)
 	slices.SortStableFunc(a, cmpAttrName)
 	a = combineAttrs(a)
+	_, opaque := slices.BinarySearchFunc(a, Attr{Name: attrOpaque}, cmpAttrName)
 	if keys == nil {
+		opaqueMustBeKeyed(children)
 		children = coalesceText(children)
 	}
-	return Element{tag: tag, attrs: a, children: children, keys: keys}
+	return Element{tag: tag, attrs: a, children: children, keys: keys, opaque: opaque}
+}
+
+// opaqueMustBeKeyed panics if nodes holds an opaque element.
+// The differ needs a stable identifier for each opaque node,
+// so they must be keyed children.
+func opaqueMustBeKeyed(nodes []Node) {
+	for _, n := range nodes {
+		if e, ok := n.(Element); ok && e.opaque {
+			panic("domi: an opaque node must be a keyed child")
+		}
+	}
 }
 
 func cmpAttrName(a, b Attr) int {
@@ -68,7 +90,7 @@ func (e Element) WithAttr(a Attr) Element {
 	copy(out, e.attrs[:i])
 	out[i] = a
 	copy(out[i+1:], e.attrs[i:])
-	return Element{tag: e.tag, attrs: out, children: e.children, keys: e.keys}
+	return Element{tag: e.tag, attrs: out, children: e.children, keys: e.keys, opaque: e.opaque}
 }
 
 // Raw is a pre-rendered leaf node: its content is written verbatim

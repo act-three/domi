@@ -11,6 +11,17 @@ var (
 	// Bypass annotates a link to use the browser's built-in navigation,
 	// rather than going through the framework.
 	Bypass = Bool("data-domi-bypass")
+
+	// Opaque marks an element as opaque, ignored by the virtual DOM diff.
+	// Such an element is inserted,
+	// and then never modified until its eventual removal (if any).
+	// Any changes to its contents during its existence are ignored.
+	// This allows client-side browser code to take ownership of the element
+	// without worrying about patches modifying it underfoot.
+	//
+	// An opaque element must be a keyed child. See [Keyed].
+	// Inserting an opaque node anywhere else panics.
+	Opaque = Bool("data-domi-opaque")(true)
 )
 
 // An Attr is an HTML attribute.

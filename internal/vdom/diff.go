@@ -58,6 +58,7 @@ type patch struct {
 // Root-level children are coalesced to match the DOM shape (element
 // children are coalesced at construction in [NewElement]).
 func Diff(old, new []Node) []Patch {
+	opaqueMustBeKeyed(new)
 	patches := diffPositional(coalesceText(old), coalesceText(new), nil, nil)
 	out := make([]Patch, len(patches))
 	for i, p := range patches {
@@ -90,6 +91,14 @@ func diffNode(old, new Node, path []int, out []patch) []patch {
 		// is simpler than reconstructing the per-parent Map<key, child>.
 		n, isElement := new.(Element)
 		if !isElement || o.tag != n.tag || (o.keys == nil) != (n.keys == nil) {
+			return append(out, patch{Op: "Replace", Path: slices.Clone(path), HTML: Render(new)})
+		}
+		if o.opaque && n.opaque {
+			// An opaque element is never diffed.
+			return out
+		} else if o.opaque != n.opaque {
+			// Opacity toggled between renders; Replace hands the subtree
+			// cleanly into or out of the framework's control.
 			return append(out, patch{Op: "Replace", Path: slices.Clone(path), HTML: Render(new)})
 		}
 		out = diffAttrs(o.attrs, n.attrs, path, out)
