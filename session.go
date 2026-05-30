@@ -19,6 +19,9 @@ import (
 	"ily.dev/domi/internal/vdom"
 )
 
+// baseInitial is the initial base ID for all clients.
+const baseInitial = "00000000000000000000000000"
+
 type session[Msg any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -33,13 +36,14 @@ type session[Msg any] struct {
 	view         []vdom.Node
 	log          []frame        // fixed-size ring; log[seq%len(log)] holds frame seq
 	head         uint64         // seq of the most recent frame; 0 if none
-	base         string         // snapshot id the client's DOM is built on; "" initially
+	base         string         // snapshot id the client's DOM is built on
 	sse          *sseAttachment // nil if no current consumer
 	active       time.Time
 	subs         map[any]context.CancelFunc // active subscription keys → cancel
 	snapshots    map[string]snapshot        // snapshot id → cached vdom
 	snapshotAge  []string                   // ring of ids in insertion order, for eviction
 	snapshotNext int                        // next write position in snapshotAge
+	preview      *preview                   // the outstanding link preview, or nil
 }
 
 // Each new SSE request builds a fresh sseAttachment and evicts any
@@ -54,59 +58,33 @@ type sseAttachment struct {
 // frame is one entry in a session's patch log: the seq is monotonic per
 // session and travels back to the client as the SSE event id, so a
 // reconnecting client can ask for everything after the seq it last saw.
-//
-// kind distinguishes the two ways the client consumes a frame:
-//
-//   - effect frames carry Effects: ordered side-effects the client runs
-//     in turn against the live document (apply DOM patches, set the
-//     title, push/replace history, or navigate away).
-//   - preview frames carry Patches and Title: a pure description of a
-//     page the client builds by cloning root, applying Patches to the
-//     clone, and caching the result (with Title) under Target as a
-//     snapshot for instant navigation on click. Outgoing is the
-//     pre-allocated id under which the client caches the current page
-//     before swapping the preview in. A preview frame holds no Effects,
-//     so building it can never touch the live document.
 type frame struct {
-	seq      uint64    // SSE event id
-	kind     frameKind // SSE event name
-	Base     string
-	Effects  []effect     `json:",omitempty"` // effect frames
-	Patches  []vdom.Patch `json:",omitempty"` // preview frames
-	Title    string       `json:",omitempty"` // preview frames
-	Target   string       `json:",omitempty"`
-	Outgoing string       `json:",omitempty"`
-	URL      string       `json:",omitempty"`
+	seq     uint64   // SSE event id
+	Base    string   `json:",omitempty"` // required base ID, if set
+	Effects []effect `json:",omitempty"`
 }
 
-type frameKind string
-
-const (
-	frameEffect  frameKind = "effect"
-	framePreview frameKind = "preview"
-	frameDeny    frameKind = "deny" // prefetch was denied for URL
-)
-
-// effect is one side-effect in an effect frame, run by the client in
-// list order against the live document: apply DOM patches, set the
-// title, update history, or navigate away. Type selects which of the
-// remaining fields carry its data.
+// effect is one side-effect in a frame, run by the client in list order
+// against the live document. Type selects which of the remaining fields
+// carry its data.
 type effect struct {
 	Type    effectType
-	Patches []vdom.Patch `json:",omitempty"` // ApplyPatch: DOM patches to apply
-	Title   string       `json:",omitempty"` // SetTitle: the new document title
-	URL     string       `json:",omitempty"` // PushURL/ReplaceURL/LoadURL target
-	ID      string       `json:",omitempty"` // PushURL: outgoing snapshot id
+	Patches []vdom.Patch `json:",omitempty"` // ApplyPatch/SetPreview: DOM patches
+	Title   string       `json:",omitempty"` // SetTitle/SetPreview: the document title
+	URL     string       `json:",omitempty"` // PushURL/ReplaceURL/LoadURL/SetPreview/DeletePreview target
+	ID      string       `json:",omitempty"` // PushURL: outgoing snapshot id; SetPreview: base snapshot id
 }
 
 type effectType string
 
 const (
-	effectApplyPatch effectType = "ApplyPatch" // apply DOM patches to the live tree
-	effectSetTitle   effectType = "SetTitle"   // set document.title
-	effectPushURL    effectType = "PushURL"    // snapshot outgoing page, then history.pushState
-	effectReplaceURL effectType = "ReplaceURL" // history.replaceState
-	effectLoadURL    effectType = "LoadURL"    // full-page navigation, leaving the session
+	effectApplyPatch    effectType = "ApplyPatch"    // apply DOM patches to the live tree
+	effectSetTitle      effectType = "SetTitle"      // set document.title
+	effectPushURL       effectType = "PushURL"       // snapshot outgoing page, then history.pushState
+	effectReplaceURL    effectType = "ReplaceURL"    // history.replaceState
+	effectLoadURL       effectType = "LoadURL"       // full-page navigation, leaving the session
+	effectSetPreview    effectType = "SetPreview"    // hold a rebased link preview for instant navigation
+	effectDeletePreview effectType = "DeletePreview" // drop the held link preview
 )
 
 // nav is the optional navigation side-effect attached to a [cmd]
@@ -127,6 +105,35 @@ const snapshotCacheSize = 30
 type snapshot struct {
 	view  []vdom.Node
 	title string
+}
+
+// preview is the session's single outstanding link preview.
+// We store the preview's view as a value so we can generate a new
+// patchset for each new view in the history.
+type preview struct {
+	url    string
+	view   []vdom.Node
+	title  string
+	frozen bool // DeletePreview sent
+	// log maps each emitted SetPreview id to the outgoing view the
+	// client would leave by clicking after that frame, kept for its back
+	// button. When the client navigates to a preview, the chosen candidate
+	// is added to the snapshot cache.
+	log map[string]snapshot
+}
+
+// addView logs view as the given base snapshot id.
+// It returns false if there's no remaining capacity.
+func (p *preview) addView(id string, view []vdom.Node, title string) bool {
+	const cap = 128
+	if len(p.log) >= cap {
+		return false
+	}
+	if p.log == nil {
+		p.log = make(map[string]snapshot)
+	}
+	p.log[id] = snapshot{view: view, title: title}
+	return true
 }
 
 func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
@@ -176,7 +183,7 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 	if n != nil && n.load != "" {
 		// No Base: a LoadURL frame has no DOM patches, so the client runs
 		// it regardless of which snapshot its tree is built on.
-		s.appendFrame(frame{kind: frameEffect, Effects: []effect{{Type: effectLoadURL, URL: n.load}}})
+		s.appendFrame(frame{Effects: []effect{{Type: effectLoadURL, URL: n.load}}})
 		return
 	}
 
@@ -206,8 +213,24 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 		effects = append(effects, effect{Type: effectSetTitle, Title: title})
 	}
 
+	if s.preview != nil && !s.preview.frozen && len(patches) > 0 {
+		candID := rand.Text()
+		if s.preview.addView(candID, next, title) {
+			effects = append(effects, effect{
+				Type:    effectSetPreview,
+				Patches: vdom.Diff(next, s.preview.view),
+				Title:   s.preview.title,
+				URL:     s.preview.url,
+				ID:      candID,
+			})
+		} else {
+			s.preview.frozen = true
+			effects = append(effects, effect{Type: effectDeletePreview, URL: s.preview.url})
+		}
+	}
+
 	if len(effects) > 0 {
-		s.appendFrame(frame{kind: frameEffect, Base: s.base, Effects: effects})
+		s.appendFrame(frame{Base: s.base, Effects: effects})
 	}
 	s.view = next
 	s.title = title
@@ -266,6 +289,7 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		URL        string         `json:",omitempty"`
 		Internal   bool           `json:",omitempty"`
 		SnapshotID string         `json:",omitempty"`
+		ToPreview  bool           `json:",omitempty"`
 	}
 	if err := json.UnmarshalRead(req.Body, &envelope); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -297,7 +321,10 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 			s.logger.WarnContext(ctx, "bad URLChange URL", "url", envelope.URL, "error", err)
 			break
 		}
-		if envelope.SnapshotID != "" {
+		switch {
+		case envelope.ToPreview:
+			s.commitPreview(ctx, envelope.SnapshotID)
+		case envelope.SnapshotID != "":
 			s.restoreSnapshot(envelope.SnapshotID)
 		}
 		msg := s.sv.onURLChange(u)
@@ -384,9 +411,10 @@ func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 	rc.Flush()
 
 	if resync, view, title, head, base := s.needsResync(seen); resync {
-		f := frame{seq: head, kind: frameEffect, Base: base, Effects: []effect{
+		f := frame{seq: head, Base: base, Effects: []effect{
 			{Type: effectApplyPatch, Patches: []vdom.Patch{vdom.Reset(view)}},
 			{Type: effectSetTitle, Title: title},
+			{Type: effectDeletePreview},
 		}}
 		if err := writeFrame(w, rc, f); err != nil {
 			s.logger.DebugContext(req.Context(), "sse", "error", err)
@@ -510,49 +538,60 @@ func (s *session[Msg]) restoreSnapshot(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.base = id
+	s.preview = nil
 	if sn, ok := s.snapshots[id]; ok {
 		s.view = sn.view
 		s.title = sn.title
 	}
 }
 
-// prefetch renders a Preview for u, caches it alongside the current
-// view (which becomes the outgoing snapshot if the user clicks the
-// link), and queues a preview frame so the client can build its own
-// matching snapshots for instant navigation.
-//
-// Caching the outgoing view at prefetch time — rather than at click
-// time — keeps server and client agreed on its contents: the SSE
-// stream guarantees that when the client processes the preview frame,
-// its root reflects exactly s.view at this moment, so cacheSnapshot
-// on each side stores the same view.
+// prefetch renders App.Preview for u and, if allowed, makes it the
+// outstanding preview. A denial emits DeletePreview, so the click falls
+// back to a normal request where onURLRequest can still deny or redirect.
 func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	href := u.String()
 	title, view, ok := s.app.Preview(ctx, u)
 	if !ok {
-		s.appendFrame(frame{kind: frameDeny, URL: u.String()})
+		if s.preview != nil && s.preview.url == href {
+			s.preview = nil
+		}
+		s.appendFrame(frame{Effects: []effect{{Type: effectDeletePreview, URL: href}}})
 		return
 	}
 	next := lower(view)
-	previewID := rand.Text()
-	outgoingID := rand.Text()
-	s.cacheSnapshot(previewID, next, title)
-	s.cacheSnapshot(outgoingID, s.view, s.title)
-	// The preview frame describes the target page as a value: the DOM
-	// patches that build it from the current view, plus its title. The
-	// client applies the patches to a clone and caches it with the title
-	// — no live document is touched, so the title only changes if and
-	// when the user actually navigates and the snapshot is restored.
-	s.appendFrame(frame{
-		kind:     framePreview,
-		Base:     s.base,
-		Target:   previewID,
-		Outgoing: outgoingID,
-		URL:      u.String(),
-		Patches:  vdom.Diff(s.view, next),
-		Title:    title,
-	})
+	id := rand.Text()
+	p := &preview{url: href, view: next, title: title}
+	p.addView(id, s.view, s.title)
+	s.preview = p
+	s.appendFrame(frame{Base: s.base, Effects: []effect{{
+		Type:    effectSetPreview,
+		Patches: vdom.Diff(s.view, next),
+		Title:   title,
+		URL:     href,
+		ID:      id,
+	}}})
+}
+
+// commitPreview installs the outstanding preview as the current view.
+func (s *session[Msg]) commitPreview(ctx context.Context, id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.preview == nil {
+		// Bad client. It should not commit an invalid preview.
+		s.logger.WarnContext(ctx, "bad preview commit")
+		return
+	}
+	// The committed outgoing view becomes a real navigation snapshot for
+	// the back button; the rest of the log is dropped with the preview.
+	if cand, ok := s.preview.log[id]; ok {
+		s.cacheSnapshot(id, cand.view, cand.title)
+	}
+	s.base = id
+	s.view = s.preview.view
+	s.title = s.preview.title
+	s.preview = nil
 }
 
 // appendFrame commits f to the patch log with the next sequence
@@ -575,7 +614,7 @@ func writeFrame(w http.ResponseWriter, rc *http.ResponseController, f frame) err
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "id: %d\nevent: %s\ndata: %s\n\n", f.seq, f.kind, data); err != nil {
+	if _, err := fmt.Fprintf(w, "id: %d\nevent: effect\ndata: %s\n\n", f.seq, data); err != nil {
 		return err
 	}
 	rc.Flush()
