@@ -41,6 +41,6 @@
 // Include this path in your JavaScript bundle,
 // import the module, and call run:
 //
-//	import * as Domi from "path/to/client.js";
+//	import * as Domi from "path/to/bundle.js";
 //	Domi.run(); // after document.body is ready
 package domi
