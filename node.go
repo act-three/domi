@@ -37,10 +37,10 @@ func (r raw) lowered() vdom.Node { return vdom.Raw(r) }
 // markdown output, or fragments from third-party HTML generators.
 // Never pass user-controlled input to Raw without prior sanitization.
 //
-// The content must produce exactly one DOM node when parsed: either a
-// text string containing no markup, or a single properly nested HTML
-// element with explicit closing tags. Raw panics if the content is
-// empty, contains multiple top-level nodes, or has unclosed tags.
+// The content must parse to exactly one HTML element: a single, properly
+// nested element (a void element like <br> counts). Raw panics if the
+// content is empty, is text rather than an element, or produces more
+// than one top-level node. Use [Text] for text content.
 func Raw(s string) Node {
 	if s == "" {
 		panic("domi: Raw: empty string produces no DOM nodes")
@@ -51,15 +51,24 @@ func Raw(s string) Node {
 		panic("domi: Raw: " + err.Error())
 	}
 	if len(nodes) != 1 {
-		panic(fmt.Sprintf("domi: Raw: content must produce exactly one DOM node, got %d", len(nodes)))
+		panic(fmt.Sprintf("domi: Raw: content must produce exactly one element, got %d nodes", len(nodes)))
+	}
+	if nodes[0].Type != html.ElementNode {
+		panic("domi: Raw: content must be an element, not text; use Text for text content")
 	}
 	return raw(vdom.Raw(s))
 }
 
+// text is the domi-side wrapper around [vdom.Text].
+type text vdom.Text
+
+func (text) isNode()              {}
+func (t text) lowered() vdom.Node { return vdom.Text(t) }
+
 // Text returns a text node. The string is escaped for safe embedding
-// in HTML; use [Raw] for pre-escaped or trusted content.
+// in HTML when rendered; use [Raw] for trusted element markup.
 func Text(s string) Node {
-	return raw(vdom.Text(s))
+	return text(s)
 }
 
 // Textf returns a text node formatted with [fmt.Sprintf].

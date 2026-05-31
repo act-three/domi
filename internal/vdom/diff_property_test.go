@@ -107,7 +107,7 @@ var (
 
 	genAttrNames  = []string{"class", "id", "data-x", "title"}
 	genAttrValues = []string{"x", "y", "z", ""}
-	genTexts      = []string{"hi", "bye", "x", "y"}
+	genTexts      = []string{"hi", "bye", "x", "y", "a < b & c"}
 	genKeys       = []string{"a", "b", "c", "d", "e", "f"}
 )
 
@@ -271,6 +271,39 @@ func TestSetAttrEmptyValueAppliesAsEmptyString(t *testing.T) {
 	new := NewElement("div", attrs(Attr{Name: "class", Value: ""}), nil, nil)
 
 	gotHTML, err := a.apply(Render(old), diffOne(old, new))
+	if err != nil {
+		t.Fatalf("bun apply: %v", err)
+	}
+	want := canonicalize(t, Render(new))
+	got := canonicalize(t, gotHTML)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %s, want %s (raw html: %s)", jsonStr(got), jsonStr(want), gotHTML)
+	}
+}
+
+// TestSetTextEmptyValueAppliesAsEmptyString pins the JS-side coercion
+// for SetText patches whose value is the empty string — the text
+// counterpart to TestSetAttrEmptyValueAppliesAsEmptyString. This arises
+// whenever a text node's content transitions to empty (e.g. an
+// interpolated value blanks out): the node persists as an empty text
+// node rather than being removed, and the Go wire format omits the
+// `Value` field via omitempty when it's "". Without nullish-coalescing
+// on the JS side the applier would write `undefined` to nodeValue and
+// the DOM would show the literal string "undefined".
+func TestSetTextEmptyValueAppliesAsEmptyString(t *testing.T) {
+	a := startBunApplier(t)
+
+	old := el("div", tx("hi"))
+	new := el("div", tx(""))
+
+	patches := diffOne(old, new)
+	// Sanity: the change really is a single SetText with an empty value,
+	// so the omitempty wire path is the thing under test.
+	if len(patches) != 1 || patches[0].Op != "SetText" || patches[0].Value != "" {
+		t.Fatalf("expected one empty-valued SetText, got %+v", patches)
+	}
+
+	gotHTML, err := a.apply(Render(old), patches)
 	if err != nil {
 		t.Fatalf("bun apply: %v", err)
 	}

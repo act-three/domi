@@ -122,19 +122,19 @@ func TestAttrValueEscapeRoundTrip(t *testing.T) {
 	}
 }
 
-// TestTextEscapeNeverContainsRawAngleBracket verifies that Text()
-// output never contains a literal '<' — the character that separates
-// text from markup. A literal '<' in rendered text would let an
-// attacker inject elements.
+// TestTextEscapeNeverContainsRawAngleBracket verifies that rendered
+// Text never contains a literal '<' — the character that separates text
+// from markup. A literal '<' in rendered text would let an attacker
+// inject elements.
 func TestTextEscapeNeverContainsRawAngleBracket(t *testing.T) {
 	const iterations = 2000
 	rng := rand.New(rand.NewPCG(7, 0))
 
 	for i := range iterations {
 		s := randomNastyString(rng)
-		escaped := string(Text(s))
+		escaped := Render(Text(s))
 		if strings.Contains(escaped, "<") {
-			t.Fatalf("[%d] Text(%q) contains literal '<': %q", i, s, escaped)
+			t.Fatalf("[%d] Render(Text(%q)) contains literal '<': %q", i, s, escaped)
 		}
 	}
 }

@@ -12,7 +12,7 @@ func el(tag string, children ...Node) Element {
 }
 
 // tx builds a text node.
-func tx(s string) Raw { return Text(s) }
+func tx(s string) Text { return Text(s) }
 
 // at builds an attribute literal.
 func at(name, value string) Attr { return Attr{Name: name, Value: value} }
@@ -67,8 +67,42 @@ func TestTextChange(t *testing.T) {
 	a := el("div", tx("hi"))
 	b := el("div", tx("bye"))
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "Replace" || got[0].HTML != "bye" {
+	if len(got) != 1 || got[0].Op != "SetText" || got[0].Value != "bye" {
 		t.Fatalf("unexpected: %+v", got)
+	}
+}
+
+// A text change carries the new content unescaped: the client writes it
+// straight to nodeValue, which does no entity decoding, so escaping it
+// here would double-encode in the DOM.
+func TestTextChangeValueIsUnescaped(t *testing.T) {
+	a := el("div", tx("a < b"))
+	b := el("div", tx("a > c & d"))
+	got := diffOne(a, b)
+	if len(got) != 1 || got[0].Op != "SetText" || got[0].Value != "a > c & d" {
+		t.Fatalf("unexpected: %+v", got)
+	}
+}
+
+// Adjacent text nodes coalesce into one Text node, so editing part of a
+// run still rides a single SetText rather than degrading to a Replace.
+func TestCoalescedTextChangeIsSetText(t *testing.T) {
+	a := el("div", tx("Count: "), tx("5"))
+	b := el("div", tx("Count: "), tx("6"))
+	got := diffOne(a, b)
+	if len(got) != 1 || got[0].Op != "SetText" || got[0].Value != "Count: 6" {
+		t.Fatalf("unexpected: %+v", got)
+	}
+}
+
+// Changing a node's kind (text → element) is structural: it replaces
+// the subtree rather than editing text in place.
+func TestTextToElementReplaces(t *testing.T) {
+	a := el("div", tx("hi"))
+	b := el("div", el("span"))
+	got := diffOne(a, b)
+	if len(got) != 1 || got[0].Op != "Replace" {
+		t.Fatalf("expected replace, got %+v", got)
 	}
 }
 

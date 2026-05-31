@@ -24,6 +24,9 @@ func RenderTo(w io.Writer, n Node) error {
 	case Raw:
 		_, err := io.WriteString(w, string(v))
 		return err
+	case Text:
+		_, err := textEscaper.WriteString(w, string(v))
+		return err
 	case Element:
 		w.Write(lt)
 		io.WriteString(w, v.tag)

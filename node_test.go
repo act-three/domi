@@ -265,14 +265,6 @@ func TestRawSVG(t *testing.T) {
 	}
 }
 
-func TestRawPureText(t *testing.T) {
-	// Raw with no markup is valid — it's a single text node.
-	got := vdom.Render(lowerOne(Raw("hello world")))
-	if got != "hello world" {
-		t.Fatalf("got %q, want %q", got, "hello world")
-	}
-}
-
 func TestRawVoidElement(t *testing.T) {
 	got := vdom.Render(lowerOne(Raw("<br>")))
 	if got != "<br>" {
@@ -298,6 +290,16 @@ func TestRawPanicsOnMultipleElements(t *testing.T) {
 		}
 	}()
 	Raw("<b>a</b><i>b</i>")
+}
+
+func TestRawPanicsOnPureText(t *testing.T) {
+	// Text content is not an element; it belongs in Text, not Raw.
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for text content")
+		}
+	}()
+	Raw("hello world")
 }
 
 func TestRawPanicsOnLeadingText(t *testing.T) {
