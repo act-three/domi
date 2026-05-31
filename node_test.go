@@ -212,144 +212,138 @@ func TestRegisterCombining(t *testing.T) {
 	}
 }
 
-// ---- Raw tests ----
+// ---- UnsafeParseRaw tests ----
 
-func TestRawRendersVerbatim(t *testing.T) {
-	got := vdom.Render(lowerOne(Raw("<b>hi</b>")))
-	want := "<b>hi</b>"
-	if got != want {
-		t.Fatalf("got %q, want %q", got, want)
+// renderTree lowers a node and renders it (and any fragment siblings)
+// to a single HTML string.
+func renderTree(t *testing.T, n Node) string {
+	t.Helper()
+	var b strings.Builder
+	for _, ln := range lower(n) {
+		b.WriteString(vdom.Render(ln))
+	}
+	return b.String()
+}
+
+// renderParsed parses HTML and renders the resulting fragment back to a
+// string — the round-trip that checks faithful adoption of prerendered
+// HTML.
+func renderParsed(t *testing.T, s string) string {
+	t.Helper()
+	n, err := UnsafeParseRaw(s)
+	if err != nil {
+		t.Fatalf("UnsafeParseRaw(%q): %v", s, err)
+	}
+	return renderTree(t, n)
+}
+
+func TestUnsafeParseRawElement(t *testing.T) {
+	if got := renderParsed(t, "<div><span>hi</span></div>"); got != "<div><span>hi</span></div>" {
+		t.Fatalf("got %q", got)
 	}
 }
 
-func TestRawInElement(t *testing.T) {
-	got := vdom.Render(lowerOne(Tag("div")()(Raw("<b>hi</b>"))))
-	want := "<div><b>hi</b></div>"
-	if got != want {
-		t.Fatalf("got %q, want %q", got, want)
+func TestUnsafeParseRawVoidElement(t *testing.T) {
+	if got := renderParsed(t, "<br>"); got != "<br>" {
+		t.Fatalf("got %q", got)
 	}
 }
 
-func TestRawInFragment(t *testing.T) {
-	got := lower(Fragment(Text("a"), Raw("<b>hi</b>"), Text("c")))
-	if len(got) != 3 {
-		t.Fatalf("expected 3 nodes, got %d", len(got))
-	}
-	if vdom.Render(got[1]) != "<b>hi</b>" {
-		t.Fatalf("Raw in Fragment should render verbatim: got %q", vdom.Render(got[1]))
+// Text content is escaped on the way back out: a literal '<' or '&' in
+// the source becomes an entity in the rendered output.
+func TestUnsafeParseRawEscapesText(t *testing.T) {
+	if got := renderParsed(t, "<div>5 < 10 & rising</div>"); got != "<div>5 &lt; 10 &amp; rising</div>" {
+		t.Fatalf("got %q", got)
 	}
 }
 
-func TestRawTransparentToDiff(t *testing.T) {
-	a := lower(Tag("div")()(Raw("<b>hi</b>")))
-	b := lower(Tag("div")()(Raw("<b>hi</b>")))
-	if got := vdom.Diff(a, b); len(got) != 0 {
-		t.Fatalf("identical Raw should produce no patches: got %+v", got)
+// The fragment can hold several top-level nodes — a mix of text and
+// elements — not just a single element.
+func TestUnsafeParseRawMultipleTopLevel(t *testing.T) {
+	n, err := UnsafeParseRaw("hello <b>world</b> and more")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(lower(n)); got != 3 {
+		t.Fatalf("expected 3 top-level nodes, got %d", got)
+	}
+	if got := renderParsed(t, "hello <b>world</b> and more"); got != "hello <b>world</b> and more" {
+		t.Fatalf("got %q", got)
 	}
 }
 
-func TestRawDiffProducesReplace(t *testing.T) {
-	a := lower(Tag("div")()(Raw("<b>hi</b>")))
-	b := lower(Tag("div")()(Raw("<i>bye</i>")))
-	got := vdom.Diff(a, b)
-	if len(got) != 1 {
-		t.Fatalf("expected 1 patch, got %d: %+v", len(got), got)
+// Empty input yields an empty fragment with no error.
+func TestUnsafeParseRawEmpty(t *testing.T) {
+	n, err := UnsafeParseRaw("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(lower(n)); got != 0 {
+		t.Fatalf("expected empty fragment, got %d nodes", got)
 	}
 }
 
-func TestRawSVG(t *testing.T) {
-	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 2L2 22h20z"></path></svg>`
-	got := vdom.Render(lowerOne(Raw(svg)))
-	if got != svg {
-		t.Fatalf("SVG should render verbatim:\n got: %q\nwant: %q", got, svg)
+// Comments are dropped; surrounding content survives and the text on
+// either side of a removed comment coalesces.
+func TestUnsafeParseRawDropsComments(t *testing.T) {
+	if got := renderParsed(t, "<div>a<!-- note -->b</div>"); got != "<div>ab</div>" {
+		t.Fatalf("got %q", got)
+	}
+	n, err := UnsafeParseRaw("<!-- just a comment -->")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(lower(n)); got != 0 {
+		t.Fatalf("comment-only input should be empty, got %d nodes", got)
 	}
 }
 
-func TestRawVoidElement(t *testing.T) {
-	got := vdom.Render(lowerOne(Raw("<br>")))
-	if got != "<br>" {
-		t.Fatalf("got %q, want %q", got, "<br>")
+// Script and style content is preserved verbatim — not entity-escaped —
+// since the parser treats it as raw text.
+func TestUnsafeParseRawScriptVerbatim(t *testing.T) {
+	src := "<script>if (a && b) c < d;</script>"
+	if got := renderParsed(t, src); got != src {
+		t.Fatalf("got %q, want %q", got, src)
 	}
 }
 
-// ---- Raw validation tests ----
-
-func TestRawPanicsOnEmpty(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for empty Raw")
+// SVG survives the round-trip: camelCase tag and attribute names are
+// preserved, and a namespaced attribute keeps its prefix.
+func TestUnsafeParseRawSVG(t *testing.T) {
+	src := `<svg viewBox="0 0 10 10"><clipPath id="c"></clipPath><use xlink:href="#c"></use></svg>`
+	got := renderParsed(t, src)
+	for _, want := range []string{"viewBox=", "<clipPath", `xlink:href="#c"`} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("rendered SVG missing %q:\n%s", want, got)
 		}
-	}()
-	Raw("")
+	}
 }
 
-func TestRawPanicsOnMultipleElements(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for multiple elements")
-		}
-	}()
-	Raw("<b>a</b><i>b</i>")
+// Context-sensitive fragments parse as a browser's <template> would: a
+// bare <tr> keeps its structure instead of being stripped.
+func TestUnsafeParseRawTableFragment(t *testing.T) {
+	if got := renderParsed(t, "<tr><td>x</td></tr>"); got != "<tr><td>x</td></tr>" {
+		t.Fatalf("got %q", got)
+	}
 }
 
-func TestRawPanicsOnPureText(t *testing.T) {
-	// Text content is not an element; it belongs in Text, not Raw.
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for text content")
-		}
-	}()
-	Raw("hello world")
-}
-
-func TestRawPanicsOnLeadingText(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for leading text")
-		}
-	}()
-	Raw("hello<b>world</b>")
-}
-
-func TestRawPanicsOnTrailingText(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for trailing text")
-		}
-	}()
-	Raw("<b>hello</b>world")
-}
-
-func TestRawAcceptsAutoClosedTag(t *testing.T) {
-	// The HTML5 parser auto-closes unclosed tags, producing one node.
-	Raw("<div>hello")
-}
-
-func TestRawPanicsOnVoidWithTrailing(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for void element with trailing content")
-		}
-	}()
-	Raw("<br><br>")
-}
-
-func TestRawAcceptsNestedSameTag(t *testing.T) {
-	// Should not panic — validator tracks depth for the root tag.
-	Raw("<div><div>inner</div></div>")
-}
-
-func TestRawAcceptsBareAngleBracketInContent(t *testing.T) {
-	// Bare '<' inside an element is valid (the HTML parser handles it).
-	Raw("<div>5 < 10</div>")
-}
-
-func TestRawAcceptsAttributeWithAngleBracket(t *testing.T) {
-	Raw(`<div data-x="a>b">content</div>`)
-}
-
-func TestRawAcceptsComment(t *testing.T) {
-	Raw("<div><!-- comment --></div>")
+// A tree built with domi's own constructors, rendered to HTML and then
+// re-adopted via UnsafeParseRaw, renders identically: parsing faithfully
+// round-trips the framework's own output, so a prerendered subtree and
+// its live-built equivalent converge.
+func TestUnsafeParseRawRoundTripsRenderedTree(t *testing.T) {
+	tree := Tag("div")(Name("class")("card"))(
+		Tag("h1")()(Text("Title & co")),
+		Tag("p")()(Text("a < b"), Tag("br")(), Text("done")),
+		Tag("ul")()(
+			Tag("li")()(Text("one")),
+			Tag("li")()(Text("two")),
+		),
+	)
+	first := renderTree(t, tree)
+	if again := renderParsed(t, first); again != first {
+		t.Fatalf("round-trip changed output:\n first: %s\n again: %s", first, again)
+	}
 }
 
 // ---- Bool tests ----

@@ -79,11 +79,6 @@ func Reset(children []Node) Patch {
 
 func diffNode(old, new Node, path []int, out []patch) []patch {
 	switch o := old.(type) {
-	case Raw:
-		n, isRaw := new.(Raw)
-		if !isRaw || o != n {
-			return append(out, patch{Op: "Replace", Path: slices.Clone(path), HTML: Render(new)})
-		}
 	case Text:
 		// Both text: update the node's content in place. Otherwise the
 		// node type changed, so replace the whole subtree.

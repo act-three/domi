@@ -4,9 +4,9 @@
 // they lower into.
 //
 // The exported types here are deliberately minimal: an HTML element
-// has three kinds of children (element, raw, and text) so a sum of
-// three concrete types covers the tree shape exactly. Renderers and
-// differs switch exhaustively on those cases.
+// has two kinds of children (element and text) so a sum of two
+// concrete types covers the tree shape exactly. Renderers and
+// differs switch exhaustively on those two cases.
 package vdom
 
 import (
@@ -15,8 +15,7 @@ import (
 	"strings"
 )
 
-// Node is anything in a lowered VDOM tree: an [Element], a [Raw], or a
-// [Text].
+// Node is anything in a lowered VDOM tree: an [Element] or a [Text].
 type Node interface {
 	vdomNode()
 }
@@ -29,7 +28,7 @@ type Node interface {
 // keys discriminates positional from keyed elements: nil means
 // positional; non-nil (even empty) means children are paired with
 // these keys for identity-based reconciliation. When non-nil,
-// len(keys) equals len(children), and each child is an Element (raw
+// len(keys) equals len(children), and each child is an Element (text
 // nodes can't carry a data-domi-key attribute).
 type Element struct {
 	tag      string
@@ -93,20 +92,6 @@ func (e Element) WithAttr(a Attr) Element {
 	copy(out[i+1:], e.attrs[i:])
 	return Element{tag: e.tag, attrs: out, children: e.children, keys: e.keys, opaque: e.opaque}
 }
-
-// Raw is a pre-rendered element node: its content is written verbatim
-// by the renderer with no escaping. Inline SVG, sanitized markdown, and
-// fragments from third-party HTML generators all pass through as Raw by
-// the time they reach the tree.
-//
-// Raw must parse as exactly one HTML element (not text). The differ
-// relies on this: it reconciles every Raw as a single element node and
-// never coalesces it with adjacent text. The domi-side constructor
-// enforces the invariant; callers lowering their own trees must uphold
-// it. Use [Text] for text content.
-type Raw string
-
-func (Raw) vdomNode() {}
 
 // Text is a text leaf node holding plain, unescaped text. The renderer
 // escapes the content for safe embedding in HTML.
@@ -196,9 +181,9 @@ func combineSep(name string) (string, bool) {
 // text nodes when it reparses the rendered output, so the vdom child
 // list must merge them too or positional indices drift off the live DOM.
 //
-// Merging also keeps later edits cheap — one combined Text node lets a
-// content change ride a single in-place update. A [Raw] is always a
-// single element, so it never participates here.
+// Merging also keeps later edits cheap: one combined Text node lets a
+// content change ride a single in-place update. Element nodes never
+// participate here.
 //
 // Returns the input slice unchanged when no coalescing is needed.
 func coalesceText(children []Node) []Node {
