@@ -32,20 +32,49 @@ func TestRenderMixedAttrs(t *testing.T) {
 	}
 }
 
-func TestRenderRawVerbatim(t *testing.T) {
-	got := Render(Raw("<b>hi</b>"))
-	want := "<b>hi</b>"
+// Inside a raw-text element (script, style) text is emitted verbatim:
+// the HTML parser does not entity-decode such content, so escaping it
+// would corrupt the script or stylesheet.
+func TestRenderScriptVerbatim(t *testing.T) {
+	in := NewElement("script", attrs(), []Node{Text("a && b < c")}, nil)
+	got := Render(in)
+	want := "<script>a && b < c</script>"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 
-func TestRenderRawNoEscaping(t *testing.T) {
-	got := Render(Raw("a &amp; b"))
-	want := "a &amp; b"
+func TestRenderStyleVerbatim(t *testing.T) {
+	in := NewElement("style", attrs(), []Node{Text(".a > .b { color: red }")}, nil)
+	got := Render(in)
+	want := "<style>.a > .b { color: red }</style>"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
+}
+
+// A raw-text element with no children (e.g. an external script) renders
+// as an empty element.
+func TestRenderEmptyScript(t *testing.T) {
+	in := NewElement("script", attrs(Attr{Name: "src", Value: "/x.js"}), nil, nil)
+	got := Render(in)
+	want := `<script src="/x.js"></script>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// A raw-text element can't hold an element child — there's no faithful
+// way to serialize one inside script or style — so rendering panics
+// rather than emitting escaped or malformed output.
+func TestRenderRawTextRejectsElementChild(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for element child in a raw-text element")
+		}
+	}()
+	in := NewElement("script", attrs(), []Node{NewElement("b", attrs(), nil, nil)}, nil)
+	Render(in)
 }
 
 func TestRenderTextEscapes(t *testing.T) {
@@ -56,10 +85,11 @@ func TestRenderTextEscapes(t *testing.T) {
 	}
 }
 
-func TestRenderRawInsideElement(t *testing.T) {
-	in := NewElement("div", attrs(), []Node{Raw("<b>hi</b>")}, nil)
+// Ordinary elements still escape their text children.
+func TestRenderNormalElementEscapes(t *testing.T) {
+	in := NewElement("div", attrs(), []Node{Text("a < b & c")}, nil)
 	got := Render(in)
-	want := "<div><b>hi</b></div>"
+	want := "<div>a &lt; b &amp; c</div>"
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}

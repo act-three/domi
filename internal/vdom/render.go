@@ -1,6 +1,7 @@
 package vdom
 
 import (
+	"fmt"
 	"io"
 	"strings"
 )
@@ -21,9 +22,6 @@ func Render(n Node) string {
 // construction).
 func RenderTo(w io.Writer, n Node) error {
 	switch v := n.(type) {
-	case Raw:
-		_, err := io.WriteString(w, string(v))
-		return err
 	case Text:
 		_, err := textEscaper.WriteString(w, string(v))
 		return err
@@ -37,10 +35,8 @@ func RenderTo(w io.Writer, n Node) error {
 		}
 		if !isVoid(v.tag) {
 			w.Write(gt)
-			for _, c := range v.children {
-				if err := RenderTo(w, c); err != nil {
-					return err
-				}
+			if err := renderChildren(w, v); err != nil {
+				return err
 			}
 			w.Write(ltSlash)
 			io.WriteString(w, v.tag)
@@ -49,6 +45,44 @@ func RenderTo(w io.Writer, n Node) error {
 		return err
 	}
 	return nil
+}
+
+// renderChildren writes element e's children to w. Every element other
+// than a raw-text one renders its children normally, escaping text.
+//
+// A raw-text element (script, style) is empty or holds exactly one text
+// child, written verbatim: the parser does not entity-decode raw text,
+// so escaping would corrupt the script or stylesheet. The parser yields
+// a single raw-text token and the constructors coalesce adjacent text,
+// so any other shape is a hand-built tree that has no faithful
+// serialization here — it panics rather than emit escaped or malformed
+// output.
+func renderChildren(w io.Writer, e Element) error {
+	if isRawTextElement(e.tag) {
+		if len(e.children) == 0 {
+			return nil
+		}
+		t, ok := e.children[0].(Text)
+		if len(e.children) != 1 || !ok {
+			panic(fmt.Sprintf("domi: <%s> must hold a single text child", e.tag))
+		}
+		_, err := io.WriteString(w, string(t))
+		return err
+	}
+	for _, c := range e.children {
+		if err := RenderTo(w, c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// isRawTextElement reports whether tag holds CDATA-style raw text whose
+// content an HTML parser does not entity-decode. Only script and style
+// qualify; textarea and title are escapable raw text, so ordinary text
+// escaping already renders them correctly.
+func isRawTextElement(tag string) bool {
+	return tag == "script" || tag == "style"
 }
 
 // writeAttr writes a single attribute. An empty value renders as

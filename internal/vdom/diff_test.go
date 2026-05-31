@@ -443,70 +443,31 @@ func TestDiffPathNotAliasedAcrossSiblings(t *testing.T) {
 	}
 }
 
-// ---- Raw node diff tests ----
+// ---- node-kind change tests ----
 
-func TestRawNoChange(t *testing.T) {
-	a := el("div", Raw("<b>hi</b>"))
-	if got := diffOne(a, a); len(got) != 0 {
-		t.Fatalf("want no patches, got %+v", got)
-	}
-}
-
-func TestRawContentChange(t *testing.T) {
-	a := el("div", Raw("<b>hi</b>"))
-	b := el("div", Raw("<i>bye</i>"))
-	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "Replace" || got[0].HTML != "<i>bye</i>" {
-		t.Fatalf("unexpected: %+v", got)
-	}
-}
-
-func TestRawToText(t *testing.T) {
-	a := el("div", Raw("<b>hi</b>"))
-	b := el("div", tx("plain"))
-	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "Replace" {
-		t.Fatalf("expected replace, got %+v", got)
-	}
-}
-
-func TestTextToRaw(t *testing.T) {
-	a := el("div", tx("plain"))
-	b := el("div", Raw("<b>hi</b>"))
-	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "Replace" {
-		t.Fatalf("expected replace, got %+v", got)
-	}
-}
-
-func TestRawToElement(t *testing.T) {
-	a := el("div", Raw("<b>hi</b>"))
-	b := el("div", el("span"))
-	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "Replace" {
-		t.Fatalf("expected replace, got %+v", got)
-	}
-}
-
-func TestElementToRaw(t *testing.T) {
+// Changing a node's kind replaces the subtree: there is no in-place
+// path between an element and a text node.
+func TestElementToTextReplaces(t *testing.T) {
 	a := el("div", el("span"))
-	b := el("div", Raw("<b>hi</b>"))
+	b := el("div", tx("hi"))
 	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "Replace" {
 		t.Fatalf("expected replace, got %+v", got)
 	}
 }
 
-// Raw nodes with markup must not be coalesced with adjacent text.
-func TestRawNotCoalescedWithText(t *testing.T) {
-	a := el("div", tx("a"), Raw("<b>x</b>"), tx("c"))
-	b := el("div", tx("a"), Raw("<b>y</b>"), tx("c"))
+// Two text nodes separated by an element are distinct DOM children, so
+// they aren't coalesced across it: editing the element between them is
+// an isolated patch addressed through its index.
+func TestTextElementTextNotCoalesced(t *testing.T) {
+	a := el("div", tx("a"), el("b", tx("x")), tx("c"))
+	b := el("div", tx("a"), el("b", tx("y")), tx("c"))
 	got := diffOne(a, b)
-	if len(got) != 1 || got[0].Op != "Replace" {
-		t.Fatalf("expected single replace for changed Raw, got %+v", got)
+	if len(got) != 1 || got[0].Op != "SetText" {
+		t.Fatalf("expected single SetText for the changed middle, got %+v", got)
 	}
-	if !slices.Equal(got[0].Path, []int{1}) {
-		t.Fatalf("replace should target child 1, got path %v", got[0].Path)
+	if !slices.Equal(got[0].Path, []int{1, 0}) {
+		t.Fatalf("SetText should target the b's text at [1,0], got path %v", got[0].Path)
 	}
 }
 

@@ -4,59 +4,23 @@ import (
 	"fmt"
 	"iter"
 	"slices"
-	"strings"
 
-	"golang.org/x/net/html"
-	"golang.org/x/net/html/atom"
 	"ily.dev/domi/internal/vdom"
 )
 
 // A Node is an HTML node,
-// a [Text], [Raw], [Tag], [Keyed], or [Fragment].
+// a [Text], [Tag], [Keyed], or [Fragment].
 type Node interface {
 	isNode()
 }
 
 // node is the lowered form of a Node, satisfied only by element and
-// raw. Public constructors lower their inputs to nodes at construction
+// text. Public constructors lower their inputs to nodes at construction
 // time; the lowered() method then yields the corresponding vdom.Node
 // so the renderer and differ can operate on a tree they own.
 type node interface {
 	Node
 	lowered() vdom.Node
-}
-
-// raw is the domi-side wrapper around [vdom.Raw].
-type raw vdom.Raw
-
-func (raw) isNode()              {}
-func (r raw) lowered() vdom.Node { return vdom.Raw(r) }
-
-// Raw returns a node whose content is written verbatim, without HTML
-// escaping. Use Raw for trusted HTML: inline SVG, pre-sanitized
-// markdown output, or fragments from third-party HTML generators.
-// Never pass user-controlled input to Raw without prior sanitization.
-//
-// The content must parse to exactly one HTML element: a single, properly
-// nested element (a void element like <br> counts). Raw panics if the
-// content is empty, is text rather than an element, or produces more
-// than one top-level node. Use [Text] for text content.
-func Raw(s string) Node {
-	if s == "" {
-		panic("domi: Raw: empty string produces no DOM nodes")
-	}
-	ctx := &html.Node{Type: html.ElementNode, DataAtom: atom.Body, Data: "body"}
-	nodes, err := html.ParseFragment(strings.NewReader(s), ctx)
-	if err != nil {
-		panic("domi: Raw: " + err.Error())
-	}
-	if len(nodes) != 1 {
-		panic(fmt.Sprintf("domi: Raw: content must produce exactly one element, got %d nodes", len(nodes)))
-	}
-	if nodes[0].Type != html.ElementNode {
-		panic("domi: Raw: content must be an element, not text; use Text for text content")
-	}
-	return raw(vdom.Raw(s))
 }
 
 // text is the domi-side wrapper around [vdom.Text].
@@ -66,7 +30,7 @@ func (text) isNode()              {}
 func (t text) lowered() vdom.Node { return vdom.Text(t) }
 
 // Text returns a text node. The string is escaped for safe embedding
-// in HTML when rendered; use [Raw] for trusted element markup.
+// in HTML when rendered; use [UnsafeParseRaw] for trusted HTML markup.
 func Text(s string) Node {
 	return text(s)
 }
