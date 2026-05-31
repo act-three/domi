@@ -8,8 +8,10 @@ import (
 	"ily.dev/domi/internal/vdom"
 )
 
-// A Node is an HTML node,
-// a [Text], [Tag], [Keyed], or [Fragment].
+// A Node is an HTML node (text or an element)
+// or an HTML fragment (a sequence of nodes).
+//
+// The zero value of Node (nil) is an empty fragment.
 type Node interface {
 	isNode()
 }
@@ -152,6 +154,8 @@ func Fragment(n ...Node) Node {
 	return fragment(func(yield func(vdom.Node) bool) {
 		for _, c := range n {
 			switch v := c.(type) {
+			case nil:
+				// A nil Node contributes nothing, like an empty Fragment.
 			case Element:
 				if !yield(v().(node).lowered()) {
 					return

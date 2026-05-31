@@ -27,11 +27,9 @@ func UnsafeParseRaw(s string) (Node, error) {
 	if err != nil {
 		return nil, fmt.Errorf("domi: UnsafeParseRaw: %w", err)
 	}
-	children := make([]Node, 0, len(nodes))
-	for _, n := range nodes {
-		if c := parseNode(n); c != nil {
-			children = append(children, c)
-		}
+	children := make([]Node, len(nodes))
+	for i, n := range nodes {
+		children[i] = parseNode(n)
 	}
 	return Fragment(children...), nil
 }
@@ -65,9 +63,7 @@ func parseElement(n *html.Node) Node {
 	}
 	var children []Node
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if cn := parseNode(c); cn != nil {
-			children = append(children, cn)
-		}
+		children = append(children, parseNode(c))
 	}
 	return Tag(n.Data)(attrs...)(children...)
 }

@@ -85,6 +85,52 @@ func TestFragmentInKeyedPanics(t *testing.T) {
 	})
 }
 
+// ---- nil Node tests ----
+//
+// A nil Node is the empty Fragment's degenerate twin: it lowers to
+// nothing wherever a Node is accepted, so conditional content can be a
+// node-or-nil with no guard at the use site.
+
+func TestNilNodeContributesNothing(t *testing.T) {
+	a := lowerOne(Tag("div")()(Text("a"), nil, Text("b")))
+	b := lowerOne(Tag("div")()(Text("a"), Text("b")))
+	if vdom.Render(a) != vdom.Render(b) {
+		t.Fatalf("nil child should contribute nothing: %q vs %q", vdom.Render(a), vdom.Render(b))
+	}
+}
+
+func TestNilNodeAtRootLowersToNothing(t *testing.T) {
+	var n Node // nil
+	if got := lower(n); len(got) != 0 {
+		t.Fatalf("nil root should lower to nothing, got %d nodes", len(got))
+	}
+}
+
+// A keyed child must be a real element with an identity; a nil child has
+// none, so Keyed panics rather than silently dropping the slot.
+func TestNilKeyedChildPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic for nil child yielded into Keyed, got none")
+		}
+	}()
+	_ = Keyed("ul")()(func(yield func(string, Node) bool) {
+		yield("a", nil)
+	})
+}
+
+// lowerOne needs exactly one node; a nil Node lowers to zero, so it
+// panics rather than inventing one.
+func TestLowerOneNilPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatalf("expected panic for lowerOne(nil), got none")
+		}
+	}()
+	var n Node // nil
+	_ = lowerOne(n)
+}
+
 // Group is the attr-side mirror of Fragment. The tests below pin the
 // same property through the observable contract: a Group should be
 // indistinguishable from writing its attrs inline at the use site.

@@ -27,11 +27,9 @@ func Safe(s string) Node {
 	if err != nil {
 		return Text(s)
 	}
-	children := make([]Node, 0, len(nodes))
-	for _, n := range nodes {
-		if c := safeNode(n); c != nil {
-			children = append(children, c)
-		}
+	children := make([]Node, len(nodes))
+	for i, n := range nodes {
+		children[i] = safeNode(n)
 	}
 	return Fragment(children...)
 }
@@ -76,9 +74,7 @@ func safeElement(n *html.Node) Node {
 func safeChildren(n *html.Node) []Node {
 	var children []Node
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		if cn := safeNode(c); cn != nil {
-			children = append(children, cn)
-		}
+		children = append(children, safeNode(c))
 	}
 	return children
 }
