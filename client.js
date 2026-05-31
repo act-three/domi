@@ -201,11 +201,11 @@ export function run() {
   // plus its document title. A snapshot is the whole page as data —
   // restoring it sets both the DOM and the title.
   // `base` tracks which snapshot the client's DOM is built on top of
-  // ("" initially). The server tags each SSE frame with its base;
-  // the client drops frames whose base doesn't match.
+  // (all-zero initially). We drop frames with a stale base ID.
   const snapshots = new Map();
   const SNAPSHOT_MAX = 30;
-  let base = '';
+  let base = '00000000000000000000000000';
+
   function cacheSnapshot(id, source, title) {
     if (!id) return;
     const frag = document.createDocumentFragment();
@@ -215,6 +215,7 @@ export function run() {
       snapshots.delete(snapshots.keys().next().value);
     }
   }
+
   function restoreSnapshot(id) {
     const cached = snapshots.get(id);
     if (!cached) return;
@@ -227,34 +228,35 @@ export function run() {
     base = id;
   }
 
-  // Prefetch cache for instant forward navigation. At most one entry:
-  // hovering a different link evicts it. The entry holds the preview
-  // snapshot id and the timestamp for dedup/expiry.
-  //
-  // prefetching holds the url of the most recent in-flight prefetch
-  // (cleared when its preview SSE event lands). pendingClick holds
-  // the url of a click that fired before its preview arrived; the SSE
-  // preview handler navigates immediately when a matching preview
-  // arrives.
-  const PREVIEW_TTL = 5000; // ms
-  let preview = null; // { url, previewId, at }
-  let prefetching = ''; // url of an in-flight prefetch
-  let pendingClick = ''; // url awaiting an in-flight preview
+  // The single in-flight link preview, or null. The client tracks exactly
+  // one at a time: hovering a different link supersedes any previous, so it
+  // can never claim a preview it has moved on from — and that hover is also
+  // how the server learns to discard the old one. isReady flips false
+  // (Prefetch sent) → true (SetPreview received, a patchset to apply on
+  // click); isClicked records a click that beat the SetPreview, so it
+  // navigates the moment one arrives.
+  let pv = null; // { url, isReady, isClicked, patches?, title?, base?, at? }
 
-  // navigateToPreview applies a prefetched navigation: swap in the
-  // preview snapshot, push history state, and notify the server with
-  // a URLChange (not URLRequest — the navigation decision was made
-  // in Preview at hover time). The server restores the preview
-  // snapshot and dispatches onURLChange to update its state. The
-  // outgoing snapshot was cached on both sides at preview-event
-  // arrival time.
-  function navigateToPreview(url, previewId) {
-    restoreSnapshot(previewId);
-    history.pushState(null, '', url);
+  function checkPreviewTTL() {
+    const ttl = 5000; // ms
+    if (pv && pv.at && Date.now() - pv.at > ttl) pv = null;
+  }
+
+  // navigateToPreview applies the held preview by simulating
+  // a normal navigation effect list: PushURL, ApplyPatch, SetTitle.
+  function navigateToPreview() {
+    const p = pv;
+    pv = null;
+    cacheSnapshot(p.base, root, document.title);
+    history.replaceState({ domiSnapshot: p.base }, '', location.href);
+    history.pushState(null, '', p.url);
+    for (const patch of p.patches ?? []) root = applyPatch(root, patch);
+    document.title = p.title ?? '';
+    base = p.base;
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ Type: 'URLChange', URL: url, SnapshotID: previewId }),
+      body: JSON.stringify({ Type: 'URLChange', URL: p.url, SnapshotID: p.base, ToPreview: true }),
     }).catch((err) => console.error('domi: urlChange POST failed', err));
   }
 
@@ -289,6 +291,7 @@ export function run() {
   // already has a data-msg-click handler (the app opted into explicit
   // handling).
   container.addEventListener('click', (e) => {
+    checkPreviewTTL();
     if (e.button !== 0 || e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return;
     let a = e.target;
     while (a && a !== container) {
@@ -319,20 +322,15 @@ export function run() {
 
     e.preventDefault();
     const urlStr = url.pathname + url.search + url.hash;
-    // Fresh preview cached: navigate instantly.
-    if (preview && preview.url === urlStr && Date.now() - preview.at < PREVIEW_TTL) {
-      const { previewId } = preview;
-      preview = null;
-      navigateToPreview(urlStr, previewId);
+    if (pv && pv.url === urlStr) {
+      if (pv.isReady) {
+        navigateToPreview();
+      } else {
+        pv.isClicked = true; // requested but not here yet; navigate when it arrives
+      }
       return;
     }
-    // Preview in flight for this URL: wait. The SSE preview handler
-    // navigates as soon as it arrives.
-    if (prefetching === urlStr) {
-      pendingClick = urlStr;
-      return;
-    }
-    // No preview cached or in flight: normal navigation.
+    pv = null; // Clicking a different link abandons any preview.
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -340,11 +338,10 @@ export function run() {
     }).catch((err) => console.error('domi: urlRequest POST failed', err));
   });
 
-  // Hover handler: send a prefetch when the cursor enters an internal
-  // <a>. Dedup against the active preview; same URL within TTL is
-  // reused. Hovering a different link replaces the preview (the client
-  // holds at most one preloaded page).
+  // Hover handler: prefetch the link under the cursor, superseding any
+  // tracked preview (see pv).
   container.addEventListener('mouseover', (e) => {
+    checkPreviewTTL();
     let a = e.target;
     while (a && a !== container) {
       if (a.tagName === 'A') break;
@@ -361,9 +358,9 @@ export function run() {
     try { url = new URL(href, location.href); } catch { return; }
     if (url.origin !== location.origin) return;
     const urlStr = url.pathname + url.search + url.hash;
-    if (preview && preview.url === urlStr && Date.now() - preview.at < PREVIEW_TTL) return;
-    if (prefetching === urlStr) return; // already in flight
-    prefetching = urlStr;
+    if (pv && pv.isClicked) return; // a click is committed; don't supersede it
+    if (pv && pv.url === urlStr) return; // already requested or holding it
+    pv = { url: urlStr, isReady: false, isClicked: false };
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -379,6 +376,7 @@ export function run() {
   window.addEventListener('popstate', (e) => {
     const url = location.pathname + location.search + location.hash;
     const snapshotId = e.state && e.state.domiSnapshot;
+    pv = null; // it's based on the page we're leaving; drop it
     if (snapshotId) restoreSnapshot(snapshotId);
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
@@ -389,6 +387,7 @@ export function run() {
 
   const sse = new EventSource(`/sse/${encodeURIComponent(sessionId)}`);
   sse.addEventListener('effect', (ev) => {
+    checkPreviewTTL();
     let f;
     try {
       f = JSON.parse(ev.data);
@@ -396,12 +395,7 @@ export function run() {
       console.error('domi: bad effect JSON', ev.data, e);
       return;
     }
-    // An ApplyPatch effect's DOM patches were diffed against a specific base;
-    // if the client's tree has since moved to another snapshot the frame
-    // is stale and must be dropped whole, since its other effects belong
-    // to that same transition. A frame with no patches doesn't depend on
-    // the DOM, so it runs regardless of base.
-    if (f.Effects.some((e) => e.Type === 'ApplyPatch') && f.Base !== base) return;
+    if (f.Base && f.Base !== base) return;
     // Run the effects in the order the server chose. PushURL leads any
     // DOM patches so the outgoing page (current DOM + title) is
     // snapshotted before it changes; SetTitle trails them so that
@@ -426,63 +420,35 @@ export function run() {
         case 'LoadURL':
           window.location.assign(eff.URL);
           return;
+        case 'SetPreview':
+          // Ignore any preview we're not intentionally waiting for.
+          if (!pv || pv.url !== eff.URL) break;
+          pv.isReady = true;
+          pv.patches = eff.Patches;
+          pv.title = eff.Title;
+          pv.base = eff.ID;
+          pv.at ||= Date.now();
+          if (pv.isClicked) navigateToPreview();
+          break;
+        case 'DeletePreview':
+          // Drop the preview for the given url. (Empty means any preview.)
+          // A waiting click means the server denied the preview request
+          // (or perhaps even a resync), so fall back to a normal request.
+          if (pv && (!eff.URL || pv.url === eff.URL)) {
+            const { url, isClicked } = pv;
+            pv = null;
+            if (isClicked) {
+              fetch(`/event/${encodeURIComponent(sessionId)}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ Type: 'URLRequest', URL: url, Internal: true }),
+              }).catch((err) => console.error('domi: urlRequest POST failed', err));
+            }
+          }
+          break;
         default:
           console.warn('domi: unknown effect', eff);
       }
-    }
-  });
-  // Preview frames: build two snapshots that match the server's at
-  // prefetch time. The outgoing snapshot is root as it stands now
-  // (which equals server's s.view at prefetch time — guaranteed by
-  // the base check above plus SSE ordering). The preview snapshot is
-  // built by cloning root and applying the prefetch's patches. If the
-  // user has already clicked this link, navigate now.
-  sse.addEventListener('preview', (ev) => {
-    let f;
-    try {
-      f = JSON.parse(ev.data);
-    } catch (e) {
-      console.error('domi: bad preview JSON', ev.data, e);
-      return;
-    }
-    if (f.Base !== base) return; // stale: live DOM has diverged
-    // The outgoing snapshot is the live page as it stands now (its DOM
-    // and current title). The target snapshot is built by applying the
-    // preview's pure DOM patches to a clone and pairing it with the
-    // title the server sent as data — nothing touches the live document.
-    cacheSnapshot(f.Outgoing, root, document.title);
-    const clone = root.cloneNode(true);
-    let cur = clone;
-    for (const p of f.Patches ?? []) cur = applyPatch(cur, p);
-    cacheSnapshot(f.Target, cur, f.Title);
-    preview = { url: f.URL, previewId: f.Target, at: Date.now() };
-    if (prefetching === f.URL) prefetching = '';
-    if (pendingClick === f.URL) {
-      pendingClick = '';
-      preview = null;
-      navigateToPreview(f.URL, f.Target);
-    }
-  });
-  // Deny: the app's Preview returned ok=false for this URL. Clear
-  // the in-flight prefetch state and, if the user already clicked,
-  // fall back to normal navigation so the app's onURLRequest gets
-  // a chance to deny or redirect.
-  sse.addEventListener('deny', (ev) => {
-    let f;
-    try {
-      f = JSON.parse(ev.data);
-    } catch (e) {
-      console.error('domi: bad deny JSON', ev.data, e);
-      return;
-    }
-    if (prefetching === f.URL) prefetching = '';
-    if (pendingClick === f.URL) {
-      pendingClick = '';
-      fetch(`/event/${encodeURIComponent(sessionId)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ Type: 'URLRequest', URL: f.URL, Internal: true }),
-      }).catch((err) => console.error('domi: urlRequest POST failed', err));
     }
   });
   // A non-2xx response — the server's signal that the session is

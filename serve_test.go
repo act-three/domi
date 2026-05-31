@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"iter"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -57,6 +59,31 @@ func (a *titledApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool
 	return t, v, true
 }
 
+// previewApp renders a body that depends on both a per-Update counter and
+// the current route, and previews a route without changing state. So a
+// prefetch produces a non-empty patchset that differs from the live view,
+// and a later Update both moves the live view and rebases the preview.
+// The /deny route is refused, exercising the DeletePreview path.
+type previewApp struct {
+	n     int
+	route string
+}
+
+func (a *previewApp) Update(context.Context, int) Cmd[int] { a.n++; return Batch[int]() }
+func (a *previewApp) body() Node {
+	return Tag("div")()(Text(fmt.Sprintf("%s-%d", a.route, a.n)))
+}
+func (a *previewApp) View(context.Context) (string, Node)    { return a.route, a.body() }
+func (a *previewApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
+func (a *previewApp) Preview(_ context.Context, u *url.URL) (string, Node, bool) {
+	if u.Path == "/deny" {
+		return "", nil, false
+	}
+	p := *a
+	p.route = u.Path
+	return p.route, p.body(), true
+}
+
 // newTestSession wires up a session for direct method tests, bypassing
 // the http surface. The session points at a default-configured server
 // so apply, idleWatch, and friends can read config fields without going
@@ -69,6 +96,7 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 		ctx:    ctx,
 		cancel: cancel,
 		app:    app,
+		logger: slog.New(slog.DiscardHandler),
 		sv: &server[Msg]{
 			replayWindow: replayWindow,
 			keepalive:    25 * time.Second,
@@ -77,6 +105,7 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 			onURLRequest: func(URLRequest) Msg { var zero Msg; return zero },
 		},
 		log:    make([]frame, replayWindow),
+		base:   baseInitial,
 		view:   lower(view),
 		active: time.Now(),
 	}
@@ -679,24 +708,224 @@ func TestSessionApplyEffectOrder(t *testing.T) {
 	}
 }
 
-// A preview frame carries the previewed page's title as data and holds
-// no effects, so building the snapshot never touches the live document
-// (the title only changes when the user navigates and it's restored).
-func TestSessionPreviewCarriesTitleAsData(t *testing.T) {
-	s := newTestSession[int](&titledApp{})
+// prefetch holds the preview and emits a lone SetPreview effect carrying
+// the previewed page's title and url as data, the rebasing patchset, and
+// a candidate snapshot id naming the cached outgoing (current) page.
+func TestSessionPrefetchEmitsSetPreview(t *testing.T) {
+	s := newTestSession[int](&previewApp{route: "/"})
 	defer s.cancel()
 	u, _ := url.Parse("/next")
 	s.prefetch(s.ctx, u)
 
 	f := s.log[1%uint64(len(s.log))]
-	if f.kind != framePreview {
-		t.Fatalf("expected a preview frame, got kind %q", f.kind)
+	if len(f.Effects) != 1 || f.Effects[0].Type != effectSetPreview {
+		t.Fatalf("expected a lone SetPreview effect, got %+v", f.Effects)
 	}
-	if f.Title != "title-0" {
-		t.Fatalf("preview Title = %q, want the previewed page's title %q", f.Title, "title-0")
+	e := f.Effects[0]
+	if e.Title != "/next" || e.URL != "/next" {
+		t.Fatalf("SetPreview = %+v, want title and url %q", e, "/next")
 	}
-	if len(f.Effects) != 0 {
-		t.Fatalf("preview frame must hold no effects, got %+v", f.Effects)
+	if e.ID == "" {
+		t.Fatal("SetPreview must carry a candidate snapshot id")
+	}
+	if len(e.Patches) == 0 {
+		t.Fatal("SetPreview should carry the patchset from current view to preview")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.preview == nil {
+		t.Fatal("prefetch should leave the preview outstanding")
+	}
+	if _, ok := s.preview.log[e.ID]; !ok {
+		t.Fatalf("candidate (outgoing) view %q not recorded in the preview log", e.ID)
+	}
+	// A speculative preview must not touch the navigation snapshot cache.
+	if _, ok := s.snapshots[e.ID]; ok {
+		t.Fatalf("candidate %q leaked into the snapshot cache", e.ID)
+	}
+}
+
+// A denied prefetch emits a lone DeletePreview effect and holds no
+// preview, so the click falls back to a normal request.
+func TestSessionPrefetchDenyEmitsDeletePreview(t *testing.T) {
+	s := newTestSession[int](&previewApp{route: "/"})
+	defer s.cancel()
+	u, _ := url.Parse("/deny")
+	s.prefetch(s.ctx, u)
+
+	f := s.log[1%uint64(len(s.log))]
+	if len(f.Effects) != 1 || f.Effects[0].Type != effectDeletePreview {
+		t.Fatalf("expected a lone DeletePreview effect, got %+v", f.Effects)
+	}
+	if f.Effects[0].URL != "/deny" {
+		t.Fatalf("DeletePreview URL = %q, want %q", f.Effects[0].URL, "/deny")
+	}
+	s.mu.Lock()
+	pending := s.preview != nil
+	s.mu.Unlock()
+	if pending {
+		t.Fatal("a denied prefetch must not set an outstanding preview")
+	}
+}
+
+// While a preview is outstanding, each later frame is augmented with a
+// SetPreview that rebases the preview onto the new view (so the client
+// always holds a clean patchset from its current DOM to the preview), and
+// caches that view as a fresh candidate outgoing snapshot.
+func TestSessionPreviewRebasedOnApply(t *testing.T) {
+	s := newTestSession[int](&previewApp{route: "/"})
+	defer s.cancel()
+	u, _ := url.Parse("/next")
+	s.prefetch(s.ctx, u)
+
+	s.apply(s.ctx, 0, nil)
+	f := s.log[2%uint64(len(s.log))]
+	var ap, sp *effect
+	for i := range f.Effects {
+		switch f.Effects[i].Type {
+		case effectApplyPatch:
+			ap = &f.Effects[i]
+		case effectSetPreview:
+			sp = &f.Effects[i]
+		}
+	}
+	if ap == nil || sp == nil {
+		t.Fatalf("frame should carry both ApplyPatch and SetPreview, got %+v", f.Effects)
+	}
+	if sp.URL != "/next" || sp.ID == "" {
+		t.Fatalf("rebased SetPreview = %+v, want url %q with a candidate id", sp, "/next")
+	}
+	if len(sp.Patches) == 0 {
+		t.Fatal("rebased SetPreview should carry a non-empty patchset")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.preview == nil {
+		t.Fatal("preview should remain outstanding after a rebasing apply")
+	}
+	if _, ok := s.preview.log[sp.ID]; !ok {
+		t.Fatalf("candidate view %q not recorded in the preview log", sp.ID)
+	}
+}
+
+// commitPreview installs the held preview as the current view, adopts the
+// candidate id as the base, and clears the outstanding preview. The apply
+// that follows a real commit then diffs against the installed view.
+func TestSessionCommitPreviewInstallsView(t *testing.T) {
+	s := newTestSession[int](&previewApp{route: "/"})
+	defer s.cancel()
+	u, _ := url.Parse("/next")
+	s.prefetch(s.ctx, u)
+	cand := s.log[1%uint64(len(s.log))].Effects[0].ID
+
+	s.commitPreview(s.ctx, cand)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.base != cand {
+		t.Fatalf("base = %q, want candidate %q", s.base, cand)
+	}
+	if s.preview != nil {
+		t.Fatal("pending preview should be cleared after commit")
+	}
+	if s.title != "/next" {
+		t.Fatalf("title = %q, want %q", s.title, "/next")
+	}
+	want := lower(Tag("div")()(Text("/next-0")))
+	if !reflect.DeepEqual(s.view, want) {
+		t.Fatalf("committed view = %+v, want the previewed page", s.view)
+	}
+	// The outgoing page (the view at prefetch) is promoted into the
+	// snapshot cache under the committed candidate id, for back nav.
+	sn, ok := s.snapshots[cand]
+	if !ok {
+		t.Fatal("committed outgoing view should move into the snapshot cache")
+	}
+	if outgoing := lower(Tag("div")()(Text("/-0"))); !reflect.DeepEqual(sn.view, outgoing) {
+		t.Fatalf("promoted snapshot view = %+v, want the outgoing page", sn.view)
+	}
+}
+
+// commitPreview ignores a commit when no preview is held — a malformed or
+// malicious client message must not mutate session state.
+func TestSessionCommitPreviewWithoutHeldPreview(t *testing.T) {
+	s := newTestSession[int](&previewApp{route: "/"})
+	defer s.cancel()
+	origView := s.view
+
+	s.commitPreview(s.ctx, "snap") // must not panic
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.preview != nil {
+		t.Fatalf("preview = %v, want nil", s.preview)
+	}
+	if s.base != baseInitial {
+		t.Fatalf("base = %q, want it left at %q", s.base, baseInitial)
+	}
+	if !reflect.DeepEqual(s.view, origView) {
+		t.Fatalf("view changed to %+v, want it untouched", s.view)
+	}
+}
+
+// Once a preview's candidate log fills, the server freezes it: the next
+// frame carries a DeletePreview instead of a SetPreview and stops
+// rebasing, but the retained candidates stay so an in-flight click still
+// commits.
+func TestSessionPreviewFreezesAtLimit(t *testing.T) {
+	const limit = 128 // preview.addView's internal cap
+	s := newTestSession[int](&previewApp{route: "/"})
+	defer s.cancel()
+	u, _ := url.Parse("/next")
+	s.prefetch(s.ctx, u) // candidate 1
+
+	// Drive enough applies to fill the log. Each view-changing apply adds
+	// one candidate until the limit, then the next freezes the preview.
+	for i := 0; i < limit; i++ {
+		s.apply(s.ctx, 0, nil)
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.preview == nil || !s.preview.frozen {
+		t.Fatalf("preview should be frozen after %d updates", limit)
+	}
+	if n := len(s.preview.log); n != limit {
+		t.Fatalf("frozen log holds %d candidates, want %d (all retained)", n, limit)
+	}
+	// The freeze frame is the most recent: a DeletePreview, no SetPreview.
+	f := s.log[s.head%uint64(len(s.log))]
+	var del, set bool
+	for _, e := range f.Effects {
+		del = del || e.Type == effectDeletePreview
+		set = set || e.Type == effectSetPreview
+	}
+	if !del || set {
+		t.Fatalf("freeze frame should carry DeletePreview and no SetPreview, got %+v", f.Effects)
+	}
+}
+
+// A new prefetch supersedes the outstanding preview: the server replaces
+// it wholesale, dropping the previous one's candidate log. The client
+// drops its preview at the same moment (when it requests the new one), so
+// nothing is left to claim the discarded candidates.
+func TestSessionPrefetchSupersedes(t *testing.T) {
+	s := newTestSession[int](&previewApp{route: "/"})
+	defer s.cancel()
+
+	first, _ := url.Parse("/a")
+	s.prefetch(s.ctx, first)
+	firstCand := s.log[1%uint64(len(s.log))].Effects[0].ID
+
+	second, _ := url.Parse("/b")
+	s.prefetch(s.ctx, second)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.preview == nil || s.preview.url != "/b" {
+		t.Fatalf("outstanding preview = %+v, want /b", s.preview)
+	}
+	if _, ok := s.preview.log[firstCand]; ok {
+		t.Fatal("superseded preview's candidates should be discarded")
 	}
 }
 
@@ -762,10 +991,10 @@ func TestSessionSnapshotEviction(t *testing.T) {
 func TestSessionFrameBase(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	s.apply(s.ctx, 1, nil) // base ""
+	s.apply(s.ctx, 1, nil) // base "00000..."
 	s.mu.Lock()
-	if s.log[1].Base != "" {
-		t.Fatalf("expected base %q, got %q", "", s.log[1].Base)
+	if s.log[1].Base != baseInitial {
+		t.Fatalf("expected base %q, got %q", baseInitial, s.log[1].Base)
 	}
 	s.base = "snap1"
 	s.mu.Unlock()
