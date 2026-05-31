@@ -20,7 +20,8 @@ import (
 //
 // `Replace` and `InsertChild` carry a pre-rendered HTML fragment
 // rather than a serialized Node — the client parses it via a
-// <template> element.
+// <template> element. `SetText` carries the new text content in
+// `Value`, which the client writes to the target text node in place.
 //
 // InsertChild / RemoveChild / MoveChild come in two flavours,
 // chosen by which diff function produced them:
@@ -83,6 +84,16 @@ func diffNode(old, new Node, path []int, out []patch) []patch {
 		if !isRaw || o != n {
 			return append(out, patch{Op: "Replace", Path: slices.Clone(path), HTML: Render(new)})
 		}
+	case Text:
+		// Both text: update the node's content in place. Otherwise the
+		// node type changed, so replace the whole subtree.
+		if n, isText := new.(Text); isText {
+			if o != n {
+				out = append(out, patch{Op: "SetText", Path: slices.Clone(path), Value: string(n)})
+			}
+			return out
+		}
+		return append(out, patch{Op: "Replace", Path: slices.Clone(path), HTML: Render(new)})
 	case Element:
 		// Replace on tag mismatch, or on keyed-vs-positional mismatch.
 		// The latter is treated as structural even at the same tag: the

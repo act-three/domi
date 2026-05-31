@@ -4,9 +4,9 @@
 // they lower into.
 //
 // The exported types here are deliberately minimal: an HTML element
-// has two kinds of children (element and raw), so a sum of two
-// concrete structs covers the tree shape exactly. Renderers and
-// differs switch exhaustively on those two cases.
+// has three kinds of children (element, raw, and text) so a sum of
+// three concrete types covers the tree shape exactly. Renderers and
+// differs switch exhaustively on those cases.
 package vdom
 
 import (
@@ -15,7 +15,8 @@ import (
 	"strings"
 )
 
-// Node is anything in a lowered VDOM tree: an [Element] or a [Raw].
+// Node is anything in a lowered VDOM tree: an [Element], a [Raw], or a
+// [Text].
 type Node interface {
 	vdomNode()
 }
@@ -93,28 +94,29 @@ func (e Element) WithAttr(a Attr) Element {
 	return Element{tag: e.tag, attrs: out, children: e.children, keys: e.keys, opaque: e.opaque}
 }
 
-// Raw is a pre-rendered leaf node: its content is written verbatim
-// by the renderer with no escaping. Escaped text, inline SVG,
-// sanitized markdown — all pass through as Raw by the time they
-// reach the tree.
+// Raw is a pre-rendered element node: its content is written verbatim
+// by the renderer with no escaping. Inline SVG, sanitized markdown, and
+// fragments from third-party HTML generators all pass through as Raw by
+// the time they reach the tree.
 //
-// Raw must parse as a single DOM node by an HTML parser.
-// It is the client's responsibility to ensure this when
-// providing arbitrary Raw HTML content.
-//
-// Use [Text] to construct a Raw from arbitrary text,
-// to be parsed as a single HTML text node.
+// Raw must parse as exactly one HTML element (not text). The differ
+// relies on this: it reconciles every Raw as a single element node and
+// never coalesces it with adjacent text. The domi-side constructor
+// enforces the invariant; callers lowering their own trees must uphold
+// it. Use [Text] for text content.
 type Raw string
 
 func (Raw) vdomNode() {}
 
-// Text escapes s for safe embedding in HTML and returns it as a
-// [Raw] node. This is the standard way to place text content in
-// the tree; the escaping happens once at construction, not at
-// render time.
-func Text(s string) Raw {
-	return Raw(textEscaper.Replace(s))
-}
+// Text is a text leaf node holding plain, unescaped text. The renderer
+// escapes the content for safe embedding in HTML.
+//
+// When only a Text node's content changes between renders, the differ
+// updates the existing DOM text node in place instead of replacing it,
+// so a text selection anchored in that node survives the update.
+type Text string
+
+func (Text) vdomNode() {}
 
 // Attr is a flat name/value attribute pair.
 type Attr struct {
@@ -189,14 +191,14 @@ func combineSep(name string) (string, bool) {
 	return sep, ok
 }
 
-// coalesceText concatenates adjacent text-only Raw children into a
-// single Raw node, matching the shape the HTML parser produces (it
-// merges adjacent text nodes on round-trip).
+// coalesceText concatenates adjacent [Text] children into a single Text
+// node, matching the shape an HTML parser produces: it merges adjacent
+// text nodes when it reparses the rendered output, so the vdom child
+// list must merge them too or positional indices drift off the live DOM.
 //
-// Only Raw nodes whose content contains no '<' are eligible: those
-// are escaped text from [Text] and always map to a single DOM text
-// node. Raw nodes with markup may produce element nodes and must not
-// be concatenated with neighbors.
+// Merging also keeps later edits cheap — one combined Text node lets a
+// content change ride a single in-place update. A [Raw] is always a
+// single element, so it never participates here.
 //
 // Returns the input slice unchanged when no coalescing is needed.
 func coalesceText(children []Node) []Node {
@@ -214,13 +216,13 @@ func coalesceText(children []Node) []Node {
 	var buf string
 	flush := func() {
 		if buf != "" {
-			out = append(out, Raw(buf))
+			out = append(out, Text(buf))
 			buf = ""
 		}
 	}
 	for _, c := range children {
-		if r, ok := c.(Raw); ok && isText(c) {
-			buf += string(r)
+		if t, ok := c.(Text); ok {
+			buf += string(t)
 			continue
 		}
 		flush()
@@ -230,10 +232,10 @@ func coalesceText(children []Node) []Node {
 	return out
 }
 
-// isText reports whether n is a text-only Raw node (no markup).
+// isText reports whether n is a [Text] node.
 func isText(n Node) bool {
-	r, ok := n.(Raw)
-	return ok && !strings.Contains(string(r), "<")
+	_, ok := n.(Text)
+	return ok
 }
 
 // isVoid reports whether tag is a void HTML element (one that must not

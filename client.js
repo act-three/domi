@@ -51,6 +51,16 @@ export function applyPatch(root, p) {
       if (node.parentNode) node.parentNode.replaceChild(newNode, node);
       return node === root ? newNode : root;
     }
+    case 'SetText': {
+      // Write the new text straight to nodeValue: it takes a raw string
+      // with no HTML parsing, so the unescaped Value lands verbatim, and
+      // the text node keeps its identity — a selection anchored in it
+      // survives. Coerce undefined → "": when a node's text goes empty
+      // (an interpolated value blanks out) the Go side drops Value via
+      // omitempty, and a missing field here means "clear it".
+      walk(root, p.Path).nodeValue = p.Value ?? '';
+      return root;
+    }
     case 'SetAttr': {
       // Coerce undefined → "" so name-only / empty-valued attrs land as
       // present-with-empty-string. The wire omits `Value` when it's the
