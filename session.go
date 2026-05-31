@@ -34,6 +34,7 @@ type session[Msg any] struct {
 	mu           sync.Mutex // protects the following fields
 	title        string
 	view         []vdom.Node
+	handlers     handlers       // key → marshaled Msg for every handler the session has rendered
 	log          []frame        // fixed-size ring; log[seq%len(log)] holds frame seq
 	head         uint64         // seq of the most recent frame; 0 if none
 	base         string         // snapshot id the client's DOM is built on
@@ -142,12 +143,20 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	app, cmd := s.sv.appf(appCtx, req.URL)
 	title, view := app.View(appCtx)
 	s.app = app
-	s.title, s.view = title, lower(view)
+	nodes, _ := lower(view)
+	s.title, s.view = title, nodes
+
+	body := Tag("body")(Name("data-domi-session")(s.id))(view)
+	root, h := lowerOne(s.sv.document(title, body))
+	// Harvest from the whole document, not just the view, so a custom
+	// document that mounts its own handlers is dispatchable too. Set
+	// s.handlers before spawn so a Cmd-driven apply never copies into a
+	// nil map.
+	s.handlers = h
+
 	s.updateSubs(app.Subscriptions(appCtx))
 	s.spawn(cmd)
 
-	body := Tag("body")(Name("data-domi-session")(s.id))(view)
-	root := lowerOne(s.sv.document(title, body))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if _, err := io.WriteString(w, "<!doctype html>"); err != nil {
 		s.logger.DebugContext(ctx, "response", "error", err)
@@ -189,7 +198,8 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 
 	cmd := s.app.Update(ctx, msg)
 	title, view := s.app.View(ctx)
-	next := lower(view)
+	next, h := lower(view)
+	s.handlers = s.handlers.merge(h)
 	patches := vdom.Diff(s.view, next)
 
 	// Effect order is the client's execution order. A PushURL goes first
@@ -345,7 +355,7 @@ func (s *session[Msg]) dispatch(ctx context.Context, handler string, event jsont
 		if key == "" {
 			continue
 		}
-		raw, ok := lookupHandler(key)
+		raw, ok := s.handler(key)
 		if !ok {
 			s.logger.WarnContext(ctx, "unknown msg", "key", key)
 			continue
@@ -362,6 +372,15 @@ func (s *session[Msg]) dispatch(ctx context.Context, handler string, event jsont
 		}
 		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
 	}
+}
+
+// handler returns the marshaled Msg registered under key for this
+// session, or false if the session never rendered it.
+func (s *session[Msg]) handler(key string) ([]byte, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	raw, ok := s.handlers[key]
+	return raw, ok
 }
 
 // touch defers the idle timeout.
@@ -560,7 +579,8 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 		s.appendFrame(frame{Effects: []effect{{Type: effectDeletePreview, URL: href}}})
 		return
 	}
-	next := lower(view)
+	next, h := lower(view)
+	s.handlers = s.handlers.merge(h)
 	id := rand.Text()
 	p := &preview{url: href, view: next, title: title}
 	p.addView(id, s.view, s.title)

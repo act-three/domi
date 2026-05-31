@@ -10,7 +10,7 @@ import (
 
 func renderSafe(t *testing.T, s string) string {
 	t.Helper()
-	nodes := lower(Safe(s))
+	nodes, _ := lower(Safe(s))
 	var buf strings.Builder
 	for _, n := range nodes {
 		_ = vdom.RenderTo(&buf, n)

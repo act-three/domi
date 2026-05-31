@@ -92,6 +92,7 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 	const replayWindow = 128
 	ctx, cancel := context.WithCancel(context.Background())
 	_, view := app.View(ctx)
+	nodes, h := lower(view)
 	return &session[Msg]{
 		ctx:    ctx,
 		cancel: cancel,
@@ -104,10 +105,11 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 			onURLChange:  func(*url.URL) Msg { var zero Msg; return zero },
 			onURLRequest: func(URLRequest) Msg { var zero Msg; return zero },
 		},
-		log:    make([]frame, replayWindow),
-		base:   baseInitial,
-		view:   lower(view),
-		active: time.Now(),
+		log:      make([]frame, replayWindow),
+		base:     baseInitial,
+		view:     nodes,
+		handlers: h,
+		active:   time.Now(),
 	}
 }
 
@@ -181,8 +183,11 @@ func TestHandleEventDispatch(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
 
-	key := registerHandler([]byte("1")) // an int Msg for counterApp
-	body := fmt.Sprintf(`{"Type":"Dispatch","Handler":%q}`, key)
+	// Register an int Msg (counterApp's Msg type) the way On would, then
+	// dispatch its key.
+	a := On("click")(1).(attr)
+	s.handlers = s.handlers.merge(a.handlers)
+	body := fmt.Sprintf(`{"Type":"Dispatch","Handler":%q}`, a.attr.Value)
 	rec := httptest.NewRecorder()
 	s.handleEvent(rec, httptest.NewRequest("POST", "/event/x", strings.NewReader(body)))
 
@@ -830,7 +835,7 @@ func TestSessionCommitPreviewInstallsView(t *testing.T) {
 	if s.title != "/next" {
 		t.Fatalf("title = %q, want %q", s.title, "/next")
 	}
-	want := lower(Tag("div")()(Text("/next-0")))
+	want, _ := lower(Tag("div")()(Text("/next-0")))
 	if !reflect.DeepEqual(s.view, want) {
 		t.Fatalf("committed view = %+v, want the previewed page", s.view)
 	}
@@ -840,7 +845,7 @@ func TestSessionCommitPreviewInstallsView(t *testing.T) {
 	if !ok {
 		t.Fatal("committed outgoing view should move into the snapshot cache")
 	}
-	if outgoing := lower(Tag("div")()(Text("/-0"))); !reflect.DeepEqual(sn.view, outgoing) {
+	if outgoing, _ := lower(Tag("div")()(Text("/-0"))); !reflect.DeepEqual(sn.view, outgoing) {
 		t.Fatalf("promoted snapshot view = %+v, want the outgoing page", sn.view)
 	}
 }
@@ -938,7 +943,7 @@ func TestSessionSnapshotRestore(t *testing.T) {
 	origTitle := s.title
 
 	// Cache a different view under a snapshot id.
-	otherView := lower(Tag("div")()(Text("other")))
+	otherView, _ := lower(Tag("div")()(Text("other")))
 	s.cacheSnapshot("snap1", otherView, "other title")
 
 	s.restoreSnapshot("snap1")
@@ -966,7 +971,7 @@ func TestSessionSnapshotRestore(t *testing.T) {
 func TestSessionSnapshotEviction(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	view := lower(Tag("div")()(Text("x")))
+	view, _ := lower(Tag("div")()(Text("x")))
 	for i := range snapshotCacheSize + 5 {
 		s.cacheSnapshot(fmt.Sprintf("s%d", i), view, "t")
 	}

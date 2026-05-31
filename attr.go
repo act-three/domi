@@ -40,10 +40,12 @@ type Attr interface {
 	isAttr()
 }
 
-// attr is the domi-side wrapper around [vdom.Attr]: a zero-cost type
-// def that adds isAttr. Construction uses struct literals with
-// vdom.Attr's field names; lowering is a free cast.
-type attr vdom.Attr
+// attr is the lowered form of an [Attr]: the [vdom.Attr] to render plus
+// the event handlers it carries.
+type attr struct {
+	attr     vdom.Attr
+	handlers handlers
+}
 
 func (attr) isAttr() {}
 
@@ -51,7 +53,7 @@ func (attr) isAttr() {}
 // Call it to obtain an [Attr] with the given value (e.g. class="foo").
 func Name(name string) func(value string) Attr {
 	return func(value string) Attr {
-		return attr{Name: name, Value: value}
+		return attr{vdom.Attr{Name: name, Value: value}, nil}
 	}
 }
 
@@ -72,14 +74,14 @@ func Bool(name string) func(bool) Attr {
 	if enumeratedBool[name] {
 		return func(v bool) Attr {
 			if v {
-				return attr{Name: name, Value: "true"}
+				return attr{vdom.Attr{Name: name, Value: "true"}, nil}
 			}
-			return attr{Name: name, Value: "false"}
+			return attr{vdom.Attr{Name: name, Value: "false"}, nil}
 		}
 	}
 	return func(v bool) Attr {
 		if v {
-			return attr{Name: name}
+			return attr{vdom.Attr{Name: name}, nil}
 		}
 		return Group()
 	}
@@ -96,13 +98,9 @@ var enumeratedBool = map[string]bool{
 	"translate":       true,
 }
 
-// group is the lowered form of a [Group]: a sequence of vdom.Attrs that
-// splats into a parent's attribute list. group satisfies Attr but not
-// attr — the parent collects it into its own Attrs slice rather than
-// walking it as an interior attribute. Nested groups compose by
-// chaining iter.Seqs, so flattening is lazy and adds no per-level
-// overhead.
-type group iter.Seq[vdom.Attr]
+// group is the lowered form of a [Group]: a sequence of attrs that
+// splats into a parent's attribute list.
+type group iter.Seq[attr]
 
 func (group) isAttr() {}
 
@@ -113,11 +111,11 @@ func (group) isAttr() {}
 //
 // Groups may be nested arbitrarily.
 func Group(a ...Attr) Attr {
-	return group(func(yield func(vdom.Attr) bool) {
+	return group(func(yield func(attr) bool) {
 		for _, a := range a {
 			switch v := a.(type) {
 			case attr:
-				if !yield(vdom.Attr(v)) {
+				if !yield(v) {
 					return
 				}
 			case group:
@@ -131,6 +129,23 @@ func Group(a ...Attr) Attr {
 			}
 		}
 	})
+}
+
+// lower collects handlers from g's member attrs
+// and returns the attrs and handlers separately.
+func (g group) lower() (iter.Seq[vdom.Attr], handlers) {
+	var h handlers
+	for a := range g {
+		h = h.merge(a.handlers)
+	}
+	f := func(yield func(vdom.Attr) bool) {
+		for a := range g {
+			if !yield(a.attr) {
+				return
+			}
+		}
+	}
+	return f, h
 }
 
 // RegisterCombining registers name as a "combining" attribute.

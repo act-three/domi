@@ -4,10 +4,30 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"hash/fnv"
+	"maps"
 	"reflect"
 	"strconv"
-	"sync"
+
+	"ily.dev/domi/internal/vdom"
 )
+
+// A handlers maps a content-hash key to a marshaled Msg.
+type handlers map[string][]byte
+
+// merge adds src's entries to dst and returns the result, allocating
+// only when dst is nil and src is non-empty. dst is mutated in place, so
+// the caller must own it; src is only read. Either may be nil, so a
+// handler-free subtree never allocates a map.
+func (dst handlers) merge(src handlers) handlers {
+	if len(src) == 0 {
+		return dst
+	}
+	if dst == nil {
+		dst = make(handlers, len(src))
+	}
+	maps.Copy(dst, src)
+	return dst
+}
 
 // On returns a builder for an attribute that binds msg to event
 // on the resulting element.
@@ -36,7 +56,13 @@ func On(event string) func(msg any) Attr {
 		if err != nil {
 			panic(fmt.Errorf("bad msg for %s: %w", event, err))
 		}
-		return attr{Name: "data-msg-" + event, Value: registerHandler(raw)}
+		h := fnv.New64a()
+		h.Write(raw)
+		key := strconv.FormatUint(h.Sum64(), 16)
+		return attr{
+			attr:     vdom.Attr{Name: "data-msg-" + event, Value: key},
+			handlers: handlers{key: raw},
+		}
 	}
 }
 
@@ -74,31 +100,3 @@ func eventFieldIndex(v reflect.Value) []int {
 	}
 	return nil
 }
-
-func registerHandler(raw []byte) string {
-	h := fnv.New64a()
-	h.Write(raw)
-	key := strconv.FormatUint(h.Sum64(), 16)
-	handlersMu.Lock()
-	handlers[key] = raw
-	handlersMu.Unlock()
-	return key
-}
-
-func lookupHandler(key string) ([]byte, bool) {
-	handlersMu.RLock()
-	raw, ok := handlers[key]
-	handlersMu.RUnlock()
-	return raw, ok
-}
-
-// Process-wide registry of event-handler messages, keyed by a content
-// hash of the marshaled Msg JSON. On() inserts; serve.go's handleEvent
-// looks up. The map is content-addressable, so identical Msgs from any
-// session share a slot; size is bounded by the number of distinct Msg
-// values constructed by all running apps, which is small in practice
-// (TEA apps have a handful of variants, sometimes parameterized by IDs).
-var (
-	handlersMu sync.RWMutex
-	handlers   = map[string][]byte{}
-)
