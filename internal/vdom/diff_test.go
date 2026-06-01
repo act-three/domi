@@ -487,7 +487,7 @@ func okeyed(entries ...okEntry) Element {
 	for i, e := range entries {
 		keys[i] = e.key
 		children[i] = NewElement("div",
-			attrs(at("data-domi-key", e.key), at(attrOpaque, "")),
+			attrs(at("data-domi-key", e.key), Opaque),
 			[]Node{tx(e.body)}, nil)
 	}
 	return NewElement("main", attrs(), children, keys)
@@ -508,7 +508,7 @@ func TestOpaqueFreezesSubtree(t *testing.T) {
 func TestOpaqueFreezesOwnAttrs(t *testing.T) {
 	child := func(class string) Node {
 		return NewElement("div",
-			attrs(at("class", class), at("data-domi-key", "v"), at(attrOpaque, "")),
+			attrs(at("class", class), at("data-domi-key", "v"), Opaque),
 			nil, nil)
 	}
 	a := NewElement("main", attrs(), []Node{child("x")}, []string{"v"})
@@ -582,7 +582,7 @@ func TestOpaqueKeyChangeRemounts(t *testing.T) {
 // framework with a clean Replace.
 func TestOpaqueToggleReplaces(t *testing.T) {
 	opaque := NewElement("main", attrs(), []Node{
-		NewElement("div", attrs(at("data-domi-key", "k"), at(attrOpaque, "")), []Node{tx("x")}, nil),
+		NewElement("div", attrs(at("data-domi-key", "k"), Opaque), []Node{tx("x")}, nil),
 	}, []string{"k"})
 	plain := NewElement("main", attrs(), []Node{
 		NewElement("div", attrs(at("data-domi-key", "k")), []Node{tx("x")}, nil),
@@ -601,7 +601,7 @@ func TestOpaquePositionalChildPanics(t *testing.T) {
 			t.Fatal("expected panic for opaque positional child")
 		}
 	}()
-	opaque := NewElement("div", attrs(at(attrOpaque, "")), nil, nil)
+	opaque := NewElement("div", attrs(Opaque), nil, nil)
 	_ = NewElement("section", attrs(), []Node{opaque}, nil)
 }
 
@@ -613,6 +613,6 @@ func TestOpaqueRootPanics(t *testing.T) {
 			t.Fatal("expected panic for opaque root node")
 		}
 	}()
-	opaque := NewElement("div", attrs(at(attrOpaque, "")), nil, nil)
+	opaque := NewElement("div", attrs(Opaque), nil, nil)
 	_ = Diff(nil, []Node{opaque})
 }
