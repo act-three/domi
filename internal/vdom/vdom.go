@@ -10,6 +10,7 @@
 package vdom
 
 import (
+	"cmp"
 	"iter"
 	"slices"
 	"strings"
@@ -44,9 +45,9 @@ type Element struct {
 
 func (Element) vdomNode() {}
 
-// attrOpaque marks an element as client-owned; its presence sets
-// [Element.opaque]. See [ily.dev/domi.Opaque] for the contract.
-const attrOpaque = "data-domi-opaque"
+// Opaque marks an element to be skipped by the differ,
+// so client javascript can own its DOM state.
+var Opaque Attr = Attr{Internal: true, Name: "opaque"}
 
 // NewElement constructs an [Element]. Pass nil for keys to build a
 // positional element; pass a slice (even empty) parallel to children
@@ -55,14 +56,26 @@ const attrOpaque = "data-domi-opaque"
 // Attrs are sorted by name and deduplicated according to the combining rules.
 func NewElement(tag string, attrs iter.Seq[Attr], children []Node, keys []string) Element {
 	a := slices.Collect(attrs)
-	slices.SortStableFunc(a, cmpAttrName)
-	a = combineAttrs(a)
-	_, opaque := slices.BinarySearchFunc(a, Attr{Name: attrOpaque}, cmpAttrName)
+	slices.SortStableFunc(a, Attr.cmp)
+
+	e := Element{tag: tag, keys: keys}
+
+	for len(a) > 0 && a[0].Internal {
+		switch a[0].Name {
+		case Opaque.Name:
+			e.opaque = true
+		}
+		a = a[1:]
+	}
+
 	if keys == nil {
 		opaqueMustBeKeyed(children)
 		children = coalesceText(children)
 	}
-	return Element{tag: tag, attrs: a, children: children, keys: keys, opaque: opaque}
+
+	e.attrs = combineAttrs(a)
+	e.children = children
+	return e
 }
 
 // opaqueMustBeKeyed panics if nodes holds an opaque element.
@@ -76,8 +89,21 @@ func opaqueMustBeKeyed(nodes []Node) {
 	}
 }
 
-func cmpAttrName(a, b Attr) int {
-	return strings.Compare(a.Name, b.Name)
+// cmp orders internal attrs to the head,
+// so NewElement can slice them off easily.
+func (a Attr) cmp(b Attr) int {
+	return cmp.Or(
+		cmp.Compare(a.rank(), b.rank()),
+		strings.Compare(a.Name, b.Name),
+	)
+}
+
+// rank places internal attrs (0) ahead of real ones (1).
+func (a Attr) rank() int {
+	if a.Internal {
+		return 0
+	}
+	return 1
 }
 
 // WithAttr returns a copy of e with a single additional attribute
@@ -85,7 +111,7 @@ func cmpAttrName(a, b Attr) int {
 // inject the data-domi-key attribute onto child elements without
 // mutating the original.
 func (e Element) WithAttr(a Attr) Element {
-	i, _ := slices.BinarySearchFunc(e.attrs, a, cmpAttrName)
+	i, _ := slices.BinarySearchFunc(e.attrs, a, Attr.cmp)
 	out := make([]Attr, len(e.attrs)+1)
 	copy(out, e.attrs[:i])
 	out[i] = a
@@ -103,10 +129,14 @@ type Text string
 
 func (Text) vdomNode() {}
 
-// Attr is a flat name/value attribute pair.
+// Attr is an HTML attribute or an internal attribute.
+//
+// An internal attribute modifies the vdom behavior in some way,
+// and is not sent over the wire.
 type Attr struct {
-	Name  string
-	Value string
+	Name     string
+	Value    string
+	Internal bool
 }
 
 // combineAttrs resolves duplicate attribute names.

@@ -555,6 +555,21 @@ func TestOpaqueKeyedChildFreezes(t *testing.T) {
 	}
 }
 
+// Opaque is an internal construction directive, not an HTML attribute, so
+// it never reaches the rendered output — unlike data-domi-key, which the
+// client reads and which stays in the markup.
+func TestOpaqueNotRendered(t *testing.T) {
+	html := vdom.Render(lowerOneNode(Keyed("ul")()(func(yield func(string, Node) bool) {
+		yield("a", Tag("li")(Opaque, Name("class")("widget"))(Text("x")))
+	})))
+	if strings.Contains(html, "opaque") {
+		t.Fatalf("internal opaque marker leaked into HTML: %q", html)
+	}
+	if !strings.Contains(html, `data-domi-key="a"`) {
+		t.Fatalf("keyed child should still render its key: %q", html)
+	}
+}
+
 // An opaque node placed positionally rather than as a keyed child panics,
 // so the safety property can't be requested where the differ can't honor
 // it. The panic originates in the vdom layer but surfaces here at the

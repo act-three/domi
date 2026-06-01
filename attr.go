@@ -21,8 +21,13 @@ var (
 	//
 	// An opaque element must be a keyed child. See [Keyed].
 	// Inserting an opaque node anywhere else panics.
-	Opaque = Bool("data-domi-opaque")(true)
+	Opaque Attr = internal(vdom.Opaque)
 )
+
+// internal returns vdom "internal" attribute a as an Attr.
+func internal(a vdom.Attr) Attr {
+	return attr{attr: a}
+}
 
 // An Attr is an HTML attribute.
 //
