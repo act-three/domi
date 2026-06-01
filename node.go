@@ -3,7 +3,6 @@ package domi
 import (
 	"fmt"
 	"iter"
-	"slices"
 
 	"ily.dev/domi/internal/vdom"
 )
@@ -16,20 +15,18 @@ type Node interface {
 	isNode()
 }
 
-// node is the lowered form of a Node, satisfied only by element and
-// text. Public constructors lower their inputs to nodes at construction
-// time; the lowered() method then yields the corresponding vdom.Node
-// so the renderer and differ can operate on a tree they own.
+// node is the lowered form of a Node, satisfied only by element and text.
+// Public constructors lower their inputs to vdom nodes at construction time.
 type node interface {
 	Node
-	lowered() vdom.Node
+	lowered() (vdom.Node, handlers)
 }
 
 // text is the domi-side wrapper around [vdom.Text].
 type text vdom.Text
 
-func (text) isNode()              {}
-func (t text) lowered() vdom.Node { return vdom.Text(t) }
+func (text) isNode()                          {}
+func (t text) lowered() (vdom.Node, handlers) { return vdom.Text(t), nil }
 
 // Text returns a text node. The string is escaped for safe embedding
 // in HTML when rendered; use [UnsafeParseRaw] for trusted HTML markup.
@@ -54,13 +51,18 @@ type Element func(...Node) Node
 
 func (Element) isNode() {}
 
-// element is the domi-side wrapper around [vdom.Element]: a zero-cost
-// type def that adds isNode and lowered. Construction uses struct
-// literals with vdom.Element's field names; lowering is a free cast.
-type element vdom.Element
+// element is the lowered form of an element [Node]: the [vdom.Element]
+// to render plus the event handlers harvested from its own attributes
+// and its entire subtree.
+type element struct {
+	elem     vdom.Element
+	handlers handlers
+}
 
-func (element) isNode()              {}
-func (e element) lowered() vdom.Node { return vdom.Element(e) }
+func (element) isNode() {}
+func (e element) lowered() (vdom.Node, handlers) {
+	return e.elem, e.handlers
+}
 
 // Tag returns a curried builder for an HTML element with the given name.
 // Its first call takes attributes, and the second takes children.
@@ -79,9 +81,11 @@ func (e element) lowered() vdom.Node { return vdom.Element(e) }
 // See [Keyed] to use opaque nodes.
 func Tag(name string) func(...Attr) Element {
 	return func(attrs ...Attr) Element {
-		a := iter.Seq[vdom.Attr](Group(attrs...).(group))
+		a, ah := Group(attrs...).(group).lower()
 		return func(children ...Node) Node {
-			return element(vdom.NewElement(name, a, lower(children...), nil))
+			n, ch := lower(children...)
+			h := handlers(nil).merge(ch).merge(ah)
+			return element{vdom.NewElement(name, a, n, nil), h}
 		}
 	}
 }
@@ -111,10 +115,11 @@ func Tag(name string) func(...Attr) Element {
 // See [Opaque] for details on its behavior.
 func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 	return func(attrs ...Attr) func(iter.Seq2[string, Node]) Node {
-		a := iter.Seq[vdom.Attr](Group(attrs...).(group))
+		a, ah := Group(attrs...).(group).lower()
 		return func(seq iter.Seq2[string, Node]) Node {
 			var keys []string
 			var children []vdom.Node
+			var h handlers
 			for k, n := range seq {
 				if e, ok := n.(Element); ok {
 					n = e()
@@ -123,22 +128,20 @@ func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 				if !ok {
 					panic(fmt.Sprintf("domi: keyed child %q must be an element, got %T", k, n))
 				}
-				keyed := vdom.Element(v).WithAttr(vdom.Attr{Name: "data-domi-key", Value: k})
+				keyed := v.elem.WithAttr(vdom.Attr{Name: "data-domi-key", Value: k})
 				keys = append(keys, k)
 				children = append(children, keyed)
+				h = h.merge(v.handlers)
 			}
-			return element(vdom.NewElement(name, a, children, keys))
+			h = h.merge(ah)
+			return element{vdom.NewElement(name, a, children, keys), h}
 		}
 	}
 }
 
-// fragment is the lowered form of a [Fragment]: a sequence of vdom.Nodes
-// that splats into a parent's child list. fragment satisfies Node but
-// not node — the parent collects it into its own children slice rather
-// than walking it as an interior node. Nested fragments compose by
-// chaining iter.Seqs, so flattening is lazy and adds no per-level
-// overhead.
-type fragment iter.Seq[vdom.Node]
+// fragment is the lowered form of a [Fragment]: a sequence of vdom.Nodes,
+// each paired with its harvested handlers.
+type fragment iter.Seq2[vdom.Node, handlers]
 
 func (fragment) isNode() {}
 
@@ -151,7 +154,7 @@ func (fragment) isNode() {}
 // A Fragment cannot be keyed.
 // [Keyed] children must each be a single element with an identity.
 func Fragment(n ...Node) Node {
-	return fragment(func(yield func(vdom.Node) bool) {
+	return fragment(func(yield func(vdom.Node, handlers) bool) {
 		for _, c := range n {
 			switch v := c.(type) {
 			case nil:
@@ -161,8 +164,8 @@ func Fragment(n ...Node) Node {
 					return
 				}
 			case fragment:
-				for n := range v {
-					if !yield(n) {
+				for n, h := range v {
+					if !yield(n, h) {
 						return
 					}
 				}
@@ -180,17 +183,21 @@ func Fragment(n ...Node) Node {
 // lower flattens nodes into their lowered vdom.Node form, expanding
 // any [Fragment] entries inline so the result is a flat slice of
 // element and text nodes ready for vdom rendering or diffing.
-func lower(nodes ...Node) []vdom.Node {
-	return slices.Collect(iter.Seq[vdom.Node](Fragment(nodes...).(fragment)))
+func lower(nodes ...Node) (n []vdom.Node, h handlers) {
+	for nn, hh := range Fragment(nodes...).(fragment) {
+		n = append(n, nn)
+		h = h.merge(hh)
+	}
+	return n, h
 }
 
 // lowerOne narrows a single Node to its lowered vdom.Node form,
 // panicking if n materializes to anything other than exactly one node
 // (e.g. a Fragment with zero or multiple children).
-func lowerOne(n Node) vdom.Node {
-	out := lower(n)
-	if len(out) != 1 {
-		panic(fmt.Sprintf("domi: expected 1 node, got %d", len(out)))
+func lowerOne(n Node) (vdom.Node, handlers) {
+	ns, h := lower(n)
+	if len(ns) != 1 {
+		panic(fmt.Sprintf("domi: expected 1 node, got %d", len(ns)))
 	}
-	return out[0]
+	return ns[0], h
 }

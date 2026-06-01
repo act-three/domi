@@ -8,10 +8,18 @@ type plainMsg struct {
 	Tag string `json:"t"`
 }
 
+// handlerMsg returns the marshaled Msg an On() attr carries under its
+// content-hash key — the bytes the session would register and later feed
+// to Update when the event fires.
+func handlerMsg(a attr) ([]byte, bool) {
+	raw, ok := a.handlers[a.attr.Value]
+	return raw, ok
+}
+
 // A Msg without a tagged event field round-trips unchanged.
 func TestSpliceNoEventField(t *testing.T) {
 	a := On("click")(plainMsg{"hi"}).(attr)
-	raw, ok := lookupHandler(a.Value)
+	raw, ok := handlerMsg(a)
 	if !ok {
 		t.Fatal("handler not registered")
 	}
@@ -39,7 +47,7 @@ func TestSpliceWithEventField(t *testing.T) {
 		Event evt    `domi:"event" json:"event"`
 	}
 	a := On("input")(msg{Tag: "EditName"}).(attr)
-	raw, _ := lookupHandler(a.Value)
+	raw, _ := handlerMsg(a)
 	blob := []byte(`{"type":"input","target":{"tag":"input","name":"name","value":"Em"}}`)
 	got, err := unmarshalMsg[msg](raw, blob)
 	if err != nil {
@@ -66,8 +74,8 @@ func TestPrefilledEventFieldDoesNotAffectHash(t *testing.T) {
 	}
 	a := On("click")(msg{Tag: "X"}).(attr)
 	b := On("click")(msg{Tag: "X", Event: evt{Type: "click", Key: "Enter"}}).(attr)
-	if a.Value != b.Value {
-		t.Fatalf("hash diverged on pre-fill; got %q vs %q", a.Value, b.Value)
+	if a.attr.Value != b.attr.Value {
+		t.Fatalf("hash diverged on pre-fill; got %q vs %q", a.attr.Value, b.attr.Value)
 	}
 }
 
@@ -85,8 +93,8 @@ func TestSpliceMultipleHandlersSameEvent(t *testing.T) {
 	a := On("keydown")(msg{Tag: "Save"}).(attr)
 	b := On("keydown")(msg{Tag: "DraftAutosave"}).(attr)
 	blob := []byte(`{"type":"keydown","key":"s","ctrl":true,"target":{"tag":"input"}}`)
-	for _, hv := range []string{a.Value, b.Value} {
-		raw, _ := lookupHandler(hv)
+	for _, h := range []attr{a, b} {
+		raw, _ := handlerMsg(h)
 		got, err := unmarshalMsg[msg](raw, blob)
 		if err != nil {
 			t.Fatalf("splice: %v", err)
@@ -107,7 +115,7 @@ func TestSpliceFormFields(t *testing.T) {
 		Event evt    `domi:"event" json:"event"`
 	}
 	a := On("submit")(msg{Tag: "Save"}).(attr)
-	raw, _ := lookupHandler(a.Value)
+	raw, _ := handlerMsg(a)
 	blob := []byte(`{"type":"submit","target":{"tag":"form"},"form":{"name":"Em","email":"e@x"}}`)
 	got, _ := unmarshalMsg[msg](raw, blob)
 	if got.Event.Form["name"] != "Em" || got.Event.Form["email"] != "e@x" {
@@ -126,7 +134,7 @@ func TestMultipleEventFieldsFirstWins(t *testing.T) {
 		B evt `domi:"event" json:"b"`
 	}
 	a := On("click")(msg{}).(attr)
-	raw, _ := lookupHandler(a.Value)
+	raw, _ := handlerMsg(a)
 	got, err := unmarshalMsg[msg](raw, []byte(`{"type":"click"}`))
 	if err != nil {
 		t.Fatalf("splice: %v", err)
@@ -142,7 +150,7 @@ func TestMultipleEventFieldsFirstWins(t *testing.T) {
 // Non-struct Msg (e.g. a string) is fine — no event field, no panic.
 func TestNonStructMsg(t *testing.T) {
 	a := On("click")("hello").(attr)
-	raw, _ := lookupHandler(a.Value)
+	raw, _ := handlerMsg(a)
 	got, err := unmarshalMsg[string](raw, []byte(`{"type":"click"}`))
 	if err != nil {
 		t.Fatalf("splice: %v", err)
@@ -163,7 +171,7 @@ func TestSpliceEmptyBlob(t *testing.T) {
 		Event evt    `domi:"event" json:"event"`
 	}
 	a := On("click")(msg{Tag: "Tick"}).(attr)
-	raw, _ := lookupHandler(a.Value)
+	raw, _ := handlerMsg(a)
 	got, err := unmarshalMsg[msg](raw, nil)
 	if err != nil {
 		t.Fatalf("splice: %v", err)
