@@ -105,24 +105,6 @@ func TestSpliceMultipleHandlersSameEvent(t *testing.T) {
 	}
 }
 
-// Form fields land in the tagged field's Form map when the JS sends them.
-func TestSpliceFormFields(t *testing.T) {
-	type evt struct {
-		Form map[string]string `json:"form"`
-	}
-	type msg struct {
-		Tag   string `json:"t"`
-		Event evt    `domi:"event" json:"event"`
-	}
-	a := On("submit")(msg{Tag: "Save"}).(attr)
-	raw, _ := handlerMsg(a)
-	blob := []byte(`{"type":"submit","target":{"tag":"form"},"form":{"name":"Em","email":"e@x"}}`)
-	got, _ := unmarshalMsg[msg](raw, blob)
-	if got.Event.Form["name"] != "Em" || got.Event.Form["email"] != "e@x" {
-		t.Fatalf("form not spliced: %+v", got.Event.Form)
-	}
-}
-
 // When a Msg has more than one `domi:"event"` field, the first one in
 // declaration order wins; later ones are ignored.
 func TestMultipleEventFieldsFirstWins(t *testing.T) {

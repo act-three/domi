@@ -20,18 +20,17 @@ import "ily.dev/domi"
 // use any struct type with matching JSON tags — Event is just a
 // convenient shape that captures everything the client sends.
 type Event struct {
-	Type    string            `json:"type"`
-	Key     string            `json:"key,omitempty"`
-	Code    string            `json:"code,omitempty"`
-	Button  int               `json:"button,omitempty"`
-	ClientX int               `json:"clientX,omitempty"`
-	ClientY int               `json:"clientY,omitempty"`
-	Ctrl    bool              `json:"ctrl,omitempty"`
-	Shift   bool              `json:"shift,omitempty"`
-	Alt     bool              `json:"alt,omitempty"`
-	Meta    bool              `json:"meta,omitempty"`
-	Target  Target            `json:"target"`
-	Form    map[string]string `json:"form,omitempty"`
+	Type    string `json:"type"`
+	Key     string `json:"key,omitempty"`
+	Code    string `json:"code,omitempty"`
+	Button  int    `json:"button,omitempty"`
+	ClientX int    `json:"clientX,omitempty"`
+	ClientY int    `json:"clientY,omitempty"`
+	Ctrl    bool   `json:"ctrl,omitempty"`
+	Shift   bool   `json:"shift,omitempty"`
+	Alt     bool   `json:"alt,omitempty"`
+	Meta    bool   `json:"meta,omitempty"`
+	Target  Target `json:"target"`
 }
 
 // Target describes the element the event fired on.
