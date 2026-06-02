@@ -1,6 +1,7 @@
 package domi
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -10,10 +11,12 @@ type plainMsg struct {
 
 // handlerMsg returns the marshaled Msg an On() attr carries under its
 // content-hash key — the bytes the session would register and later feed
-// to Update when the event fires.
+// to Update when the event fires. The attr value may also carry a
+// path set key after a colon; the handler is keyed by the msg part.
 func handlerMsg(a attr) ([]byte, bool) {
-	raw, ok := a.handlers[a.attr.Value]
-	return raw, ok
+	key, _, _ := strings.Cut(a.attr.Value, ":")
+	h, ok := a.handlers[key]
+	return h.msg, ok
 }
 
 // A Msg without a tagged event field round-trips unchanged.
@@ -160,5 +163,50 @@ func TestSpliceEmptyBlob(t *testing.T) {
 	}
 	if got.Event.Type != "" {
 		t.Fatalf("expected zero event, got %+v", got.Event)
+	}
+}
+
+// On with field paths content-addresses the path set and appends its
+// key to the attribute value, after the msg key, so the client can look
+// up the path set. The handler stays keyed by the msg part alone.
+func TestOnPathSet(t *testing.T) {
+	a := On("input", []string{"target", "value"})(plainMsg{Tag: "x"}).(attr)
+	msgKey, psKey, ok := strings.Cut(a.attr.Value, ":")
+	if !ok {
+		t.Fatalf("want msg:ps attr value, got %q", a.attr.Value)
+	}
+	hd, ok := a.handlers[msgKey]
+	if !ok {
+		t.Fatalf("handler not keyed by msg part %q", msgKey)
+	}
+	if psKey != hd.ps.key() {
+		t.Fatalf("attr ps key %q != path set key %q", psKey, hd.ps.key())
+	}
+}
+
+// A path set's content address ignores the order its field paths were
+// given, so equivalent path sets share one client registration.
+func TestPathSetCanonical(t *testing.T) {
+	x := On("click", []string{"clientX"}, []string{"clientY"})(plainMsg{}).(attr)
+	y := On("click", []string{"clientY"}, []string{"clientX"})(plainMsg{}).(attr)
+	_, xk, _ := strings.Cut(x.attr.Value, ":")
+	_, yk, _ := strings.Cut(y.attr.Value, ":")
+	if xk == "" || xk != yk {
+		t.Fatalf("reordered path sets got different keys: %q vs %q", xk, yk)
+	}
+}
+
+// A handler with no field paths still carries a valid (empty) path set,
+// content-addressed and referenced like any other.
+func TestOnEmptyPathSet(t *testing.T) {
+	a := On("click")(plainMsg{Tag: "x"}).(attr)
+	_, psKey, ok := strings.Cut(a.attr.Value, ":")
+	if !ok || psKey == "" {
+		t.Fatalf("want msg:ps attr value, got %q", a.attr.Value)
+	}
+	for _, hd := range a.handlers {
+		if len(hd.ps) != 0 {
+			t.Fatalf("bare handler should have an empty path set, got %v", hd.ps)
+		}
 	}
 }

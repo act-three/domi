@@ -1,5 +1,5 @@
 // domi client — ES module. Exports [run] (the session bootstrap),
-// [applyPatch], and [eventPayload]. Importing the module has no side
+// [applyPatch], and [getFields]. Importing the module has no side
 // effects; callers invoke [run] explicitly. The framework's HTML
 // renderer emits an inline module script that does exactly that.
 
@@ -129,33 +129,27 @@ export function applyPatch(root, p) {
   }
 }
 
-// eventPayload builds the kitchen-sink record sent with every dispatch.
-// The server splices it into any Msg field tagged `domi:"event"`; Msgs
-// without that tag ignore it. Modifier/coordinate fields are omitted
-// when zero so the wire stays small for ordinary clicks.
-export function eventPayload(e) {
-  const t = e.target;
-  const target = { tag: (t.tagName || '').toLowerCase() };
-  if (t.id) target.id = t.id;
-  if (t.name) target.name = t.name;
-  if (t.value !== undefined && t.value !== '') target.value = t.value;
-  if (t.checked) target.checked = true;
-  if (t.dataset) {
-    const data = {};
-    let any = false;
-    for (const k in t.dataset) { data[k] = t.dataset[k]; any = true; }
-    if (any) target.data = data;
+// getFields reads a list of field paths out of e and returns an object
+// with just the resulting values.
+// As a special case, if the first element of a path is "currentTarget",
+// getFields reads the rest of the path from el instead of e.
+// This lets the caller provide appropriate data
+// for the relevant element rather than the global delegated handler.
+//
+// Only values that can be represented in JSON are included,
+// others are skipped.
+export function getFields(e, el, paths) {
+  const out = {};
+  for (const path of paths) {
+    let node = path[0] === 'currentTarget' ? el : e;
+    let i = path[0] === 'currentTarget' ? 1 : 0;
+    for (; i < path.length && node != null; i++) node = node[path[i]];
+    const t = typeof node;
+    if (t !== 'string' && t !== 'number' && t !== 'boolean') continue;
+    let o = out;
+    for (let j = 0; j < path.length - 1; j++) o = o[path[j]] ??= {};
+    o[path[path.length - 1]] = node;
   }
-  const out = { type: e.type, target };
-  if (e.key) out.key = e.key;
-  if (e.code) out.code = e.code;
-  if (e.button) out.button = e.button;
-  if (e.clientX) out.clientX = e.clientX;
-  if (e.clientY) out.clientY = e.clientY;
-  if (e.ctrlKey) out.ctrl = true;
-  if (e.shiftKey) out.shift = true;
-  if (e.altKey) out.alt = true;
-  if (e.metaKey) out.meta = true;
   return out;
 }
 
@@ -192,6 +186,17 @@ export function run() {
   // patch root. App content becomes its children, addressed by patches
   // at [0], [1], …
   let root = container;
+
+  const pathSets = new Map();
+  function addPathSets(obj) {
+    for (const k in obj) pathSets.set(k, obj[k]);
+  }
+  try {
+    addPathSets(JSON.parse(container.dataset.domiPathSets || '{}'));
+  } catch (err) {
+    console.error('domi: bad path sets', err);
+  }
+  delete container.dataset.domiPathSets;
 
   // Snapshot cache for instant back/forward. Maps snapshot ids
   // (server-generated, stored in history.state) to { frag, title }: a
@@ -270,7 +275,15 @@ export function run() {
           const raw = el.dataset && el.dataset[key];
           if (raw) {
             if (ev === 'submit') e.preventDefault();
-            postEnvelope(sessionId, raw, eventPayload(e));
+            const keys = [];
+            const paths = [];
+            for (const tok of raw.split(',')) {
+              const ci = tok.indexOf(':');
+              keys.push(tok.slice(0, ci));
+              const p = pathSets.get(tok.slice(ci + 1));
+              if (p) paths.push(...p);
+            }
+            postEnvelope(sessionId, keys.join(','), getFields(e, el, paths));
             return;
           }
         }
@@ -406,6 +419,9 @@ export function run() {
           break;
         case 'SetTitle':
           document.title = eff.Title ?? '';
+          break;
+        case 'AddPathSets':
+          addPathSets(eff.PathSets);
           break;
         case 'PushURL':
           cacheSnapshot(eff.ID, root, document.title);

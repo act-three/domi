@@ -187,7 +187,9 @@ func TestHandleEventDispatch(t *testing.T) {
 	// dispatch its key.
 	a := On("click")(1).(attr)
 	s.handlers = s.handlers.merge(a.handlers)
-	body := fmt.Sprintf(`{"Type":"Dispatch","Handler":%q}`, a.attr.Value)
+	// The client sends the bare msg key, stripping the pathSet key.
+	key, _, _ := strings.Cut(a.attr.Value, ":")
+	body := fmt.Sprintf(`{"Type":"Dispatch","Handler":%q}`, key)
 	rec := httptest.NewRecorder()
 	s.handleEvent(rec, httptest.NewRequest("POST", "/event/x", strings.NewReader(body)))
 
@@ -1009,4 +1011,46 @@ func TestSessionFrameBase(t *testing.T) {
 		t.Fatalf("expected base %q, got %q", "snap1", s.log[2].Base)
 	}
 	s.mu.Unlock()
+}
+
+// pathSetApp renders one handler carrying a non-empty path set.
+type pathSetApp struct{}
+
+func (pathSetApp) Update(context.Context, int) Cmd[int] { return Batch[int]() }
+func (pathSetApp) View(context.Context) (string, Node) {
+	return "", Tag("input")(On("input", []string{"target", "value"})(1))()
+}
+func (pathSetApp) Subscriptions(context.Context) Sub[int]                 { return Sub[int]{} }
+func (pathSetApp) Preview(context.Context, *url.URL) (string, Node, bool) { return "", nil, false }
+
+// The initial render seeds the client's path-set map from the same
+// handlers it renders, so a handler's path set ships with the first page
+// instead of waiting for a resync. The body attribute and s.pathSets are
+// built from one harvest; this guards their ordering in handleRoot.
+func TestHandleRootSeedsPathSets(t *testing.T) {
+	sv := newServer(
+		func(context.Context, *url.URL) (pathSetApp, Cmd[int]) { return pathSetApp{}, Batch[int]() },
+		func(URLRequest) int { return 0 },
+		func(*url.URL) int { return 0 },
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	sv.handleRoot(rec, httptest.NewRequest("GET", "/", nil))
+	html := rec.Body.String()
+
+	// The input handler's path-set key must appear in the seed blob, not
+	// only in the data-msg-input attribute that references it.
+	a := On("input", []string{"target", "value"})(1).(attr)
+	_, psKey, _ := strings.Cut(a.attr.Value, ":")
+
+	const marker = `data-domi-path-sets="`
+	i := strings.Index(html, marker)
+	if i < 0 {
+		t.Fatalf("no %s attribute in render:\n%s", marker, html)
+	}
+	blob := html[i+len(marker):]
+	blob = blob[:strings.IndexByte(blob, '"')]
+	if !strings.Contains(blob, psKey) {
+		t.Fatalf("path set %q not seeded into body blob %q", psKey, blob)
+	}
 }
