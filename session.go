@@ -9,6 +9,7 @@ import (
 	"io"
 	"iter"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -34,11 +35,12 @@ type session[Msg any] struct {
 	mu           sync.Mutex // protects the following fields
 	title        string
 	view         []vdom.Node
-	handlers     handlers       // key → marshaled Msg for every handler the session has rendered
-	log          []frame        // fixed-size ring; log[seq%len(log)] holds frame seq
-	head         uint64         // seq of the most recent frame; 0 if none
-	base         string         // snapshot id the client's DOM is built on
-	sse          *sseAttachment // nil if no current consumer
+	handlers     handlers           // key → handler for every handler the session has rendered
+	pathSets     map[string]pathSet // items already delivered to the client
+	log          []frame            // fixed-size ring; log[seq%len(log)] holds frame seq
+	head         uint64             // seq of the most recent frame; 0 if none
+	base         string             // snapshot id the client's DOM is built on
+	sse          *sseAttachment     // nil if no current consumer
 	active       time.Time
 	subs         map[any]context.CancelFunc // active subscription keys → cancel
 	snapshots    map[string]snapshot        // snapshot id → cached vdom
@@ -69,11 +71,12 @@ type frame struct {
 // against the live document. Type selects which of the remaining fields
 // carry its data.
 type effect struct {
-	Type    effectType
-	Patches []vdom.Patch `json:",omitempty"` // ApplyPatch/SetPreview: DOM patches
-	Title   string       `json:",omitempty"` // SetTitle/SetPreview: the document title
-	URL     string       `json:",omitempty"` // PushURL/ReplaceURL/LoadURL/SetPreview/DeletePreview target
-	ID      string       `json:",omitempty"` // PushURL: outgoing snapshot id; SetPreview: base snapshot id
+	Type     effectType
+	Patches  []vdom.Patch       `json:",omitempty"` // ApplyPatch/SetPreview: DOM patches
+	Title    string             `json:",omitempty"` // SetTitle/SetPreview: the document title
+	URL      string             `json:",omitempty"` // PushURL/ReplaceURL/LoadURL/SetPreview/DeletePreview target
+	ID       string             `json:",omitempty"` // PushURL: outgoing snapshot id; SetPreview: base snapshot id
+	PathSets map[string]pathSet `json:",omitempty"`
 }
 
 type effectType string
@@ -86,6 +89,7 @@ const (
 	effectLoadURL       effectType = "LoadURL"       // full-page navigation, leaving the session
 	effectSetPreview    effectType = "SetPreview"    // hold a rebased link preview for instant navigation
 	effectDeletePreview effectType = "DeletePreview" // drop the held link preview
+	effectAddPathSets   effectType = "AddPathSets"
 )
 
 // nav is the optional navigation side-effect attached to a [cmd]
@@ -143,15 +147,16 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	app, cmd := s.sv.appf(appCtx, req.URL)
 	title, view := app.View(appCtx)
 	s.app = app
-	nodes, _ := lower(view)
+	nodes, h := lower(view)
 	s.title, s.view = title, nodes
+	s.addPathSets(h)
 
-	body := Tag("body")(Name("data-domi-session")(s.id))(view)
-	root, h := lowerOne(s.sv.document(title, body))
-	// Harvest from the whole document, not just the view, so a custom
-	// document that mounts its own handlers is dispatchable too. Set
-	// s.handlers before spawn so a Cmd-driven apply never copies into a
-	// nil map.
+	body := Tag("body")(
+		Name("data-domi-session")(s.id),
+		Name("data-domi-path-sets")(marshalPathSets(s.pathSets)),
+	)(view)
+	// The document shell cannot contain event handlers.
+	root, _ := lowerOne(s.sv.document(title, body))
 	s.handlers = h
 
 	s.updateSubs(app.Subscriptions(appCtx))
@@ -200,14 +205,17 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 	title, view := s.app.View(ctx)
 	next, h := lower(view)
 	s.handlers = s.handlers.merge(h)
+	add := s.addPathSets(h)
 	patches := vdom.Diff(s.view, next)
 
-	// Effect order is the client's execution order. A PushURL goes first
-	// so the client snapshots the outgoing page (its current DOM and
-	// title) and updates history before the DOM patches mutate it; the
-	// SetTitle goes last so that snapshot still captures the old title.
+	// Effect order is the client's execution order.
 	var effects []effect
+	if len(add) > 0 {
+		// Goes before ApplyPatches to be ready for new handlers.
+		effects = append(effects, effect{Type: effectAddPathSets, PathSets: add})
+	}
 	if n != nil {
+		// Goes before ApplyPatches+SetTitle to snapshot outgoing state.
 		switch {
 		case n.push != "":
 			s.cacheSnapshot(n.outgoingID, s.view, s.title)
@@ -216,6 +224,7 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 			effects = append(effects, effect{Type: effectReplaceURL, URL: n.replace})
 		}
 	}
+	// ApplyPatches and SetTitle go together.
 	if len(patches) > 0 {
 		effects = append(effects, effect{Type: effectApplyPatch, Patches: patches})
 	}
@@ -379,8 +388,38 @@ func (s *session[Msg]) dispatch(ctx context.Context, handler string, event jsont
 func (s *session[Msg]) handler(key string) ([]byte, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	raw, ok := s.handlers[key]
-	return raw, ok
+	h, ok := s.handlers[key]
+	return h.msg, ok
+}
+
+// addPathSets adds to s.pathSets
+// the items from h that aren't already there,
+// and returns the newly-added items.
+func (s *session[Msg]) addPathSets(h handlers) map[string]pathSet {
+	var add map[string]pathSet
+	for _, hd := range h {
+		k := hd.ps.key()
+		if _, ok := s.pathSets[k]; ok {
+			continue
+		}
+		if s.pathSets == nil {
+			s.pathSets = make(map[string]pathSet)
+		}
+		s.pathSets[k] = hd.ps
+		if add == nil {
+			add = make(map[string]pathSet)
+		}
+		add[k] = hd.ps
+	}
+	return add
+}
+
+func marshalPathSets(m map[string]pathSet) string {
+	b, err := json.Marshal(m)
+	if err != nil {
+		panic(err)
+	}
+	return string(b)
 }
 
 // touch defers the idle timeout.
@@ -429,12 +468,17 @@ func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	rc.Flush()
 
-	if resync, view, title, head, base := s.needsResync(seen); resync {
-		f := frame{seq: head, Base: base, Effects: []effect{
+	if resync, view, title, head, base, ps := s.needsResync(seen); resync {
+		efs := []effect{}
+		if len(ps) > 0 {
+			efs = append(efs, effect{Type: effectAddPathSets, PathSets: ps})
+		}
+		efs = append(efs, []effect{
 			{Type: effectApplyPatch, Patches: []vdom.Patch{vdom.Reset(view)}},
 			{Type: effectSetTitle, Title: title},
 			{Type: effectDeletePreview},
-		}}
+		}...)
+		f := frame{seq: head, Base: base, Effects: efs}
 		if err := writeFrame(w, rc, f); err != nil {
 			s.logger.DebugContext(req.Context(), "sse", "error", err)
 			return
@@ -504,7 +548,7 @@ func (s *session[Msg]) detachSSE(att *sseAttachment) {
 // decision so the caller can write the resync frame against a single
 // consistent snapshot — without it, head could advance between the
 // decision and the write.
-func (s *session[Msg]) needsResync(seen uint64) (resync bool, view []vdom.Node, title string, head uint64, base string) {
+func (s *session[Msg]) needsResync(seen uint64) (resync bool, view []vdom.Node, title string, head uint64, base string, ps map[string]pathSet) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	head = s.head
@@ -514,9 +558,9 @@ func (s *session[Msg]) needsResync(seen uint64) (resync bool, view []vdom.Node, 
 		oldest = head - n + 1
 	}
 	if seen+1 < oldest || seen > head {
-		return true, s.view, s.title, head, base
+		return true, s.view, s.title, head, base, maps.Clone(s.pathSets)
 	}
-	return false, nil, "", head, base
+	return false, nil, "", head, base, nil
 }
 
 func (s *session[Msg]) framesSince(seen uint64) []frame {
@@ -581,17 +625,23 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 	}
 	next, h := lower(view)
 	s.handlers = s.handlers.merge(h)
+	add := s.addPathSets(h)
 	id := rand.Text()
 	p := &preview{url: href, view: next, title: title}
 	p.addView(id, s.view, s.title)
 	s.preview = p
-	s.appendFrame(frame{Base: s.base, Effects: []effect{{
+	var effects []effect
+	if len(add) > 0 {
+		effects = append(effects, effect{Type: effectAddPathSets, PathSets: add})
+	}
+	effects = append(effects, effect{
 		Type:    effectSetPreview,
 		Patches: vdom.Diff(s.view, next),
 		Title:   title,
 		URL:     href,
 		ID:      id,
-	}}})
+	})
+	s.appendFrame(frame{Base: s.base, Effects: effects})
 }
 
 // commitPreview installs the outstanding preview as the current view.

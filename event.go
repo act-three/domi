@@ -6,13 +6,38 @@ import (
 	"hash/fnv"
 	"maps"
 	"reflect"
+	"slices"
 	"strconv"
 
 	"ily.dev/domi/internal/vdom"
 )
 
-// A handlers maps a content-hash key to a marshaled Msg.
-type handlers map[string][]byte
+// A handlers maps a content-hash key to its handler.
+type handlers map[string]handler
+
+// A handler is a msg
+// (to be returned to the app when the event happens)
+// and a path set
+// (to be read from the browser's event object).
+type handler struct {
+	msg []byte
+	ps  pathSet
+}
+
+// A pathSet is a set of field paths into a browser event.
+// The client reads the value at each path and returns them to the server.
+type pathSet [][]string
+
+// key returns the hash of p.
+func (p pathSet) key() string {
+	raw, err := json.Marshal([][]string(p))
+	if err != nil {
+		panic(err) // a [][]string is always marshalable
+	}
+	h := fnv.New64a()
+	h.Write(raw)
+	return strconv.FormatUint(h.Sum64(), 16)
+}
 
 // merge adds src's entries to dst and returns the result, allocating
 // only when dst is nil and src is non-empty. dst is mutated in place, so
@@ -37,13 +62,17 @@ func (dst handlers) merge(src handlers) handlers {
 // Multiple On(event)(...) attributes on the same element all fire
 // when the event occurs.
 //
-// If msg has a field tagged domi:"event",
-// the framework unmarshals the event into that field.
-// See [ily.dev/domi/event.Event] for a convenience type
-// that captures everything the client sends.
+// Each field is a path of property names into the browser event.
+// The client reads the value at each path,
+// and the framework unmarshals the collected values
+// into the msg field tagged domi:"event", if any.
+// For example, On("input", []string{"target", "value"})
+// obtains the value of the changed input element.
 //
 // If msg cannot be marshaled to JSON, On panics.
-func On(event string) func(msg any) Attr {
+func On(event string, field ...[]string) func(msg any) Attr {
+	ps := pathSet(field)
+	slices.SortFunc(ps, slices.Compare)
 	return func(msg any) Attr {
 		if fi := eventFieldIndex(reflect.ValueOf(msg)); fi != nil {
 			v := reflect.New(reflect.TypeOf(msg)).Elem()
@@ -60,8 +89,8 @@ func On(event string) func(msg any) Attr {
 		h.Write(raw)
 		key := strconv.FormatUint(h.Sum64(), 16)
 		return attr{
-			attr:     vdom.Attr{Name: "data-msg-" + event, Value: key},
-			handlers: handlers{key: raw},
+			attr:     vdom.Attr{Name: "data-msg-" + event, Value: key + ":" + ps.key()},
+			handlers: handlers{key: {msg: raw, ps: ps}},
 		}
 	}
 }
