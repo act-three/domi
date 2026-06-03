@@ -133,7 +133,7 @@ export function applyPatch(root, p) {
 // The server splices it into any Msg field tagged `domi:"event"`; Msgs
 // without that tag ignore it. Modifier/coordinate fields are omitted
 // when zero so the wire stays small for ordinary clicks.
-export function eventPayload(e, el) {
+export function eventPayload(e) {
   const t = e.target;
   const target = { tag: (t.tagName || '').toLowerCase() };
   if (t.id) target.id = t.id;
@@ -156,18 +156,6 @@ export function eventPayload(e, el) {
   if (e.shiftKey) out.shift = true;
   if (e.altKey) out.alt = true;
   if (e.metaKey) out.meta = true;
-  // If the firing element is inside a <form>, attach the form's fields.
-  // Last-value-wins matches the server's map[string]string shape.
-  const form = el.closest && el.closest('form');
-  if (form) {
-    const fd = new FormData(form);
-    const f = {};
-    let any = false;
-    for (const [k, v] of fd.entries()) {
-      if (typeof v === 'string') { f[k] = v; any = true; }
-    }
-    if (any) out.form = f;
-  }
   return out;
 }
 
@@ -282,7 +270,7 @@ export function run() {
           const raw = el.dataset && el.dataset[key];
           if (raw) {
             if (ev === 'submit') e.preventDefault();
-            postEnvelope(sessionId, raw, eventPayload(e, el));
+            postEnvelope(sessionId, raw, eventPayload(e));
             return;
           }
         }
