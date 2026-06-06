@@ -136,6 +136,18 @@ func Group(a ...Attr) Attr {
 	})
 }
 
+// hasOpaque reports whether attrs contains the [Opaque] marker,
+// looking through nested groups. Unknown Attr implementations panic
+// here, at construction, as they otherwise would when lowered.
+func hasOpaque(attrs []Attr) bool {
+	for a := range Group(attrs...).(group) {
+		if a.attr == vdom.Opaque {
+			return true
+		}
+	}
+	return false
+}
+
 // lower collects handlers from g's member attrs
 // and returns the attrs and handlers separately.
 func (g group) lower() (iter.Seq[vdom.Attr], handlers) {

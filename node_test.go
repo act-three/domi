@@ -572,8 +572,8 @@ func TestOpaqueNotRendered(t *testing.T) {
 
 // An opaque node placed positionally rather than as a keyed child panics,
 // so the safety property can't be requested where the differ can't honor
-// it. The panic originates in the vdom layer but surfaces here at the
-// Tag construction that introduced the violation.
+// it. The panic surfaces here at the Tag construction that introduced
+// the violation.
 func TestOpaquePositionalPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
@@ -581,4 +581,26 @@ func TestOpaquePositionalPanics(t *testing.T) {
 		}
 	}()
 	_ = lowerOneNode(Tag("section")()(Tag("div")(Opaque)(Text("x"))))
+}
+
+// The opaque check runs at construction, not lowering, so the panic's
+// stack trace points at the Tag call holding the misplaced child —
+// whether the child arrives as a finished element, a childless Element
+// builder, inside a Fragment, or with Opaque tucked into a Group.
+func TestOpaquePositionalPanicsAtConstruction(t *testing.T) {
+	for name, build := range map[string]func(){
+		"element":  func() { Tag("section")()(Tag("div")(Opaque)(Text("x"))) },
+		"builder":  func() { Tag("section")()(Tag("div")(Opaque)) },
+		"fragment": func() { Tag("section")()(Fragment(Tag("div")(Opaque)(Text("x")))) },
+		"grouped":  func() { Tag("section")()(Tag("div")(Group(Opaque))()) },
+	} {
+		func() {
+			defer func() {
+				if r := recover(); r == nil {
+					t.Fatalf("%s: expected construction-time panic for opaque positional child", name)
+				}
+			}()
+			build()
+		}()
+	}
 }
