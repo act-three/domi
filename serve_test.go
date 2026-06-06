@@ -119,7 +119,7 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 			onURLRequest: func(URLRequest) Msg { var zero Msg; return zero },
 		},
 		log:      make([]frame, replayWindow),
-		base:     baseInitial,
+		base:     verInitial,
 		ver:      verInitial,
 		view:     nodes,
 		handlers: h,
@@ -675,18 +675,19 @@ func TestSubsComposition(t *testing.T) {
 	}
 }
 
-// apply with a push nav caches the outgoing s.view (not the new
-// view) under the nav's outgoing snapshot id.
+// apply with a push nav caches the outgoing s.view (not the new view)
+// under the outgoing tree's ver.
 func TestSessionSnapshotCacheOnApply(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
 	origView := s.view
-	s.apply(s.ctx, 1, &nav{push: "/about", outgoingID: "snap1"})
+	origVer := s.ver
+	s.apply(s.ctx, 1, &nav{push: "/about"})
 	s.mu.Lock()
-	sn, ok := s.snapshots["snap1"]
+	sn, ok := s.snapshots[origVer]
 	s.mu.Unlock()
 	if !ok {
-		t.Fatal("snapshot not cached after apply with push nav")
+		t.Fatal("snapshot not cached under the outgoing ver after apply with push nav")
 	}
 	// The cached view should be the outgoing view, not the new one.
 	if len(sn.view) != len(origView) {
@@ -752,14 +753,14 @@ func TestSessionApplyLoadNav(t *testing.T) {
 func TestSessionApplyEffectOrder(t *testing.T) {
 	s := newTestSession[int](&titledApp{})
 	defer s.cancel()
-	s.apply(s.ctx, 1, &nav{push: "/about", outgoingID: "snap1"})
+	s.apply(s.ctx, 1, &nav{push: "/about"})
 
 	f := s.log[1%uint64(len(s.log))]
 	if len(f.Effects) != 3 {
 		t.Fatalf("expected PushURL, Patch, SetTitle effects, got %+v", f.Effects)
 	}
-	if e := f.Effects[0]; e.Type != effectPushURL || e.URL != "/about" || e.ID != "snap1" {
-		t.Fatalf("effect[0] should be PushURL{/about, snap1}, got %+v", e)
+	if e := f.Effects[0]; e.Type != effectPushURL || e.URL != "/about" {
+		t.Fatalf("effect[0] should be PushURL{/about}, got %+v", e)
 	}
 	if e := f.Effects[1]; e.Type != effectApplyPatch || len(e.Patches) == 0 {
 		t.Fatalf("effect[1] should be a non-empty ApplyPatch, got %+v", e)
@@ -771,7 +772,9 @@ func TestSessionApplyEffectOrder(t *testing.T) {
 
 // prefetch holds the preview and emits a lone SetPreview effect carrying
 // the previewed page's title and url as data, the rebasing patchset, and
-// a candidate snapshot id naming the cached outgoing (current) page.
+// the ver naming the preview tree. The outgoing (current) page becomes a
+// candidate in the preview log under its own ver — the same name the
+// client computes locally.
 func TestSessionPrefetchEmitsSetPreview(t *testing.T) {
 	s := newTestSession[int](&previewApp{route: "/"})
 	defer s.cancel()
@@ -786,8 +789,8 @@ func TestSessionPrefetchEmitsSetPreview(t *testing.T) {
 	if e.Title != "/next" || e.URL != "/next" {
 		t.Fatalf("SetPreview = %+v, want title and url %q", e, "/next")
 	}
-	if e.ID == "" {
-		t.Fatal("SetPreview must carry a candidate snapshot id")
+	if e.Ver == "" {
+		t.Fatal("SetPreview must carry the preview tree's ver")
 	}
 	if len(e.Patches) == 0 {
 		t.Fatal("SetPreview should carry the patchset from current view to preview")
@@ -797,12 +800,12 @@ func TestSessionPrefetchEmitsSetPreview(t *testing.T) {
 	if s.preview == nil {
 		t.Fatal("prefetch should leave the preview outstanding")
 	}
-	if _, ok := s.preview.log[e.ID]; !ok {
-		t.Fatalf("candidate (outgoing) view %q not recorded in the preview log", e.ID)
+	if _, ok := s.preview.log[s.ver]; !ok {
+		t.Fatalf("candidate (outgoing) view %q not recorded in the preview log", s.ver)
 	}
 	// A speculative preview must not touch the navigation snapshot cache.
-	if _, ok := s.snapshots[e.ID]; ok {
-		t.Fatalf("candidate %q leaked into the snapshot cache", e.ID)
+	if _, ok := s.snapshots[s.ver]; ok {
+		t.Fatalf("candidate %q leaked into the snapshot cache", s.ver)
 	}
 }
 
@@ -853,37 +856,47 @@ func TestSessionPreviewRebasedOnApply(t *testing.T) {
 	if ap == nil || sp == nil {
 		t.Fatalf("frame should carry both ApplyPatch and SetPreview, got %+v", f.Effects)
 	}
-	if sp.URL != "/next" || sp.ID == "" {
-		t.Fatalf("rebased SetPreview = %+v, want url %q with a candidate id", sp, "/next")
+	if sp.URL != "/next" {
+		t.Fatalf("rebased SetPreview = %+v, want url %q", sp, "/next")
 	}
 	if len(sp.Patches) == 0 {
 		t.Fatal("rebased SetPreview should carry a non-empty patchset")
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// The new live tree (named by the ApplyPatch's ver) becomes a fresh
+	// candidate in the preview log.
+	if ap.Ver != s.ver {
+		t.Fatalf("ApplyPatch Ver = %q, want current ver %q", ap.Ver, s.ver)
+	}
 	if s.preview == nil {
 		t.Fatal("preview should remain outstanding after a rebasing apply")
 	}
-	if _, ok := s.preview.log[sp.ID]; !ok {
-		t.Fatalf("candidate view %q not recorded in the preview log", sp.ID)
+	if _, ok := s.preview.log[s.ver]; !ok {
+		t.Fatalf("candidate view %q not recorded in the preview log", s.ver)
 	}
 }
 
-// commitPreview installs the held preview as the current view, adopts the
-// candidate id as the base, and clears the outstanding preview. The apply
-// that follows a real commit then diffs against the installed view.
+// commitPreview installs the held preview as the current view, roots the
+// new patch lineage at the outgoing candidate's ver, and clears the
+// outstanding preview. The apply that follows a real commit then diffs
+// against the installed view.
 func TestSessionCommitPreviewInstallsView(t *testing.T) {
 	s := newTestSession[int](&previewApp{route: "/"})
 	defer s.cancel()
 	u, _ := url.Parse("/next")
 	s.prefetch(s.ctx, u)
-	cand := s.log[1%uint64(len(s.log))].Effects[0].ID
+	cand := s.ver // the outgoing tree's ver names the candidate
+	pver := s.log[1%uint64(len(s.log))].Effects[0].Ver
 
 	s.commitPreview(s.ctx, cand)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.base != cand {
 		t.Fatalf("base = %q, want candidate %q", s.base, cand)
+	}
+	if s.ver != pver {
+		t.Fatalf("ver = %q, want the preview tree's %q", s.ver, pver)
 	}
 	if s.preview != nil {
 		t.Fatal("pending preview should be cleared after commit")
@@ -920,8 +933,8 @@ func TestSessionCommitPreviewWithoutHeldPreview(t *testing.T) {
 	if s.preview != nil {
 		t.Fatalf("preview = %v, want nil", s.preview)
 	}
-	if s.base != baseInitial {
-		t.Fatalf("base = %q, want it left at %q", s.base, baseInitial)
+	if s.base != verInitial {
+		t.Fatalf("base = %q, want it left at %q", s.base, verInitial)
 	}
 	if !reflect.DeepEqual(s.view, origView) {
 		t.Fatalf("view changed to %+v, want it untouched", s.view)
@@ -975,7 +988,11 @@ func TestSessionPrefetchSupersedes(t *testing.T) {
 
 	first, _ := url.Parse("/a")
 	s.prefetch(s.ctx, first)
-	firstCand := s.log[1%uint64(len(s.log))].Effects[0].ID
+	firstCand := s.ver // the current tree names the candidate
+
+	// Move the live tree so the second prefetch's candidate gets a
+	// different name than the first's.
+	s.apply(s.ctx, 0, nil)
 
 	second, _ := url.Parse("/b")
 	s.prefetch(s.ctx, second)
@@ -998,31 +1015,35 @@ func TestSessionSnapshotRestore(t *testing.T) {
 	origView := s.view
 	origTitle := s.title
 
-	// Cache a different view under a snapshot id.
+	// Cache a different view under its ver.
 	otherView, _ := lower(Tag("div")()(Text("other")))
-	s.cacheSnapshot("snap1", "ver1", otherView, "other title")
+	s.cacheSnapshot("ver1", otherView, "other title")
 
-	s.restoreSnapshot("snap1")
+	s.restoreSnapshot("ver1")
 	if s.title != "other title" {
 		t.Fatalf("expected title %q, got %q", "other title", s.title)
 	}
-	if s.base != "snap1" {
-		t.Fatalf("expected base %q, got %q", "snap1", s.base)
+	if s.base != "ver1" {
+		t.Fatalf("expected base %q, got %q", "ver1", s.base)
 	}
 	if s.ver != "ver1" {
 		t.Fatalf("expected ver %q, got %q", "ver1", s.ver)
 	}
 
-	// Restoring a nonexistent id still updates the base but
-	// leaves view and title unchanged.
+	// Restoring a nonexistent ver still roots a new lineage there but
+	// leaves view, title, and ver unchanged: the server's tree is still
+	// the one its ver names.
 	s.view = origView
 	s.title = origTitle
 	s.restoreSnapshot("nonexistent")
 	if s.title != origTitle {
-		t.Fatalf("restoreSnapshot with bad id changed title to %q", s.title)
+		t.Fatalf("restoreSnapshot with bad ver changed title to %q", s.title)
 	}
 	if s.base != "nonexistent" {
 		t.Fatalf("expected base %q, got %q", "nonexistent", s.base)
+	}
+	if s.ver != "ver1" {
+		t.Fatalf("restoreSnapshot with bad ver changed ver to %q", s.ver)
 	}
 }
 
@@ -1032,7 +1053,7 @@ func TestSessionSnapshotEviction(t *testing.T) {
 	defer s.cancel()
 	view, _ := lower(Tag("div")()(Text("x")))
 	for i := range snapshotCacheSize + 5 {
-		s.cacheSnapshot(fmt.Sprintf("s%d", i), "v", view, "t")
+		s.cacheSnapshot(fmt.Sprintf("s%d", i), view, "t")
 	}
 	if len(s.snapshots) != snapshotCacheSize {
 		t.Fatalf("expected %d snapshots, got %d", snapshotCacheSize, len(s.snapshots))
@@ -1051,21 +1072,50 @@ func TestSessionSnapshotEviction(t *testing.T) {
 	}
 }
 
+// Re-caching a ver refreshes its recency rather than consuming a second
+// eviction slot: a tree pushed again moves to the young end of the ring
+// instead of aging out at its first caching's position, and the hole it
+// leaves behind doesn't evict an innocent neighbor.
+func TestSessionSnapshotRecachingRefreshesAge(t *testing.T) {
+	s := newTestSession(&counterApp{})
+	defer s.cancel()
+	view, _ := lower(Tag("div")()(Text("x")))
+	s.cacheSnapshot("a", view, "t")
+	for i := range snapshotCacheSize - 2 {
+		s.cacheSnapshot(fmt.Sprintf("s%d", i), view, "t")
+	}
+	// "a" is the oldest entry. Re-cache it, then add two more distinct
+	// vers: the first recycles the hole "a" left, the second evicts the
+	// oldest survivor — s0, not "a".
+	s.cacheSnapshot("a", view, "t")
+	s.cacheSnapshot("y", view, "t")
+	s.cacheSnapshot("z", view, "t")
+	if _, ok := s.snapshots["a"]; !ok {
+		t.Fatal("re-cached ver evicted at its original age")
+	}
+	if _, ok := s.snapshots["s0"]; ok {
+		t.Fatal("oldest distinct ver should have been evicted")
+	}
+	if len(s.snapshots) != snapshotCacheSize {
+		t.Fatalf("expected %d snapshots, got %d", snapshotCacheSize, len(s.snapshots))
+	}
+}
+
 // Frames carry the session's base so the client can drop stale frames.
 func TestSessionFrameBase(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	s.apply(s.ctx, 1, nil) // base "00000..."
+	s.apply(s.ctx, 1, nil) // base "11111..."
 	s.mu.Lock()
-	if s.log[1].Base != baseInitial {
-		t.Fatalf("expected base %q, got %q", baseInitial, s.log[1].Base)
+	if s.log[1].Base != verInitial {
+		t.Fatalf("expected base %q, got %q", verInitial, s.log[1].Base)
 	}
-	s.base = "snap1"
+	s.base = "ver2"
 	s.mu.Unlock()
-	s.apply(s.ctx, 2, nil) // base "snap1"
+	s.apply(s.ctx, 2, nil) // base "ver2"
 	s.mu.Lock()
-	if s.log[2].Base != "snap1" {
-		t.Fatalf("expected base %q, got %q", "snap1", s.log[2].Base)
+	if s.log[2].Base != "ver2" {
+		t.Fatalf("expected base %q, got %q", "ver2", s.log[2].Base)
 	}
 	s.mu.Unlock()
 }
