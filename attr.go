@@ -45,11 +45,12 @@ type Attr interface {
 	isAttr()
 }
 
-// attr is the lowered form of an [Attr]: the [vdom.Attr] to render plus
-// the event handlers it carries.
+// attr is the normalized form of an [Attr]: the [vdom.Attr] to render
+// plus the event handler it carries, if any. A handler attr's value is
+// assigned during lowering, when its element's address is known.
 type attr struct {
-	attr     vdom.Attr
-	handlers handlers
+	attr    vdom.Attr
+	handler *handler
 }
 
 func (attr) isAttr() {}
@@ -146,23 +147,6 @@ func hasOpaque(attrs []Attr) bool {
 		}
 	}
 	return false
-}
-
-// lower collects handlers from g's member attrs
-// and returns the attrs and handlers separately.
-func (g group) lower() (iter.Seq[vdom.Attr], handlers) {
-	var h handlers
-	for a := range g {
-		h = h.merge(a.handlers)
-	}
-	f := func(yield func(vdom.Attr) bool) {
-		for a := range g {
-			if !yield(a.attr) {
-				return
-			}
-		}
-	}
-	return f, h
 }
 
 // RegisterCombining registers name as a "combining" attribute.

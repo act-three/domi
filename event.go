@@ -1,27 +1,29 @@
 package domi
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
-	"fmt"
 	"hash/fnv"
 	"maps"
-	"reflect"
 	"slices"
 	"strconv"
 
 	"ily.dev/domi/internal/vdom"
 )
 
-// A handlers maps a content-hash key to its handler.
+// A handlers maps a handler key — the hash of an element's address
+// plus an event slot, see [addr] — to its handler.
 type handlers map[string]handler
 
-// A handler is a msg
-// (to be returned to the app when the event happens)
-// and a path set
-// (to be read from the browser's event object).
+// A handler is an unmarshal function (to construct a Msg when the
+// event happens) and a path set (the fields to read from the browser's
+// event object). fn has type func(jsontext.Value) (Msg, error),
+// stored as any so that Node types and HTML constructors don't
+// all have to be generic.
 type handler struct {
-	msg []byte
-	ps  pathSet
+	fn    any
+	ps    pathSet
+	event string
 }
 
 // A pathSet is a set of field paths into a browser event.
@@ -54,78 +56,34 @@ func (dst handlers) merge(src handlers) handlers {
 	return dst
 }
 
-// On returns a builder for an attribute that binds msg to event
-// on the resulting element.
-// When the browser fires the named event,
-// the framework calls Update(msg).
+// On calls f when the named event occurs,
+// and delivers the resulting message to Update.
+// If f returns an error, the event is discarded.
+// If f is nil, On panics.
 //
-// Multiple On(event)(...) attributes on the same element all fire
-// when the event occurs.
-//
-// Each field is a path of property names into the browser event.
+// Each field value is a path of property names into the browser event.
 // The client reads the value at each path,
-// and the framework unmarshals the collected values
-// into the msg field tagged domi:"event", if any.
-// For example, On("input", []string{"target", "value"})
-// obtains the value of the changed input element.
+// and the resulting JSON object is given to f.
+// For instance,
 //
-// If msg cannot be marshaled to JSON, On panics.
-func On(event string, field ...[]string) func(msg any) Attr {
+//	On("input", f, []string{"target", "value"})
+//
+// calls f with the JSON text
+//
+//	{"target": {"value": "hello, world"}}
+//
+// Note that an empty field set results in an empty JSON object.
+//
+// Multiple handlers for the same event on the same element
+// all fire when their event occurs.
+func On[Msg any](event string, f func(jsontext.Value) (Msg, error), field ...[]string) Attr {
+	if f == nil {
+		panic("domi: On called with a nil unmarshal function")
+	}
 	ps := pathSet(field)
 	slices.SortFunc(ps, slices.Compare)
-	return func(msg any) Attr {
-		if fi := eventFieldIndex(reflect.ValueOf(msg)); fi != nil {
-			v := reflect.New(reflect.TypeOf(msg)).Elem()
-			v.Set(reflect.ValueOf(msg))
-			v.FieldByIndex(fi).SetZero()
-			msg = v.Interface()
-		}
-
-		raw, err := json.Marshal(msg)
-		if err != nil {
-			panic(fmt.Errorf("bad msg for %s: %w", event, err))
-		}
-		h := fnv.New64a()
-		h.Write(raw)
-		key := strconv.FormatUint(h.Sum64(), 16)
-		return attr{
-			attr:     vdom.Attr{Name: "data-msg-" + event, Value: key + ":" + ps.key()},
-			handlers: handlers{key: {msg: raw, ps: ps}},
-		}
+	return attr{
+		attr:    vdom.Attr{Name: "data-msg-" + event},
+		handler: &handler{fn: f, ps: ps, event: event},
 	}
-}
-
-// unmarshalMsg unmarshals msgb into a fresh Msg. Then, if Msg's type
-// carries a `domi:"event"` field, unmarshals eventb into that field.
-func unmarshalMsg[Msg any](msgb, eventb []byte) (Msg, error) {
-	var msg Msg
-	if err := json.Unmarshal(msgb, &msg); err != nil {
-		return msg, err
-	}
-	if len(eventb) == 0 {
-		return msg, nil
-	}
-	mv := reflect.ValueOf(&msg)
-	if fi := eventFieldIndex(mv); fi != nil {
-		ev := mv.Elem().FieldByIndex(fi).Addr().Interface()
-		if err := json.Unmarshal(eventb, ev); err != nil {
-			return msg, err
-		}
-	}
-	return msg, nil
-}
-
-// eventFieldIndex returns the field index tagged domi:"event" or nil.
-func eventFieldIndex(v reflect.Value) []int {
-	v = reflect.Indirect(v)
-	t := v.Type()
-	if t.Kind() != reflect.Struct {
-		return nil
-	}
-	for field := range t.Fields() {
-		if field.Tag.Get("domi") == "event" {
-			return field.Index
-		}
-	}
-	return nil
 }

@@ -30,7 +30,7 @@ var (
 	keyedUL = domi.Keyed("ul")
 	li      = html.LI
 	button  = html.Button
-	onClick = event.Click
+	onClick = event.Click[Msg]
 )
 
 type Item struct {

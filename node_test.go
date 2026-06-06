@@ -7,31 +7,18 @@ import (
 	"ily.dev/domi/internal/vdom"
 )
 
-type tMsg struct {
-	Tag string `json:"t"`
-}
-
-// lowerOneNode and lowerN lower test nodes, dropping the harvested handlers
-// that these structural tests don't exercise. They keep the call sites
-// reading the way they did before lowering grew a second return value.
+// lowerOneNode and lowerNodes lower test nodes from the root address,
+// dropping the harvested handlers that these structural tests don't
+// exercise. They keep the call sites reading the way they did before
+// lowering grew an address parameter and a second return value.
 func lowerOneNode(n Node) vdom.Node {
-	v, _ := lowerOne(n)
+	v, _ := lowerOne(0, n)
 	return v
 }
 
 func lowerNodes(nodes ...Node) []vdom.Node {
-	v, _ := lower(nodes...)
+	v, _ := lower(0, nodes...)
 	return v
-}
-
-// Two On() calls with the same Msg value produce the same key because
-// the hash is content-addressable.
-func TestHandlerHashIsContentAddressable(t *testing.T) {
-	a := On("click")(tMsg{"x"}).(attr)
-	b := On("click")(tMsg{"x"}).(attr)
-	if a.attr.Value != b.attr.Value {
-		t.Fatalf("identical Msgs should produce identical attr values; got %q vs %q", a.attr.Value, b.attr.Value)
-	}
 }
 
 // Fragment is supposed to be indistinguishable from writing its children
