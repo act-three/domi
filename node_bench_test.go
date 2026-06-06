@@ -14,6 +14,6 @@ func BenchmarkLower(b *testing.B) {
 				Tag("span")(Name("class")("value"))(Text("42")),
 			)
 		}
-		_, _ = lower(Tag("ul")(Name("class")("list"))(rows...))
+		_, _ = lower(0, Tag("ul")(Name("class")("list"))(rows...))
 	}
 }

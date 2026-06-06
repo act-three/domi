@@ -37,13 +37,13 @@ type session[Msg any] struct {
 	mu           sync.Mutex // protects the following fields
 	title        string
 	view         []vdom.Node
-	ver          string             // version id naming the current view; see effect.Ver
-	handlers     handlers           // key → handler for every handler the session has rendered
-	pathSets     map[string]pathSet // items already delivered to the client
-	log          []frame            // fixed-size ring; log[seq%len(log)] holds frame seq
-	head         uint64             // seq of the most recent frame; 0 if none
-	base         string             // tree version the patch lineage builds on
-	sse          *sseAttachment     // nil if no current consumer
+	ver          string                // version id naming the current view; see effect.Ver
+	tables       map[string]table[Msg] // tree version → its handler bindings; see dispatch
+	pathSets     map[string]pathSet    // items already delivered to the client
+	log          []frame               // fixed-size ring; log[seq%len(log)] holds frame seq
+	head         uint64                // seq of the most recent frame; 0 if none
+	base         string                // tree version the patch lineage builds on
+	sse          *sseAttachment        // nil if no current consumer
 	active       time.Time
 	subs         map[any]context.CancelFunc // active subscription keys → cancel
 	snapshots    map[string]snapshot        // snapshot ver → cached vdom
@@ -150,17 +150,25 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	app, cmd := s.sv.appf(appCtx, req.URL)
 	title, view := app.View(appCtx)
 	s.app = app
-	nodes, h := lower(view)
+	nodes, h := lower(0, view)
 	s.title, s.view = title, nodes
+	s.tables[s.ver] = typed[Msg](h)
 	s.addPathSets(h)
 
+	// apply lowers the bare view, so handler addresses are rooted at
+	// body, the patch root. The initial render must match: embed the
+	// already-lowered view in the shell rather than re-addressing it
+	// under the document element.
+	children := make([]Node, len(nodes))
+	for i, n := range nodes {
+		children[i] = prelowered{n}
+	}
 	body := Tag("body")(
 		Name("data-domi-session")(s.id),
 		Name("data-domi-path-sets")(marshalPathSets(s.pathSets)),
-	)(view)
+	)(children...)
 	// The document shell cannot contain event handlers.
-	root, _ := lowerOne(s.sv.document(title, body))
-	s.handlers = h
+	root, _ := lowerOne(0, s.sv.document(title, body))
 
 	s.updateSubs(app.Subscriptions(appCtx))
 	s.spawn(cmd)
@@ -206,17 +214,19 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 
 	cmd := s.app.Update(ctx, msg)
 	title, view := s.app.View(ctx)
-	next, h := lower(view)
-	s.handlers = s.handlers.merge(h)
+	next, h := lower(0, view)
 	add := s.addPathSets(h)
 	patches := vdom.Diff(s.view, next)
 
 	// A change to the tree mints a fresh version id naming it; the
 	// outgoing tree keeps its old name in any snapshot taken below.
+	// The harvest becomes the current version's table either way,
+	// refreshing the live bindings when the tree didn't change.
 	oldVer := s.ver
 	if len(patches) > 0 {
 		s.ver = rand.Text()
 	}
+	s.tables[s.ver] = typed[Msg](h)
 
 	// Effect order is the client's execution order.
 	var effects []effect
@@ -330,7 +340,7 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 
 	switch envelope.Type {
 	case msgDispatch:
-		s.dispatch(ctx, envelope.Handler, envelope.Event)
+		s.dispatch(ctx, envelope.Ver, envelope.Handler, envelope.Event)
 	case msgURLRequest:
 		u, err := url.Parse(envelope.URL)
 		if err != nil {
@@ -368,40 +378,61 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// A table holds a tree version's handler bindings: handler key → the
+// unmarshal function producing this session's Msg. It is the typed
+// form of a lowering harvest; see typed.
+type table[Msg any] map[string]func(jsontext.Value) (Msg, error)
+
+// typed asserts that each handler returns Msg.
+// If a function fails the type assertion, typed panics.
+func typed[Msg any](h handlers) table[Msg] {
+	t := make(table[Msg], len(h))
+	for key, hd := range h {
+		fn, ok := hd.fn.(func(jsontext.Value) (Msg, error))
+		if !ok {
+			panic(fmt.Sprintf("domi: On(%q) handler is %T, want %T", hd.event, hd.fn, fn))
+		}
+		t[key] = fn
+	}
+	return t
+}
+
 // dispatch applies the app Msg for each handler key in a Dispatch
-// message. The keys are comma-separated; each names a registered
-// handler whose Msg is rebuilt from the event payload and fed to Update.
-func (s *session[Msg]) dispatch(ctx context.Context, handler string, event jsontext.Value) {
+// message. The keys are comma-separated; each names a binding in the
+// table of the tree version the client displayed, whose unmarshal
+// function builds the Msg fed to Update. An event for an unretained
+// version is dropped, and an unmarshal error skips the event, like a
+// failing decoder in Elm.
+func (s *session[Msg]) dispatch(ctx context.Context, ver, handler string, event jsontext.Value) {
+	table, ok := s.table(ver)
+	if !ok {
+		s.logger.DebugContext(ctx, "unknown tree version", "ver", ver)
+		return
+	}
 	for key := range strings.SplitSeq(handler, ",") {
 		if key == "" {
 			continue
 		}
-		raw, ok := s.handler(key)
+		unmarshal, ok := table[key]
 		if !ok {
-			s.logger.WarnContext(ctx, "unknown msg", "key", key)
+			s.logger.WarnContext(ctx, "unknown handler", "ver", ver, "key", key)
 			continue
 		}
-		msg, err := unmarshalMsg[Msg](raw, event)
+		msg, err := unmarshal(event)
 		if err != nil {
-			s.logger.WarnContext(ctx, "msg unmarshal",
-				"key", key,
-				"error", err,
-				"msg", string(raw),
-				"event", string(event),
-			)
 			continue
 		}
 		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
 	}
 }
 
-// handler returns the marshaled Msg registered under key for this
-// session, or false if the session never rendered it.
-func (s *session[Msg]) handler(key string) ([]byte, bool) {
+// table returns the handler bindings for the tree version named ver,
+// or false if the session never produced (or no longer retains) it.
+func (s *session[Msg]) table(ver string) (table[Msg], bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	h, ok := s.handlers[key]
-	return h.msg, ok
+	t, ok := s.tables[ver]
+	return t, ok
 }
 
 // addPathSets adds to s.pathSets
@@ -648,10 +679,10 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 		s.appendFrame(frame{Effects: []effect{{Type: effectDeletePreview, URL: href}}})
 		return
 	}
-	next, h := lower(view)
-	s.handlers = s.handlers.merge(h)
+	next, h := lower(0, view)
 	add := s.addPathSets(h)
 	p := &preview{url: href, view: next, title: title, ver: rand.Text()}
+	s.tables[p.ver] = typed[Msg](h)
 	p.addView(s.ver, s.view, s.title)
 	s.preview = p
 	var effects []effect

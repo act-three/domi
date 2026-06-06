@@ -1,183 +1,132 @@
 package domi
 
 import (
+	"encoding/json/jsontext"
+	"maps"
 	"strings"
 	"testing"
+
+	"ily.dev/domi/internal/vdom"
 )
 
-type plainMsg struct {
-	Tag string `json:"t"`
+// msgFn returns an unmarshal function that ignores the event payload
+// and produces tag, for tests that only care about identity.
+func msgFn(tag string) func(jsontext.Value) (string, error) {
+	return func(jsontext.Value) (string, error) { return tag, nil }
 }
 
-// handlerMsg returns the marshaled Msg an On() attr carries under its
-// content-hash key — the bytes the session would register and later feed
-// to Update when the event fires. The attr value may also carry a
-// path set key after a colon; the handler is keyed by the msg part.
-func handlerMsg(a attr) ([]byte, bool) {
-	key, _, _ := strings.Cut(a.attr.Value, ":")
-	h, ok := a.handlers[key]
-	return h.msg, ok
-}
-
-// A Msg without a tagged event field round-trips unchanged.
-func TestSpliceNoEventField(t *testing.T) {
-	a := On("click")(plainMsg{"hi"}).(attr)
-	raw, ok := handlerMsg(a)
-	if !ok {
-		t.Fatal("handler not registered")
+// A handler's key derives from its element's address alone, so two
+// renders of the same view shape — with brand-new functions — produce
+// byte-identical trees: the diff is quiet and the client keeps its
+// attrs while the server rebinds the keys to the new functions.
+func TestOnAddressStableAcrossRenders(t *testing.T) {
+	build := func(tag string) ([]vdom.Node, handlers) {
+		return lower(0, Tag("div")()(
+			Text("greetings"),
+			Tag("button")(On("click", msgFn(tag)))(Text("x")),
+		))
 	}
-	got, err := unmarshalMsg[plainMsg](raw, []byte(`{"type":"click"}`))
-	if err != nil {
-		t.Fatalf("splice: %v", err)
+	a, ha := build("first render")
+	b, hb := build("second render")
+	if got := vdom.Diff(a, b); len(got) != 0 {
+		t.Fatalf("re-rendered handlers should not patch, got %+v", got)
 	}
-	if got.Tag != "hi" {
-		t.Fatalf("tag mangled: %+v", got)
+	if !maps.Equal(keysOf(ha), keysOf(hb)) {
+		t.Fatalf("handler keys diverged across renders: %v vs %v", keysOf(ha), keysOf(hb))
 	}
 }
 
-// A Msg with a tagged event field receives the spliced payload. The
-// field type can be any struct whose JSON tags match what the client
-// sends — here we only care about Type and Target.Value.
-func TestSpliceWithEventField(t *testing.T) {
-	type evt struct {
-		Type   string `json:"type"`
-		Target struct {
-			Value string `json:"value"`
-		} `json:"target"`
+func keysOf(h handlers) map[string]bool {
+	out := make(map[string]bool, len(h))
+	for k := range h {
+		out[k] = true
 	}
-	type msg struct {
-		Tag   string `json:"t"`
-		Event evt    `domi:"event" json:"event"`
-	}
-	a := On("input")(msg{Tag: "EditName"}).(attr)
-	raw, _ := handlerMsg(a)
-	blob := []byte(`{"type":"input","target":{"tag":"input","name":"name","value":"Em"}}`)
-	got, err := unmarshalMsg[msg](raw, blob)
-	if err != nil {
-		t.Fatalf("splice: %v", err)
-	}
-	if got.Tag != "EditName" {
-		t.Fatalf("tag mangled: %+v", got)
-	}
-	if got.Event.Type != "input" || got.Event.Target.Value != "Em" {
-		t.Fatalf("event not spliced: %+v", got.Event)
+	return out
+}
+
+// Identical elements at different positions get different keys — even
+// when they are literally the same Node value placed twice.
+func TestOnAddressDistinguishesPosition(t *testing.T) {
+	btn := Tag("button")(On("click", msgFn("x")))(Text("x"))
+	_, h := lower(0, Tag("div")()(btn, btn))
+	if len(h) != 2 {
+		t.Fatalf("expected 2 handler keys for 2 positions, got %d: %v", len(h), keysOf(h))
 	}
 }
 
-// A pre-filled event field at construction time must not influence the
-// content hash — the registration step zeros it before marshaling.
-func TestPrefilledEventFieldDoesNotAffectHash(t *testing.T) {
-	type evt struct {
-		Type string `json:"type"`
-		Key  string `json:"key"`
+// A keyed child's address follows its key, not its index, so a reorder
+// keeps every handler key — mirroring the differ, which matches keyed
+// children by identity and emits moves rather than rewrites.
+func TestOnKeyedAddressSurvivesReorder(t *testing.T) {
+	build := func(order ...string) ([]vdom.Node, handlers) {
+		return lower(0, Keyed("ul")()(func(yield func(string, Node) bool) {
+			for _, k := range order {
+				if !yield(k, Tag("li")(On("click", msgFn(k)))(Text(k))) {
+					return
+				}
+			}
+		}))
 	}
-	type msg struct {
-		Tag   string `json:"t"`
-		Event evt    `domi:"event" json:"event"`
-	}
-	a := On("click")(msg{Tag: "X"}).(attr)
-	b := On("click")(msg{Tag: "X", Event: evt{Type: "click", Key: "Enter"}}).(attr)
-	if a.attr.Value != b.attr.Value {
-		t.Fatalf("hash diverged on pre-fill; got %q vs %q", a.attr.Value, b.attr.Value)
+	_, ha := build("a", "b", "c")
+	_, hb := build("c", "a", "b")
+	if !maps.Equal(keysOf(ha), keysOf(hb)) {
+		t.Fatalf("keyed reorder changed handler keys: %v vs %v", keysOf(ha), keysOf(hb))
 	}
 }
 
-// Multiple handlers on the same event each get the same payload spliced
-// into their own Msg independently.
-func TestSpliceMultipleHandlersSameEvent(t *testing.T) {
-	type evt struct {
-		Key  string `json:"key"`
-		Ctrl bool   `json:"ctrl"`
+// Multiple handlers for the same event on one element get distinct
+// slots, and their keys combine comma-separated in the rendered attr.
+func TestOnSlotsDistinguishHandlers(t *testing.T) {
+	n, h := lower(0, Tag("button")(
+		On("click", msgFn("a")),
+		On("click", msgFn("b")),
+	)(Text("x")))
+	if len(h) != 2 {
+		t.Fatalf("expected 2 handler keys for 2 slots, got %d", len(h))
 	}
-	type msg struct {
-		Tag   string `json:"t"`
-		Event evt    `domi:"event" json:"event"`
-	}
-	a := On("keydown")(msg{Tag: "Save"}).(attr)
-	b := On("keydown")(msg{Tag: "DraftAutosave"}).(attr)
-	blob := []byte(`{"type":"keydown","key":"s","ctrl":true,"target":{"tag":"input"}}`)
-	for _, h := range []attr{a, b} {
-		raw, _ := handlerMsg(h)
-		got, err := unmarshalMsg[msg](raw, blob)
-		if err != nil {
-			t.Fatalf("splice: %v", err)
-		}
-		if got.Event.Key != "s" || !got.Event.Ctrl {
-			t.Fatalf("payload not threaded into %q: %+v", got.Tag, got.Event)
+	html := vdom.Render(n[0])
+	for k := range h {
+		if !strings.Contains(html, k) {
+			t.Fatalf("handler key %q missing from render %q", k, html)
 		}
 	}
-}
-
-// When a Msg has more than one `domi:"event"` field, the first one in
-// declaration order wins; later ones are ignored.
-func TestMultipleEventFieldsFirstWins(t *testing.T) {
-	type evt struct {
-		Type string `json:"type"`
-	}
-	type msg struct {
-		A evt `domi:"event" json:"a"`
-		B evt `domi:"event" json:"b"`
-	}
-	a := On("click")(msg{}).(attr)
-	raw, _ := handlerMsg(a)
-	got, err := unmarshalMsg[msg](raw, []byte(`{"type":"click"}`))
-	if err != nil {
-		t.Fatalf("splice: %v", err)
-	}
-	if got.A.Type != "click" {
-		t.Fatalf("event did not land in first tagged field: %+v", got)
-	}
-	if got.B.Type != "" {
-		t.Fatalf("event leaked into second tagged field: %+v", got)
+	if !strings.Contains(html, ",") {
+		t.Fatalf("same-event handlers should comma-combine: %q", html)
 	}
 }
 
-// Non-struct Msg (e.g. a string) is fine — no event field, no panic.
-func TestNonStructMsg(t *testing.T) {
-	a := On("click")("hello").(attr)
-	raw, _ := handlerMsg(a)
-	got, err := unmarshalMsg[string](raw, []byte(`{"type":"click"}`))
-	if err != nil {
-		t.Fatalf("splice: %v", err)
-	}
-	if got != "hello" {
-		t.Fatalf("got %q", got)
-	}
-}
-
-// Empty event blob (e.g. a Cmd-produced dispatch path, hypothetically)
-// leaves the event field at its zero value rather than failing.
-func TestSpliceEmptyBlob(t *testing.T) {
-	type evt struct {
-		Type string `json:"type"`
-	}
-	type msg struct {
-		Tag   string `json:"t"`
-		Event evt    `domi:"event" json:"event"`
-	}
-	a := On("click")(msg{Tag: "Tick"}).(attr)
-	raw, _ := handlerMsg(a)
-	got, err := unmarshalMsg[msg](raw, nil)
-	if err != nil {
-		t.Fatalf("splice: %v", err)
-	}
-	if got.Event.Type != "" {
-		t.Fatalf("expected zero event, got %+v", got.Event)
+// Different events on one element get distinct keys: the event name
+// participates in the key, not just the element address and slot.
+func TestOnEventDistinguishesHandlers(t *testing.T) {
+	_, h := lower(0, Tag("form")(
+		On("click", msgFn("a")),
+		On("submit", msgFn("b")),
+	)(Text("x")))
+	if len(h) != 2 {
+		t.Fatalf("expected distinct keys for distinct events, got %d", len(h))
 	}
 }
 
 // On with field paths content-addresses the path set and appends its
-// key to the attribute value, after the msg key, so the client can look
-// up the path set. The handler stays keyed by the msg part alone.
+// key to the attribute value, after the handler key, so the client can
+// look up the path set. The handler stays keyed by the handler part.
 func TestOnPathSet(t *testing.T) {
-	a := On("input", []string{"target", "value"})(plainMsg{Tag: "x"}).(attr)
-	msgKey, psKey, ok := strings.Cut(a.attr.Value, ":")
-	if !ok {
-		t.Fatalf("want msg:ps attr value, got %q", a.attr.Value)
+	n, h := lower(0, Tag("input")(On("input", msgFn("x"), []string{"target", "value"}))())
+	html := vdom.Render(n[0])
+	const marker = `data-msg-input="`
+	i := strings.Index(html, marker)
+	if i < 0 {
+		t.Fatalf("no handler attr in render %q", html)
 	}
-	hd, ok := a.handlers[msgKey]
+	value := html[i+len(marker):]
+	value = value[:strings.IndexByte(value, '"')]
+	key, psKey, ok := strings.Cut(value, ":")
 	if !ok {
-		t.Fatalf("handler not keyed by msg part %q", msgKey)
+		t.Fatalf("want key:ps attr value, got %q", value)
+	}
+	hd, ok := h[key]
+	if !ok {
+		t.Fatalf("handler not keyed by handler part %q of %q", key, value)
 	}
 	if psKey != hd.ps.key() {
 		t.Fatalf("attr ps key %q != path set key %q", psKey, hd.ps.key())
@@ -187,11 +136,9 @@ func TestOnPathSet(t *testing.T) {
 // A path set's content address ignores the order its field paths were
 // given, so equivalent path sets share one client registration.
 func TestPathSetCanonical(t *testing.T) {
-	x := On("click", []string{"clientX"}, []string{"clientY"})(plainMsg{}).(attr)
-	y := On("click", []string{"clientY"}, []string{"clientX"})(plainMsg{}).(attr)
-	_, xk, _ := strings.Cut(x.attr.Value, ":")
-	_, yk, _ := strings.Cut(y.attr.Value, ":")
-	if xk == "" || xk != yk {
+	x := On("click", msgFn("m"), []string{"clientX"}, []string{"clientY"}).(attr)
+	y := On("click", msgFn("m"), []string{"clientY"}, []string{"clientX"}).(attr)
+	if xk, yk := x.handler.ps.key(), y.handler.ps.key(); xk == "" || xk != yk {
 		t.Fatalf("reordered path sets got different keys: %q vs %q", xk, yk)
 	}
 }
@@ -199,14 +146,20 @@ func TestPathSetCanonical(t *testing.T) {
 // A handler with no field paths still carries a valid (empty) path set,
 // content-addressed and referenced like any other.
 func TestOnEmptyPathSet(t *testing.T) {
-	a := On("click")(plainMsg{Tag: "x"}).(attr)
-	_, psKey, ok := strings.Cut(a.attr.Value, ":")
-	if !ok || psKey == "" {
-		t.Fatalf("want msg:ps attr value, got %q", a.attr.Value)
+	n, _ := lower(0, Tag("button")(On("click", msgFn("x")))())
+	html := vdom.Render(n[0])
+	if !strings.Contains(html, ":"+pathSet(nil).key()) {
+		t.Fatalf("bare handler should reference the empty path set: %q", html)
 	}
-	for _, hd := range a.handlers {
-		if len(hd.ps) != 0 {
-			t.Fatalf("bare handler should have an empty path set, got %v", hd.ps)
+}
+
+// On panics on a nil unmarshal function, at construction, where the
+// stack trace points at the offending call.
+func TestOnNilUnmarshalPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for nil unmarshal function")
 		}
-	}
+	}()
+	_ = On[string]("click", nil)
 }
