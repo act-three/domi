@@ -162,11 +162,11 @@ function datasetKeyFor(event) {
   return 'msg' + event.charAt(0).toUpperCase() + event.slice(1);
 }
 
-function postEnvelope(sessionId, h, e) {
+function postEnvelope(sessionId, h, e, ver) {
   fetch(`/event/${encodeURIComponent(sessionId)}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ Type: 'Dispatch', Handler: h, Event: e }),
+    body: JSON.stringify({ Type: 'Dispatch', Handler: h, Event: e, Ver: ver }),
   }).catch((err) => console.error('domi: event POST failed', err));
 }
 
@@ -205,15 +205,21 @@ export function run() {
   // restoring it sets both the DOM and the title.
   // `base` tracks which snapshot the client's DOM is built on top of
   // (all-zero initially). We drop frames with a stale base ID.
+  // `ver` is the server-minted name of the tree the DOM displays
+  // (all-one initially). The server sends a fresh name with everything
+  // that changes the tree; the client only remembers the last name it
+  // was told and echoes it with events, so the server can resolve them
+  // against that exact tree.
   const snapshots = new Map();
   const SNAPSHOT_MAX = 30;
   let base = '00000000000000000000000000';
+  let ver = '11111111111111111111111111';
 
-  function cacheSnapshot(id, source, title) {
+  function cacheSnapshot(id, ver, source, title) {
     if (!id) return;
     const frag = document.createDocumentFragment();
     for (const child of source.childNodes) frag.appendChild(child.cloneNode(true));
-    snapshots.set(id, { frag, title });
+    snapshots.set(id, { frag, title, ver });
     while (snapshots.size > SNAPSHOT_MAX) {
       snapshots.delete(snapshots.keys().next().value);
     }
@@ -229,6 +235,7 @@ export function run() {
     while (fresh.firstChild) root.appendChild(fresh.firstChild);
     document.title = cached.title ?? '';
     base = id;
+    ver = cached.ver;
   }
 
   // The single in-flight link preview, or null. The client tracks exactly
@@ -238,7 +245,7 @@ export function run() {
   // (Prefetch sent) → true (SetPreview received, a patchset to apply on
   // click); isClicked records a click that beat the SetPreview, so it
   // navigates the moment one arrives.
-  let pv = null; // { url, isReady, isClicked, patches?, title?, base?, at? }
+  let pv = null; // { url, isReady, isClicked, patches?, title?, base?, ver?, at? }
 
   function checkPreviewTTL() {
     const ttl = 5000; // ms
@@ -250,12 +257,13 @@ export function run() {
   function navigateToPreview() {
     const p = pv;
     pv = null;
-    cacheSnapshot(p.base, root, document.title);
+    cacheSnapshot(p.base, ver, root, document.title);
     history.replaceState({ domiSnapshot: p.base }, '', location.href);
     history.pushState(null, '', p.url);
     for (const patch of p.patches ?? []) root = applyPatch(root, patch);
     document.title = p.title ?? '';
     base = p.base;
+    ver = p.ver;
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -283,7 +291,7 @@ export function run() {
               const p = pathSets.get(tok.slice(ci + 1));
               if (p) paths.push(...p);
             }
-            postEnvelope(sessionId, keys.join(','), getFields(e, el, paths));
+            postEnvelope(sessionId, keys.join(','), getFields(e, el, paths), ver);
             return;
           }
         }
@@ -416,6 +424,7 @@ export function run() {
       switch (eff.Type) {
         case 'ApplyPatch':
           for (const p of eff.Patches) root = applyPatch(root, p);
+          ver = eff.Ver;
           break;
         case 'SetTitle':
           document.title = eff.Title ?? '';
@@ -424,7 +433,7 @@ export function run() {
           addPathSets(eff.PathSets);
           break;
         case 'PushURL':
-          cacheSnapshot(eff.ID, root, document.title);
+          cacheSnapshot(eff.ID, ver, root, document.title);
           history.replaceState({ domiSnapshot: eff.ID }, '', location.href);
           history.pushState(null, '', eff.URL);
           break;
@@ -441,6 +450,7 @@ export function run() {
           pv.patches = eff.Patches;
           pv.title = eff.Title;
           pv.base = eff.ID;
+          pv.ver = eff.Ver;
           pv.at ||= Date.now();
           if (pv.isClicked) navigateToPreview();
           break;

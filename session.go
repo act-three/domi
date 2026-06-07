@@ -23,6 +23,11 @@ import (
 // baseInitial is the initial base ID for all clients.
 const baseInitial = "00000000000000000000000000"
 
+// verInitial is the version id naming every session's initial tree.
+// It is a distinct constant from baseInitial so the two are easy to
+// tell apart when debugging the wire protocol.
+const verInitial = "11111111111111111111111111"
+
 type session[Msg any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -35,6 +40,7 @@ type session[Msg any] struct {
 	mu           sync.Mutex // protects the following fields
 	title        string
 	view         []vdom.Node
+	ver          string             // version id naming the current view; see frame.Ver
 	handlers     handlers           // key → handler for every handler the session has rendered
 	pathSets     map[string]pathSet // items already delivered to the client
 	log          []frame            // fixed-size ring; log[seq%len(log)] holds frame seq
@@ -76,6 +82,7 @@ type effect struct {
 	Title    string             `json:",omitempty"` // SetTitle/SetPreview: the document title
 	URL      string             `json:",omitempty"` // PushURL/ReplaceURL/LoadURL/SetPreview/DeletePreview target
 	ID       string             `json:",omitempty"` // PushURL: outgoing snapshot id; SetPreview: base snapshot id
+	Ver      string             `json:",omitempty"` // tree version for ApplyPatch, SetPreview
 	PathSets map[string]pathSet `json:",omitempty"`
 }
 
@@ -110,6 +117,7 @@ const snapshotCacheSize = 30
 type snapshot struct {
 	view  []vdom.Node
 	title string
+	ver   string // version id the view was named by when cached
 }
 
 // preview is the session's single outstanding link preview.
@@ -119,7 +127,8 @@ type preview struct {
 	url    string
 	view   []vdom.Node
 	title  string
-	frozen bool // DeletePreview sent
+	ver    string // version id naming the preview tree
+	frozen bool   // DeletePreview sent
 	// log maps each emitted SetPreview id to the outgoing view the
 	// client would leave by clicking after that frame, kept for its back
 	// button. When the client navigates to a preview, the chosen candidate
@@ -127,9 +136,9 @@ type preview struct {
 	log map[string]snapshot
 }
 
-// addView logs view as the given base snapshot id.
-// It returns false if there's no remaining capacity.
-func (p *preview) addView(id string, view []vdom.Node, title string) bool {
+// addView logs view, named by version id ver, as the given base
+// snapshot id. It returns false if there's no remaining capacity.
+func (p *preview) addView(id, ver string, view []vdom.Node, title string) bool {
 	const cap = 128
 	if len(p.log) >= cap {
 		return false
@@ -137,7 +146,7 @@ func (p *preview) addView(id string, view []vdom.Node, title string) bool {
 	if p.log == nil {
 		p.log = make(map[string]snapshot)
 	}
-	p.log[id] = snapshot{view: view, title: title}
+	p.log[id] = snapshot{view: view, title: title, ver: ver}
 	return true
 }
 
@@ -208,6 +217,13 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 	add := s.addPathSets(h)
 	patches := vdom.Diff(s.view, next)
 
+	// A change to the tree mints a fresh version id naming it; the
+	// outgoing tree keeps its old name in any snapshot taken below.
+	oldVer := s.ver
+	if len(patches) > 0 {
+		s.ver = rand.Text()
+	}
+
 	// Effect order is the client's execution order.
 	var effects []effect
 	if len(add) > 0 {
@@ -218,7 +234,7 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 		// Goes before ApplyPatches+SetTitle to snapshot outgoing state.
 		switch {
 		case n.push != "":
-			s.cacheSnapshot(n.outgoingID, s.view, s.title)
+			s.cacheSnapshot(n.outgoingID, oldVer, s.view, s.title)
 			effects = append(effects, effect{Type: effectPushURL, URL: n.push, ID: n.outgoingID})
 		case n.replace != "":
 			effects = append(effects, effect{Type: effectReplaceURL, URL: n.replace})
@@ -226,7 +242,7 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 	}
 	// ApplyPatches and SetTitle go together.
 	if len(patches) > 0 {
-		effects = append(effects, effect{Type: effectApplyPatch, Patches: patches})
+		effects = append(effects, effect{Type: effectApplyPatch, Patches: patches, Ver: s.ver})
 	}
 	if title != s.title {
 		effects = append(effects, effect{Type: effectSetTitle, Title: title})
@@ -234,13 +250,14 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 
 	if s.preview != nil && !s.preview.frozen && len(patches) > 0 {
 		candID := rand.Text()
-		if s.preview.addView(candID, next, title) {
+		if s.preview.addView(candID, s.ver, next, title) {
 			effects = append(effects, effect{
 				Type:    effectSetPreview,
 				Patches: vdom.Diff(next, s.preview.view),
 				Title:   s.preview.title,
 				URL:     s.preview.url,
 				ID:      candID,
+				Ver:     s.preview.ver,
 			})
 		} else {
 			s.preview.frozen = true
@@ -309,6 +326,9 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		Internal   bool           `json:",omitempty"`
 		SnapshotID string         `json:",omitempty"`
 		ToPreview  bool           `json:",omitempty"`
+		// Ver echoes the version id of the tree the client displayed
+		// when a Dispatch event fired. See effect.Ver.
+		Ver string `json:",omitempty"`
 	}
 	if err := json.UnmarshalRead(req.Body, &envelope); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -468,13 +488,13 @@ func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 	rc.Flush()
 
-	if resync, view, title, head, base, ps := s.needsResync(seen); resync {
+	if resync, view, title, head, base, ver, ps := s.needsResync(seen); resync {
 		efs := []effect{}
 		if len(ps) > 0 {
 			efs = append(efs, effect{Type: effectAddPathSets, PathSets: ps})
 		}
 		efs = append(efs, []effect{
-			{Type: effectApplyPatch, Patches: []vdom.Patch{vdom.Reset(view)}},
+			{Type: effectApplyPatch, Patches: []vdom.Patch{vdom.Reset(view)}, Ver: ver},
 			{Type: effectSetTitle, Title: title},
 			{Type: effectDeletePreview},
 		}...)
@@ -548,7 +568,7 @@ func (s *session[Msg]) detachSSE(att *sseAttachment) {
 // decision so the caller can write the resync frame against a single
 // consistent snapshot — without it, head could advance between the
 // decision and the write.
-func (s *session[Msg]) needsResync(seen uint64) (resync bool, view []vdom.Node, title string, head uint64, base string, ps map[string]pathSet) {
+func (s *session[Msg]) needsResync(seen uint64) (resync bool, view []vdom.Node, title string, head uint64, base, ver string, ps map[string]pathSet) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	head = s.head
@@ -558,9 +578,9 @@ func (s *session[Msg]) needsResync(seen uint64) (resync bool, view []vdom.Node, 
 		oldest = head - n + 1
 	}
 	if seen+1 < oldest || seen > head {
-		return true, s.view, s.title, head, base, maps.Clone(s.pathSets)
+		return true, s.view, s.title, head, base, s.ver, maps.Clone(s.pathSets)
 	}
-	return false, nil, "", head, base, nil
+	return false, nil, "", head, base, "", nil
 }
 
 func (s *session[Msg]) framesSince(seen uint64) []frame {
@@ -577,9 +597,10 @@ func (s *session[Msg]) framesSince(seen uint64) []frame {
 	return out
 }
 
-// cacheSnapshot stores a vdom snapshot under id, evicting the oldest
-// entry if the cache is at capacity. Must be called with s.mu held.
-func (s *session[Msg]) cacheSnapshot(id string, view []vdom.Node, title string) {
+// cacheSnapshot stores a vdom snapshot, named by version id ver, under
+// id, evicting the oldest entry if the cache is at capacity. Must be
+// called with s.mu held.
+func (s *session[Msg]) cacheSnapshot(id, ver string, view []vdom.Node, title string) {
 	if s.snapshots == nil {
 		s.snapshots = make(map[string]snapshot, snapshotCacheSize)
 		s.snapshotAge = make([]string, snapshotCacheSize)
@@ -589,7 +610,7 @@ func (s *session[Msg]) cacheSnapshot(id string, view []vdom.Node, title string) 
 	}
 	s.snapshotAge[s.snapshotNext] = id
 	s.snapshotNext = (s.snapshotNext + 1) % snapshotCacheSize
-	s.snapshots[id] = snapshot{view: view, title: title}
+	s.snapshots[id] = snapshot{view: view, title: title, ver: ver}
 }
 
 // restoreSnapshot replaces s.view and s.title with the cached snapshot
@@ -605,6 +626,7 @@ func (s *session[Msg]) restoreSnapshot(id string) {
 	if sn, ok := s.snapshots[id]; ok {
 		s.view = sn.view
 		s.title = sn.title
+		s.ver = sn.ver
 	}
 }
 
@@ -627,8 +649,8 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 	s.handlers = s.handlers.merge(h)
 	add := s.addPathSets(h)
 	id := rand.Text()
-	p := &preview{url: href, view: next, title: title}
-	p.addView(id, s.view, s.title)
+	p := &preview{url: href, view: next, title: title, ver: rand.Text()}
+	p.addView(id, s.ver, s.view, s.title)
 	s.preview = p
 	var effects []effect
 	if len(add) > 0 {
@@ -640,6 +662,7 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 		Title:   title,
 		URL:     href,
 		ID:      id,
+		Ver:     p.ver,
 	})
 	s.appendFrame(frame{Base: s.base, Effects: effects})
 }
@@ -656,11 +679,12 @@ func (s *session[Msg]) commitPreview(ctx context.Context, id string) {
 	// The committed outgoing view becomes a real navigation snapshot for
 	// the back button; the rest of the log is dropped with the preview.
 	if cand, ok := s.preview.log[id]; ok {
-		s.cacheSnapshot(id, cand.view, cand.title)
+		s.cacheSnapshot(id, cand.ver, cand.view, cand.title)
 	}
 	s.base = id
 	s.view = s.preview.view
 	s.title = s.preview.title
+	s.ver = s.preview.ver
 	s.preview = nil
 }
 

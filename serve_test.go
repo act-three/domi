@@ -28,6 +28,19 @@ func (a *counterApp) Preview(ctx context.Context, _ *url.URL) (string, Node, boo
 	return t, v, true
 }
 
+// staticApp's view never changes, so an Update produces no patches.
+type staticApp struct{}
+
+func (a *staticApp) Update(context.Context, int) Cmd[int] { return Batch[int]() }
+func (a *staticApp) View(context.Context) (string, Node) {
+	return "", Tag("div")()(Text("static"))
+}
+func (a *staticApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
+func (a *staticApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
+	t, v := a.View(ctx)
+	return t, v, true
+}
+
 // fragmentApp's View returns a Fragment so the framework treats its
 // members as separate top-level children of the mount.
 type fragmentApp struct{ n int }
@@ -107,6 +120,7 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 		},
 		log:      make([]frame, replayWindow),
 		base:     baseInitial,
+		ver:      verInitial,
 		view:     nodes,
 		handlers: h,
 		active:   time.Now(),
@@ -187,9 +201,10 @@ func TestHandleEventDispatch(t *testing.T) {
 	// dispatch its key.
 	a := On("click")(1).(attr)
 	s.handlers = s.handlers.merge(a.handlers)
-	// The client sends the bare msg key, stripping the pathSet key.
+	// The client sends the bare msg key, stripping the pathSet key,
+	// plus the version id of the tree its DOM displays.
 	key, _, _ := strings.Cut(a.attr.Value, ":")
-	body := fmt.Sprintf(`{"Type":"Dispatch","Handler":%q}`, key)
+	body := fmt.Sprintf(`{"Type":"Dispatch","Handler":%q,"Ver":%q}`, key, s.ver)
 	rec := httptest.NewRecorder()
 	s.handleEvent(rec, httptest.NewRequest("POST", "/event/x", strings.NewReader(body)))
 
@@ -209,6 +224,45 @@ func TestHandleEventDispatch(t *testing.T) {
 			t.Fatal("Dispatch did not apply a Msg (no frame produced)")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A frame that changes the tree carries a fresh version id naming the
+// new tree, so the client learns the name along with the change.
+func TestApplyMintsVerOnTreeChange(t *testing.T) {
+	s := newTestSession(&counterApp{})
+	defer s.cancel()
+
+	old := s.ver
+	s.apply(s.ctx, 1, nil) // counterApp's view changes every Update
+	if s.ver == old {
+		t.Fatal("apply with patches did not mint a new ver")
+	}
+	f := s.log[s.head%uint64(len(s.log))]
+	var got string
+	for _, e := range f.Effects {
+		if e.Type == effectApplyPatch {
+			got = e.Ver
+		}
+	}
+	if got != s.ver {
+		t.Fatalf("ApplyPatch Ver = %q, want %q", got, s.ver)
+	}
+}
+
+// An apply that leaves the tree unchanged mints nothing: the client's
+// echoed name stays valid for the tree it still displays.
+func TestApplyKeepsVerWithoutPatches(t *testing.T) {
+	s := newTestSession(&staticApp{})
+	defer s.cancel()
+
+	old := s.ver
+	s.apply(s.ctx, 0, nil)
+	if s.ver != old {
+		t.Fatalf("apply without patches changed ver from %q to %q", old, s.ver)
+	}
+	if s.head != 0 {
+		t.Fatalf("apply without effects appended a frame (head = %d)", s.head)
 	}
 }
 
@@ -946,7 +1000,7 @@ func TestSessionSnapshotRestore(t *testing.T) {
 
 	// Cache a different view under a snapshot id.
 	otherView, _ := lower(Tag("div")()(Text("other")))
-	s.cacheSnapshot("snap1", otherView, "other title")
+	s.cacheSnapshot("snap1", "ver1", otherView, "other title")
 
 	s.restoreSnapshot("snap1")
 	if s.title != "other title" {
@@ -954,6 +1008,9 @@ func TestSessionSnapshotRestore(t *testing.T) {
 	}
 	if s.base != "snap1" {
 		t.Fatalf("expected base %q, got %q", "snap1", s.base)
+	}
+	if s.ver != "ver1" {
+		t.Fatalf("expected ver %q, got %q", "ver1", s.ver)
 	}
 
 	// Restoring a nonexistent id still updates the base but
@@ -975,7 +1032,7 @@ func TestSessionSnapshotEviction(t *testing.T) {
 	defer s.cancel()
 	view, _ := lower(Tag("div")()(Text("x")))
 	for i := range snapshotCacheSize + 5 {
-		s.cacheSnapshot(fmt.Sprintf("s%d", i), view, "t")
+		s.cacheSnapshot(fmt.Sprintf("s%d", i), "v", view, "t")
 	}
 	if len(s.snapshots) != snapshotCacheSize {
 		t.Fatalf("expected %d snapshots, got %d", snapshotCacheSize, len(s.snapshots))
