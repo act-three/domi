@@ -91,6 +91,7 @@ var (
 	Ruby       = domi.Tag("ruby")
 	S          = domi.Tag("s")
 	Samp       = domi.Tag("samp")
+	Script     = domi.Tag("script")
 	Search     = domi.Tag("search")
 	Section    = domi.Tag("section")
 	Select     = domi.Tag("select")
