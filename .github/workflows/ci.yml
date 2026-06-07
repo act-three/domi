@@ -19,6 +19,15 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # tsc and eslint back the client.js static checks in client_check_test.go,
+      # which skip when the tools are absent (as they are on dev machines).
+      - name: Install JS linters
+        run: npm install -g typescript@5 eslint@9
+
       - name: Install goimports
         run: go install golang.org/x/tools/cmd/goimports@latest
 
