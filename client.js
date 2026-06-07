@@ -198,35 +198,34 @@ export function run() {
   }
   delete container.dataset.domiPathSets;
 
-  // Snapshot cache for instant back/forward. Maps snapshot ids
-  // (server-generated, stored in history.state) to { frag, title }: a
-  // DocumentFragment holding detached clones of the page's children,
-  // plus its document title. A snapshot is the whole page as data —
-  // restoring it sets both the DOM and the title.
-  // `base` tracks which snapshot the client's DOM is built on top of
-  // (all-zero initially). We drop frames with a stale base ID.
-  // `ver` is the server-minted name of the tree the DOM displays
-  // (all-one initially). The server sends a fresh name with everything
-  // that changes the tree; the client only remembers the last name it
-  // was told and echoes it with events, so the server can resolve them
-  // against that exact tree.
+  // Snapshot cache for instant back/forward. Maps snapshot vers (the
+  // tree versions of cached pages, stored in history.state) to
+  // { frag, title }: a DocumentFragment holding detached clones of the
+  // page's children, plus its document title. A snapshot is the whole
+  // page as data — restoring it sets both the DOM and the title.
+  // `ver` is the server-minted name of the tree the DOM displays; the
+  // client remembers the last name it was told and echoes it with
+  // events. `base` names the tree this patch lineage is rooted in; we
+  // drop frames with a stale base. Both start at the initial tree.
   const snapshots = new Map();
   const SNAPSHOT_MAX = 30;
-  let base = '00000000000000000000000000';
+  let base = '11111111111111111111111111';
   let ver = '11111111111111111111111111';
 
-  function cacheSnapshot(id, ver, source, title) {
-    if (!id) return;
+  // The snapshot parameter is snapVer, not ver: these helpers assign
+  // the outer ver, which a same-named parameter would shadow.
+  function cacheSnapshot(snapVer, source, title) {
+    if (!snapVer) return;
     const frag = document.createDocumentFragment();
     for (const child of source.childNodes) frag.appendChild(child.cloneNode(true));
-    snapshots.set(id, { frag, title, ver });
+    snapshots.set(snapVer, { frag, title });
     while (snapshots.size > SNAPSHOT_MAX) {
       snapshots.delete(snapshots.keys().next().value);
     }
   }
 
-  function restoreSnapshot(id) {
-    const cached = snapshots.get(id);
+  function restoreSnapshot(snapVer) {
+    const cached = snapshots.get(snapVer);
     if (!cached) return;
     while (root.firstChild) root.removeChild(root.firstChild);
     delete root.__domiChildren;
@@ -234,8 +233,8 @@ export function run() {
     const fresh = cached.frag.cloneNode(true);
     while (fresh.firstChild) root.appendChild(fresh.firstChild);
     document.title = cached.title ?? '';
-    base = id;
-    ver = cached.ver;
+    base = snapVer;
+    ver = snapVer;
   }
 
   // The single in-flight link preview, or null. The client tracks exactly
@@ -257,7 +256,7 @@ export function run() {
   function navigateToPreview() {
     const p = pv;
     pv = null;
-    cacheSnapshot(p.base, ver, root, document.title);
+    cacheSnapshot(p.base, root, document.title);
     history.replaceState({ domiSnapshot: p.base }, '', location.href);
     history.pushState(null, '', p.url);
     for (const patch of p.patches ?? []) root = applyPatch(root, patch);
@@ -267,7 +266,7 @@ export function run() {
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ Type: 'URLChange', URL: p.url, SnapshotID: p.base, ToPreview: true }),
+      body: JSON.stringify({ Type: 'URLChange', URL: p.url, SnapshotVer: p.base, ToPreview: true }),
     }).catch((err) => console.error('domi: urlChange POST failed', err));
   }
 
@@ -394,13 +393,13 @@ export function run() {
   // any staleness.
   window.addEventListener('popstate', (e) => {
     const url = location.pathname + location.search + location.hash;
-    const snapshotId = e.state && e.state.domiSnapshot;
+    const snapVer = e.state && e.state.domiSnapshot;
     pv = null; // it's based on the page we're leaving; drop it
-    if (snapshotId) restoreSnapshot(snapshotId);
+    if (snapVer) restoreSnapshot(snapVer);
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ Type: 'URLChange', URL: url, SnapshotID: snapshotId || '' }),
+      body: JSON.stringify({ Type: 'URLChange', URL: url, SnapshotVer: snapVer || '' }),
     }).catch((err) => console.error('domi: urlChange POST failed', err));
   });
 
@@ -433,8 +432,8 @@ export function run() {
           addPathSets(eff.PathSets);
           break;
         case 'PushURL':
-          cacheSnapshot(eff.ID, ver, root, document.title);
-          history.replaceState({ domiSnapshot: eff.ID }, '', location.href);
+          cacheSnapshot(ver, root, document.title);
+          history.replaceState({ domiSnapshot: ver }, '', location.href);
           history.pushState(null, '', eff.URL);
           break;
         case 'ReplaceURL':
@@ -449,7 +448,7 @@ export function run() {
           pv.isReady = true;
           pv.patches = eff.Patches;
           pv.title = eff.Title;
-          pv.base = eff.ID;
+          pv.base = ver;
           pv.ver = eff.Ver;
           pv.at ||= Date.now();
           if (pv.isClicked) navigateToPreview();

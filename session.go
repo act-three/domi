@@ -20,12 +20,9 @@ import (
 	"ily.dev/domi/internal/vdom"
 )
 
-// baseInitial is the initial base ID for all clients.
-const baseInitial = "00000000000000000000000000"
-
 // verInitial is the version id naming every session's initial tree.
-// It is a distinct constant from baseInitial so the two are easy to
-// tell apart when debugging the wire protocol.
+// It is also each session's initial base: the first patch lineage is
+// rooted in the initial tree.
 const verInitial = "11111111111111111111111111"
 
 type session[Msg any] struct {
@@ -40,17 +37,17 @@ type session[Msg any] struct {
 	mu           sync.Mutex // protects the following fields
 	title        string
 	view         []vdom.Node
-	ver          string             // version id naming the current view; see frame.Ver
+	ver          string             // version id naming the current view; see effect.Ver
 	handlers     handlers           // key → handler for every handler the session has rendered
 	pathSets     map[string]pathSet // items already delivered to the client
 	log          []frame            // fixed-size ring; log[seq%len(log)] holds frame seq
 	head         uint64             // seq of the most recent frame; 0 if none
-	base         string             // snapshot id the client's DOM is built on
+	base         string             // tree version the patch lineage builds on
 	sse          *sseAttachment     // nil if no current consumer
 	active       time.Time
 	subs         map[any]context.CancelFunc // active subscription keys → cancel
-	snapshots    map[string]snapshot        // snapshot id → cached vdom
-	snapshotAge  []string                   // ring of ids in insertion order, for eviction
+	snapshots    map[string]snapshot        // snapshot ver → cached vdom
+	snapshotAge  []string                   // ring of vers in insertion order, for eviction
 	snapshotNext int                        // next write position in snapshotAge
 	preview      *preview                   // the outstanding link preview, or nil
 }
@@ -69,7 +66,7 @@ type sseAttachment struct {
 // reconnecting client can ask for everything after the seq it last saw.
 type frame struct {
 	seq     uint64   // SSE event id
-	Base    string   `json:",omitempty"` // required base ID, if set
+	Base    string   `json:",omitempty"` // required base ver, if set
 	Effects []effect `json:",omitempty"`
 }
 
@@ -81,7 +78,6 @@ type effect struct {
 	Patches  []vdom.Patch       `json:",omitempty"` // ApplyPatch/SetPreview: DOM patches
 	Title    string             `json:",omitempty"` // SetTitle/SetPreview: the document title
 	URL      string             `json:",omitempty"` // PushURL/ReplaceURL/LoadURL/SetPreview/DeletePreview target
-	ID       string             `json:",omitempty"` // PushURL: outgoing snapshot id; SetPreview: base snapshot id
 	Ver      string             `json:",omitempty"` // tree version for ApplyPatch, SetPreview
 	PathSets map[string]pathSet `json:",omitempty"`
 }
@@ -100,16 +96,15 @@ const (
 )
 
 // nav is the optional navigation side-effect attached to a [cmd]
-// return value. apply turns push/outgoingID into a PushURL effect or
-// replace into a ReplaceURL effect, ordered ahead of the DOM patches in
-// the next frame. A load is handled separately: it replaces the whole
-// document, so apply emits a lone LoadURL effect without an Update/View
-// cycle.
+// return value. apply turns push into a PushURL effect or replace
+// into a ReplaceURL effect, ordered ahead of the DOM patches in the
+// next frame. A load is handled separately: it replaces the whole
+// document, so apply emits a lone LoadURL effect without an
+// Update/View cycle.
 type nav struct {
-	push       string // PushURL target URL, or empty
-	replace    string // ReplaceURL target URL, or empty
-	load       string // Load target URL (full-page navigation), or empty
-	outgoingID string // for push: id to cache outgoing s.view under
+	push    string // PushURL target URL, or empty
+	replace string // ReplaceURL target URL, or empty
+	load    string // Load target URL (full-page navigation), or empty
 }
 
 const snapshotCacheSize = 30
@@ -117,7 +112,6 @@ const snapshotCacheSize = 30
 type snapshot struct {
 	view  []vdom.Node
 	title string
-	ver   string // version id the view was named by when cached
 }
 
 // preview is the session's single outstanding link preview.
@@ -129,16 +123,16 @@ type preview struct {
 	title  string
 	ver    string // version id naming the preview tree
 	frozen bool   // DeletePreview sent
-	// log maps each emitted SetPreview id to the outgoing view the
-	// client would leave by clicking after that frame, kept for its back
-	// button. When the client navigates to a preview, the chosen candidate
-	// is added to the snapshot cache.
+	// log holds, keyed by its ver, each outgoing view the client would
+	// leave by clicking after a given frame, kept for its back button.
+	// When the client navigates to a preview, the chosen candidate is
+	// added to the snapshot cache.
 	log map[string]snapshot
 }
 
-// addView logs view, named by version id ver, as the given base
-// snapshot id. It returns false if there's no remaining capacity.
-func (p *preview) addView(id, ver string, view []vdom.Node, title string) bool {
+// addView logs the outgoing view named ver as a back-button candidate.
+// It returns false if there's no remaining capacity.
+func (p *preview) addView(ver string, view []vdom.Node, title string) bool {
 	const cap = 128
 	if len(p.log) >= cap {
 		return false
@@ -146,7 +140,7 @@ func (p *preview) addView(id, ver string, view []vdom.Node, title string) bool {
 	if p.log == nil {
 		p.log = make(map[string]snapshot)
 	}
-	p.log[id] = snapshot{view: view, title: title, ver: ver}
+	p.log[ver] = snapshot{view: view, title: title}
 	return true
 }
 
@@ -234,8 +228,8 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 		// Goes before ApplyPatches+SetTitle to snapshot outgoing state.
 		switch {
 		case n.push != "":
-			s.cacheSnapshot(n.outgoingID, oldVer, s.view, s.title)
-			effects = append(effects, effect{Type: effectPushURL, URL: n.push, ID: n.outgoingID})
+			s.cacheSnapshot(oldVer, s.view, s.title)
+			effects = append(effects, effect{Type: effectPushURL, URL: n.push})
 		case n.replace != "":
 			effects = append(effects, effect{Type: effectReplaceURL, URL: n.replace})
 		}
@@ -249,14 +243,12 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 	}
 
 	if s.preview != nil && !s.preview.frozen && len(patches) > 0 {
-		candID := rand.Text()
-		if s.preview.addView(candID, s.ver, next, title) {
+		if s.preview.addView(s.ver, next, title) {
 			effects = append(effects, effect{
 				Type:    effectSetPreview,
 				Patches: vdom.Diff(next, s.preview.view),
 				Title:   s.preview.title,
 				URL:     s.preview.url,
-				ID:      candID,
 				Ver:     s.preview.ver,
 			})
 		} else {
@@ -319,13 +311,13 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		msgURLChange  msgType = "URLChange"  // a history navigation
 	)
 	var envelope struct {
-		Type       msgType        `json:",omitempty"`
-		Handler    string         `json:",omitempty"`
-		Event      jsontext.Value `json:",omitempty"`
-		URL        string         `json:",omitempty"`
-		Internal   bool           `json:",omitempty"`
-		SnapshotID string         `json:",omitempty"`
-		ToPreview  bool           `json:",omitempty"`
+		Type        msgType        `json:",omitempty"`
+		Handler     string         `json:",omitempty"`
+		Event       jsontext.Value `json:",omitempty"`
+		URL         string         `json:",omitempty"`
+		Internal    bool           `json:",omitempty"`
+		SnapshotVer string         `json:",omitempty"`
+		ToPreview   bool           `json:",omitempty"`
 		// Ver echoes the version id of the tree the client displayed
 		// when a Dispatch event fired. See effect.Ver.
 		Ver string `json:",omitempty"`
@@ -362,9 +354,9 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		}
 		switch {
 		case envelope.ToPreview:
-			s.commitPreview(ctx, envelope.SnapshotID)
-		case envelope.SnapshotID != "":
-			s.restoreSnapshot(envelope.SnapshotID)
+			s.commitPreview(ctx, envelope.SnapshotVer)
+		case envelope.SnapshotVer != "":
+			s.restoreSnapshot(envelope.SnapshotVer)
 		}
 		msg := s.sv.onURLChange(u)
 		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
@@ -597,36 +589,47 @@ func (s *session[Msg]) framesSince(seen uint64) []frame {
 	return out
 }
 
-// cacheSnapshot stores a vdom snapshot, named by version id ver, under
-// id, evicting the oldest entry if the cache is at capacity. Must be
-// called with s.mu held.
-func (s *session[Msg]) cacheSnapshot(id, ver string, view []vdom.Node, title string) {
+// cacheSnapshot stores a vdom snapshot, named by tree version ver,
+// evicting the oldest entry if the cache is at capacity. Re-caching a
+// ver already present refreshes its recency rather than consuming a
+// second eviction slot. Must be called with s.mu held.
+func (s *session[Msg]) cacheSnapshot(ver string, view []vdom.Node, title string) {
 	if s.snapshots == nil {
 		s.snapshots = make(map[string]snapshot, snapshotCacheSize)
 		s.snapshotAge = make([]string, snapshotCacheSize)
 	}
+	if _, ok := s.snapshots[ver]; ok {
+		// Clear the old ring slot — a later write recycles the hole —
+		// and fall through to re-append at the young end.
+		for i, old := range s.snapshotAge {
+			if old == ver {
+				s.snapshotAge[i] = ""
+				break
+			}
+		}
+	}
 	if old := s.snapshotAge[s.snapshotNext]; old != "" {
 		delete(s.snapshots, old)
 	}
-	s.snapshotAge[s.snapshotNext] = id
+	s.snapshotAge[s.snapshotNext] = ver
 	s.snapshotNext = (s.snapshotNext + 1) % snapshotCacheSize
-	s.snapshots[id] = snapshot{view: view, title: title, ver: ver}
+	s.snapshots[ver] = snapshot{view: view, title: title}
 }
 
-// restoreSnapshot replaces s.view and s.title with the cached snapshot
-// for id, if present, and sets the session's base to id. The next
+// restoreSnapshot replaces s.view and s.title with the cached tree
+// named ver, if present, and roots a new patch lineage there. The next
 // apply cycle diffs against the restored view, producing corrective
 // patches for any staleness. Frames committed under an older base
 // are dropped by the client.
-func (s *session[Msg]) restoreSnapshot(id string) {
+func (s *session[Msg]) restoreSnapshot(ver string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.base = id
+	s.base = ver
 	s.preview = nil
-	if sn, ok := s.snapshots[id]; ok {
+	if sn, ok := s.snapshots[ver]; ok {
 		s.view = sn.view
 		s.title = sn.title
-		s.ver = sn.ver
+		s.ver = ver
 	}
 }
 
@@ -648,9 +651,8 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 	next, h := lower(view)
 	s.handlers = s.handlers.merge(h)
 	add := s.addPathSets(h)
-	id := rand.Text()
 	p := &preview{url: href, view: next, title: title, ver: rand.Text()}
-	p.addView(id, s.ver, s.view, s.title)
+	p.addView(s.ver, s.view, s.title)
 	s.preview = p
 	var effects []effect
 	if len(add) > 0 {
@@ -661,14 +663,14 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 		Patches: vdom.Diff(s.view, next),
 		Title:   title,
 		URL:     href,
-		ID:      id,
 		Ver:     p.ver,
 	})
 	s.appendFrame(frame{Base: s.base, Effects: effects})
 }
 
 // commitPreview installs the outstanding preview as the current view.
-func (s *session[Msg]) commitPreview(ctx context.Context, id string) {
+// ver names the outgoing candidate the client is leaving behind.
+func (s *session[Msg]) commitPreview(ctx context.Context, ver string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.preview == nil {
@@ -678,10 +680,10 @@ func (s *session[Msg]) commitPreview(ctx context.Context, id string) {
 	}
 	// The committed outgoing view becomes a real navigation snapshot for
 	// the back button; the rest of the log is dropped with the preview.
-	if cand, ok := s.preview.log[id]; ok {
-		s.cacheSnapshot(id, cand.ver, cand.view, cand.title)
+	if cand, ok := s.preview.log[ver]; ok {
+		s.cacheSnapshot(ver, cand.view, cand.title)
 	}
-	s.base = id
+	s.base = ver
 	s.view = s.preview.view
 	s.title = s.preview.title
 	s.ver = s.preview.ver

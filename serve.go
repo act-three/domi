@@ -125,7 +125,7 @@ func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 		sv:     sv,
 		logger: sv.logger.With("session", id),
 		log:    make([]frame, sv.replayWindow),
-		base:   baseInitial,
+		base:   verInitial,
 		ver:    verInitial,
 		active: time.Now(),
 	}
