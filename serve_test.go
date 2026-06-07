@@ -2,6 +2,7 @@ package domi
 
 import (
 	"context"
+	"encoding/json/jsontext"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -9,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -105,8 +107,8 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 	const replayWindow = 128
 	ctx, cancel := context.WithCancel(context.Background())
 	_, view := app.View(ctx)
-	nodes, h := lower(view)
-	return &session[Msg]{
+	nodes, h := lower(0, view)
+	s := &session[Msg]{
 		ctx:    ctx,
 		cancel: cancel,
 		app:    app,
@@ -118,13 +120,14 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 			onURLChange:  func(*url.URL) Msg { var zero Msg; return zero },
 			onURLRequest: func(URLRequest) Msg { var zero Msg; return zero },
 		},
-		log:      make([]frame, replayWindow),
-		base:     verInitial,
-		ver:      verInitial,
-		view:     nodes,
-		handlers: h,
-		active:   time.Now(),
+		log:    make([]frame, replayWindow),
+		base:   verInitial,
+		ver:    verInitial,
+		view:   nodes,
+		active: time.Now(),
 	}
+	s.tables = map[string]table[Msg]{verInitial: typed[Msg](h)}
+	return s
 }
 
 // A Fragment returned from View lowers to multiple top-level children,
@@ -197,14 +200,12 @@ func TestHandleEventDispatch(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
 
-	// Register an int Msg (counterApp's Msg type) the way On would, then
-	// dispatch its key.
-	a := On("click")(1).(attr)
-	s.handlers = s.handlers.merge(a.handlers)
-	// The client sends the bare msg key, stripping the pathSet key,
-	// plus the version id of the tree its DOM displays.
-	key, _, _ := strings.Cut(a.attr.Value, ":")
-	body := fmt.Sprintf(`{"Type":"Dispatch","Handler":%q,"Ver":%q}`, key, s.ver)
+	// Register an unmarshal function the way lowering would, under the
+	// session's current tree version, then dispatch its key. The client
+	// sends the bare handler key, stripping the pathSet key, plus the
+	// version id of the tree its DOM displays.
+	s.tables[s.ver] = table[int]{"k1": msgInt(1)}
+	body := fmt.Sprintf(`{"Type":"Dispatch","Handler":"k1","Ver":%q}`, s.ver)
 	rec := httptest.NewRecorder()
 	s.handleEvent(rec, httptest.NewRequest("POST", "/event/x", strings.NewReader(body)))
 
@@ -904,7 +905,7 @@ func TestSessionCommitPreviewInstallsView(t *testing.T) {
 	if s.title != "/next" {
 		t.Fatalf("title = %q, want %q", s.title, "/next")
 	}
-	want, _ := lower(Tag("div")()(Text("/next-0")))
+	want, _ := lower(0, Tag("div")()(Text("/next-0")))
 	if !reflect.DeepEqual(s.view, want) {
 		t.Fatalf("committed view = %+v, want the previewed page", s.view)
 	}
@@ -914,7 +915,7 @@ func TestSessionCommitPreviewInstallsView(t *testing.T) {
 	if !ok {
 		t.Fatal("committed outgoing view should move into the snapshot cache")
 	}
-	if outgoing, _ := lower(Tag("div")()(Text("/-0"))); !reflect.DeepEqual(sn.view, outgoing) {
+	if outgoing, _ := lower(0, Tag("div")()(Text("/-0"))); !reflect.DeepEqual(sn.view, outgoing) {
 		t.Fatalf("promoted snapshot view = %+v, want the outgoing page", sn.view)
 	}
 }
@@ -1016,7 +1017,7 @@ func TestSessionSnapshotRestore(t *testing.T) {
 	origTitle := s.title
 
 	// Cache a different view under its ver.
-	otherView, _ := lower(Tag("div")()(Text("other")))
+	otherView, _ := lower(0, Tag("div")()(Text("other")))
 	s.cacheSnapshot("ver1", otherView, "other title")
 
 	s.restoreSnapshot("ver1")
@@ -1051,7 +1052,7 @@ func TestSessionSnapshotRestore(t *testing.T) {
 func TestSessionSnapshotEviction(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	view, _ := lower(Tag("div")()(Text("x")))
+	view, _ := lower(0, Tag("div")()(Text("x")))
 	for i := range snapshotCacheSize + 5 {
 		s.cacheSnapshot(fmt.Sprintf("s%d", i), view, "t")
 	}
@@ -1079,7 +1080,7 @@ func TestSessionSnapshotEviction(t *testing.T) {
 func TestSessionSnapshotRecachingRefreshesAge(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	view, _ := lower(Tag("div")()(Text("x")))
+	view, _ := lower(0, Tag("div")()(Text("x")))
 	s.cacheSnapshot("a", view, "t")
 	for i := range snapshotCacheSize - 2 {
 		s.cacheSnapshot(fmt.Sprintf("s%d", i), view, "t")
@@ -1120,12 +1121,166 @@ func TestSessionFrameBase(t *testing.T) {
 	s.mu.Unlock()
 }
 
+// msgInt returns an unmarshal function producing n, ignoring the event.
+func msgInt(n int) func(jsontext.Value) (int, error) {
+	return func(jsontext.Value) (int, error) { return n, nil }
+}
+
+// captureApp renders a button whose handler captures the current value
+// of a per-Update counter, and records every non-negative Msg it
+// receives. Updates with -1 just bump the counter. body controls
+// whether the rendered DOM changes with the counter (fresh trees and
+// vers per Update) or stays constant (same tree, refreshed bindings).
+type captureApp struct {
+	body func(n int) Node
+	n    int
+	got  []int
+}
+
+func (a *captureApp) Update(_ context.Context, m int) Cmd[int] {
+	if m >= 0 {
+		a.got = append(a.got, m)
+	}
+	a.n++
+	return Batch[int]()
+}
+
+func (a *captureApp) View(context.Context) (string, Node) {
+	n := a.n
+	return "", Tag("button")(On("click", msgInt(n)))(a.body(a.n))
+}
+func (a *captureApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
+func (a *captureApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
+	t, v := a.View(ctx)
+	return t, v, true
+}
+
+// soleKey returns the only handler key in the table for ver.
+func soleKey[Msg any](t *testing.T, s *session[Msg], ver string) string {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	table := s.tables[ver]
+	if len(table) != 1 {
+		t.Fatalf("expected 1 handler in table for %q, got %d", ver, len(table))
+	}
+	for k := range table {
+		return k
+	}
+	panic("unreachable")
+}
+
+// waitGot polls until the app's recorded Msgs equal want.
+func waitGot(t *testing.T, s *session[int], a *captureApp, want []int) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		s.mu.Lock()
+		got := slices.Clone(a.got)
+		s.mu.Unlock()
+		if slices.Equal(got, want) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+}
+
+// Dispatch resolves a handler against the exact tree the client
+// displayed: when the tree changes, the same handler key under the old
+// version still fires the old render's function, while the new version
+// fires the new one. The key itself is identical across renders — the
+// element's address — so the versions are doing all the work.
+func TestDispatchIsVersionExact(t *testing.T) {
+	app := &captureApp{body: func(n int) Node { return Textf("%d", n) }}
+	s := newTestSession[int](app)
+	defer s.cancel()
+
+	ver0 := s.ver
+	s.apply(s.ctx, -1, nil) // n: 0 → 1; body changes; fresh ver
+	ver1 := s.ver
+	if ver1 == ver0 {
+		t.Fatal("changed tree should have minted a fresh ver")
+	}
+	key := soleKey(t, s, ver1)
+	if key != soleKey(t, s, ver0) {
+		t.Fatal("handler key should be the element's address, stable across renders")
+	}
+
+	s.dispatch(s.ctx, ver0, key, nil)
+	waitGot(t, s, app, []int{0})
+	s.dispatch(s.ctx, ver1, key, nil)
+	waitGot(t, s, app, []int{0, 1})
+}
+
+// When an apply changes captures but not the DOM — a subscription tick
+// re-rendering an unchanged tree — no ver is minted and the live
+// table's bindings are refreshed in place, so events fire the latest
+// functions rather than stale captures.
+func TestDispatchRefreshesUnchangedTree(t *testing.T) {
+	app := &captureApp{body: func(int) Node { return Text("retry") }}
+	s := newTestSession[int](app)
+	defer s.cancel()
+
+	ver0 := s.ver
+	s.apply(s.ctx, -1, nil) // n: 0 → 1; body unchanged; same ver
+	if s.ver != ver0 {
+		t.Fatal("unchanged tree should keep its ver")
+	}
+	s.dispatch(s.ctx, ver0, soleKey(t, s, ver0), nil)
+	waitGot(t, s, app, []int{1})
+}
+
+// An event naming a version the session never produced is dropped.
+func TestDispatchUnknownVerDropped(t *testing.T) {
+	app := &captureApp{body: func(int) Node { return Text("x") }}
+	s := newTestSession[int](app)
+	defer s.cancel()
+
+	s.dispatch(s.ctx, "nonexistent", soleKey(t, s, s.ver), nil)
+	time.Sleep(20 * time.Millisecond)
+	waitGot(t, s, app, nil)
+}
+
+// A handler whose function produces some other app's Msg type is a
+// coding error: typed panics when the harvest lands, at render time,
+// naming the event and both types.
+func TestTypedMismatchPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for a mistyped handler")
+		}
+		if msg := fmt.Sprint(r); !strings.Contains(msg, `On("click")`) || !strings.Contains(msg, "int") {
+			t.Fatalf("panic should name the event and the wanted Msg type, got %q", msg)
+		}
+	}()
+	typed[int](handlers{"k": {fn: msgFn("oops"), event: "click"}})
+}
+
+// An error from the app's unmarshal function skips the event, like a
+// failing decoder in Elm.
+func TestDispatchUnmarshalErrorSkips(t *testing.T) {
+	app := &captureApp{body: func(int) Node { return Text("x") }}
+	s := newTestSession[int](app)
+	defer s.cancel()
+
+	s.tables[s.ver] = table[int]{"bad": func(jsontext.Value) (int, error) {
+		return 7, fmt.Errorf("no thanks")
+	}}
+	s.dispatch(s.ctx, s.ver, "bad", nil)
+	time.Sleep(20 * time.Millisecond)
+	waitGot(t, s, app, nil)
+}
+
 // pathSetApp renders one handler carrying a non-empty path set.
 type pathSetApp struct{}
 
 func (pathSetApp) Update(context.Context, int) Cmd[int] { return Batch[int]() }
 func (pathSetApp) View(context.Context) (string, Node) {
-	return "", Tag("input")(On("input", []string{"target", "value"})(1))()
+	return "", Tag("input")(On("input", msgInt(1), []string{"target", "value"}))()
 }
 func (pathSetApp) Subscriptions(context.Context) Sub[int]                 { return Sub[int]{} }
 func (pathSetApp) Preview(context.Context, *url.URL) (string, Node, bool) { return "", nil, false }
@@ -1147,8 +1302,7 @@ func TestHandleRootSeedsPathSets(t *testing.T) {
 
 	// The input handler's path-set key must appear in the seed blob, not
 	// only in the data-msg-input attribute that references it.
-	a := On("input", []string{"target", "value"})(1).(attr)
-	_, psKey, _ := strings.Cut(a.attr.Value, ":")
+	psKey := pathSet{{"target", "value"}}.key()
 
 	const marker = `data-domi-path-sets="`
 	i := strings.Index(html, marker)

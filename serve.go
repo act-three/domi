@@ -127,6 +127,7 @@ func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 		log:    make([]frame, sv.replayWindow),
 		base:   verInitial,
 		ver:    verInitial,
+		tables: make(map[string]table[Msg]),
 		active: time.Now(),
 	}
 	sv.put(id, s)

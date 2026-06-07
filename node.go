@@ -3,6 +3,7 @@ package domi
 import (
 	"fmt"
 	"iter"
+	"slices"
 
 	"ily.dev/domi/internal/vdom"
 )
@@ -17,17 +18,18 @@ type Node interface {
 
 // node is the normalized form of a Node, satisfied only by element and
 // text. Public constructors normalize their inputs at construction time;
-// the vdom form is materialized later, by [lower].
+// the vdom form is materialized later, by [lower], which passes each
+// node its address.
 type node interface {
 	Node
-	lowered() (vdom.Node, handlers)
+	lowered(addr) (vdom.Node, handlers)
 }
 
 // text is the domi-side wrapper around [vdom.Text].
 type text vdom.Text
 
-func (text) isNode()                          {}
-func (t text) lowered() (vdom.Node, handlers) { return vdom.Text(t), nil }
+func (text) isNode()                              {}
+func (t text) lowered(addr) (vdom.Node, handlers) { return vdom.Text(t), nil }
 
 // Text returns a text node. The string is escaped for safe embedding
 // in HTML when rendered; use [UnsafeParseRaw] for trusted HTML markup.
@@ -77,19 +79,31 @@ func (element) isNode() {}
 
 // lowered materializes e and its entire subtree into vdom form, element
 // before children, and merges the handlers harvested along the way.
-func (e element) lowered() (vdom.Node, handlers) {
-	a, h := Group(e.attrs...).(group).lower()
+func (e element) lowered(a addr) (vdom.Node, handlers) {
+	var attrs []vdom.Attr
+	var h handlers
+	slot := 0
+	for at := range Group(e.attrs...).(group) {
+		va := at.attr
+		if at.handler != nil {
+			key := a.handlerKey(va.Name, slot)
+			slot++
+			va.Value = key + ":" + at.handler.ps.key()
+			h = h.merge(handlers{key: *at.handler})
+		}
+		attrs = append(attrs, va)
+	}
 	if e.keys != nil {
 		children := make([]vdom.Node, len(e.children))
 		for i, c := range e.children {
-			n, ch := c.(element).lowered()
+			n, ch := c.(element).lowered(a.key(e.keys[i]))
 			children[i] = n.(vdom.Element).WithAttr(vdom.Attr{Name: "data-domi-key", Value: e.keys[i]})
 			h = h.merge(ch)
 		}
-		return vdom.NewElement(e.tag, a, children, e.keys), h
+		return vdom.NewElement(e.tag, slices.Values(attrs), children, e.keys), h
 	}
-	children, ch := lower(e.children...)
-	return vdom.NewElement(e.tag, a, children, nil), h.merge(ch)
+	children, ch := lower(a, e.children...)
+	return vdom.NewElement(e.tag, slices.Values(attrs), children, nil), h.merge(ch)
 }
 
 // Tag returns a curried builder for an HTML element with the given name.
@@ -216,14 +230,15 @@ func Fragment(n ...Node) Node {
 	})
 }
 
-// lower materializes nodes into their lowered vdom.Node form in a
-// single top-down walk, expanding any [Fragment] entries inline so the
-// result is a flat slice of element and text nodes ready for vdom
-// rendering or diffing, along with the handlers harvested from every
-// subtree.
-func lower(nodes ...Node) (n []vdom.Node, h handlers) {
+// lower materializes nodes — the children of the node at address a —
+// into their lowered vdom.Node form in a single top-down walk,
+// expanding any [Fragment] entries inline so the result is a flat
+// slice of element and text nodes ready for vdom rendering or diffing,
+// along with the handlers harvested from every subtree. Each node's
+// address extends a with its index in the flattened list.
+func lower(a addr, nodes ...Node) (n []vdom.Node, h handlers) {
 	for nn := range Fragment(nodes...).(fragment) {
-		v, hh := nn.lowered()
+		v, hh := nn.lowered(a.index(len(n)))
 		n = append(n, v)
 		h = h.merge(hh)
 	}
@@ -233,10 +248,18 @@ func lower(nodes ...Node) (n []vdom.Node, h handlers) {
 // lowerOne narrows a single Node to its lowered vdom.Node form,
 // panicking if n materializes to anything other than exactly one node
 // (e.g. a Fragment with zero or multiple children).
-func lowerOne(n Node) (vdom.Node, handlers) {
-	ns, h := lower(n)
+func lowerOne(a addr, n Node) (vdom.Node, handlers) {
+	ns, h := lower(a, n)
 	if len(ns) != 1 {
 		panic(fmt.Sprintf("domi: expected 1 node, got %d", len(ns)))
 	}
 	return ns[0], h
 }
+
+// prelowered wraps an already-lowered vdom.Node as a [Node]. Its
+// handlers were harvested when it was first lowered.
+type prelowered struct{ n vdom.Node }
+
+func (prelowered) isNode() {}
+
+func (p prelowered) lowered(addr) (vdom.Node, handlers) { return p.n, nil }
