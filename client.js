@@ -163,7 +163,7 @@ function datasetKeyFor(event) {
 }
 
 function postEnvelope(sessionId, h, e, ver) {
-  fetch(`/event/${encodeURIComponent(sessionId)}`, {
+  fetch(`/${encodeURIComponent(sessionId)}/event`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ Type: 'Dispatch', Handler: h, Event: e, Ver: ver }),
@@ -266,7 +266,7 @@ export function run() {
     document.title = p.title ?? '';
     base = p.base;
     ver = p.ver;
-    fetch(`/event/${encodeURIComponent(sessionId)}`, {
+    fetch(`/${encodeURIComponent(sessionId)}/event`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ Type: 'URLChange', URL: p.dest, SnapshotVer: p.base, ToPreview: true }),
@@ -352,7 +352,7 @@ export function run() {
       return;
     }
     pv = null; // Clicking a different link abandons any preview.
-    fetch(`/event/${encodeURIComponent(sessionId)}`, {
+    fetch(`/${encodeURIComponent(sessionId)}/event`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ Type: 'URLRequest', URL: urlStr, Internal: true }),
@@ -382,7 +382,7 @@ export function run() {
     if (pv && pv.isClicked) return; // a click is committed; don't supersede it
     if (pv && pv.url === urlStr) return; // already requested or holding it
     pv = { url: urlStr, isReady: false, isClicked: false };
-    fetch(`/event/${encodeURIComponent(sessionId)}`, {
+    fetch(`/${encodeURIComponent(sessionId)}/event`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ Type: 'Prefetch', URL: urlStr }),
@@ -399,14 +399,14 @@ export function run() {
     const snapVer = e.state && e.state.domiSnapshot;
     pv = null; // it's based on the page we're leaving; drop it
     if (snapVer) restoreSnapshot(snapVer);
-    fetch(`/event/${encodeURIComponent(sessionId)}`, {
+    fetch(`/${encodeURIComponent(sessionId)}/event`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ Type: 'URLChange', URL: url, SnapshotVer: snapVer || '' }),
     }).catch((err) => console.error('domi: urlChange POST failed', err));
   });
 
-  const sse = new EventSource(`/sse/${encodeURIComponent(sessionId)}`);
+  const sse = new EventSource(`/${encodeURIComponent(sessionId)}/events`);
   sse.addEventListener('effect', (ev) => {
     checkPreviewTTL();
     let f;
@@ -467,7 +467,7 @@ export function run() {
             const { url, isClicked } = pv;
             pv = null;
             if (isClicked) {
-              fetch(`/event/${encodeURIComponent(sessionId)}`, {
+              fetch(`/${encodeURIComponent(sessionId)}/event`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ Type: 'URLRequest', URL: url, Internal: true }),

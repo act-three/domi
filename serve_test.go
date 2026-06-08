@@ -215,7 +215,7 @@ func TestHandleEventDispatch(t *testing.T) {
 	s.tables[s.ver] = table[int]{"k1": msgInt(1)}
 	body := fmt.Sprintf(`{"Type":"Dispatch","Handler":"k1","Ver":%q}`, s.ver)
 	rec := httptest.NewRecorder()
-	s.handleEvent(rec, httptest.NewRequest("POST", "/event/x", strings.NewReader(body)))
+	s.handleEvent(rec, httptest.NewRequest("POST", "/x/event", strings.NewReader(body)))
 
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
@@ -363,7 +363,7 @@ func TestServerSessionTimeoutNeverAttached(t *testing.T) {
 // Returns the bytes the handler wrote.
 func runSSE[Msg any](t *testing.T, s *session[Msg], lastEventID string, d time.Duration) string {
 	t.Helper()
-	req := httptest.NewRequest("GET", "/sse/x", nil)
+	req := httptest.NewRequest("GET", "/x/events", nil)
 	if lastEventID != "" {
 		req.Header.Set("Last-Event-ID", lastEventID)
 	}
@@ -479,7 +479,7 @@ func TestSessionSSEResyncAheadOfHead(t *testing.T) {
 func TestSessionSSEBadLastEventID(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	req := httptest.NewRequest("GET", "/sse/x", nil)
+	req := httptest.NewRequest("GET", "/x/events", nil)
 	req.Header.Set("Last-Event-ID", "not-a-number")
 	rec := httptest.NewRecorder()
 	s.handleSSE(rec, req)
@@ -521,7 +521,7 @@ func TestSessionSSEEviction(t *testing.T) {
 	defer s.cancel()
 
 	first := func() (*httptest.ResponseRecorder, chan struct{}, context.CancelFunc) {
-		req := httptest.NewRequest("GET", "/sse/x", nil)
+		req := httptest.NewRequest("GET", "/x/events", nil)
 		ctx, cancel := context.WithCancel(context.Background())
 		req = req.WithContext(ctx)
 		rec := httptest.NewRecorder()
