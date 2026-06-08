@@ -41,6 +41,8 @@ func internal(a vdom.Attr) Attr {
 //  2. Event handlers are combined internally.
 //  3. For all other attributes,
 //     only the first occurrence appears.
+//
+// The zero value of Attr (nil) is an empty group.
 type Attr interface {
 	isAttr()
 }
@@ -120,6 +122,8 @@ func Group(a ...Attr) Attr {
 	return group(func(yield func(attr) bool) {
 		for _, a := range a {
 			switch v := a.(type) {
+			case nil:
+				// A nil Attr contributes nothing, like an empty Group.
 			case attr:
 				if !yield(v) {
 					return
