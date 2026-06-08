@@ -173,14 +173,13 @@ function postEnvelope(eventURL, h, e, ver) {
 // run wires up the domi session on document.body and starts the SSE
 // patch stream. Reads the URL prefix from body[data-domi-prefix=…]
 // (which the server emits on initial render) and removes the
-// attribute on its way out — so calling run() twice is a safe no-op,
-// and calling it in a non-domi context (no body, no attribute) does
-// nothing.
+// attribute on its way out.
 export function run() {
-  if (typeof document === 'undefined' || !document.body) return;
+  if (typeof document === 'undefined') return; // synthetic test env is ok
   const container = document.body;
+  if (!container) throw new Error('domi: document.body unavailable');
   const prefix = container.dataset.domiPrefix;
-  if (!prefix) return;
+  if (!prefix) throw new Error('domi: no session on document.body, expected data-domi-prefix');
   delete container.dataset.domiPrefix;
   const eventURL = `${prefix}/event`;
   const eventsURL = `${prefix}/events`;
