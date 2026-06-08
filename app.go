@@ -119,8 +119,18 @@ func Batch[Msg any](c ...Cmd[Msg]) Cmd[Msg] {
 
 // A Sub is a long-lived event source
 // that produces Msg values in response to external stimuli.
-// The zero value of Sub is a valid Sub that emits no messages.
-type Sub[Msg any] struct{ s []sub[Msg] }
+//
+// A nil Sub is a valid subscription that produces no messages.
+// It means "there is no subscription".
+type Sub[Msg any] interface {
+	isSub()
+}
+
+// subs is the lowered form of a [Sub]: a flat set of event sources
+// that the framework reconciles between update cycles.
+type subs[Msg any] []sub[Msg]
+
+func (subs[Msg]) isSub() {}
 
 type sub[Msg any] struct {
 	key    any
@@ -136,14 +146,21 @@ type sub[Msg any] struct {
 // The Seq returned from f must exit when its context becomes done,
 // in addition to exiting when yield returns false.
 func Subscription[Msg any, Key comparable](key Key, f func(context.Context) iter.Seq[Msg]) Sub[Msg] {
-	return Sub[Msg]{s: []sub[Msg]{{key: key, events: f}}}
+	return subs[Msg]{{key: key, events: f}}
 }
 
 // Subs composes multiple [Sub] values into one.
 func Subs[Msg any](ss ...Sub[Msg]) Sub[Msg] {
-	var all []sub[Msg]
+	var all subs[Msg]
 	for _, s := range ss {
-		all = append(all, s.s...)
+		switch v := s.(type) {
+		case nil:
+			// A nil Sub contributes nothing, like an empty Subs.
+		case subs[Msg]:
+			all = append(all, v...)
+		default:
+			panic(fmt.Sprintf("domi: cannot lower %T", s))
+		}
 	}
-	return Sub[Msg]{s: all}
+	return all
 }
