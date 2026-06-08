@@ -32,10 +32,10 @@ import (
 )
 
 type Msg struct {
-	URLRequest *url.URL `json:"-"`
-	Internal   bool     `json:"-"`
-	URLChange  *url.URL `json:"-"`
-	Tick       bool     `json:"-"`
+	URLRequest *url.URL
+	Internal   bool
+	URLChange  *url.URL
+	Tick       bool
 }
 
 type N = domi.Node

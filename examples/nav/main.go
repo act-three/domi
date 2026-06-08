@@ -23,9 +23,9 @@ const (
 )
 
 type Msg struct {
-	URLRequest *url.URL `json:"-"`
-	Internal   bool     `json:"-"`
-	URLChange  *url.URL `json:"-"`
+	URLRequest *url.URL
+	Internal   bool
+	URLChange  *url.URL
 }
 
 type N = domi.Node

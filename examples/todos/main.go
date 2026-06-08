@@ -15,8 +15,8 @@ import (
 )
 
 type Msg struct {
-	Tag string `json:"msg"`
-	ID  uint64 `json:"id,omitempty"`
+	Tag string
+	ID  uint64
 }
 
 type N = domi.Node
