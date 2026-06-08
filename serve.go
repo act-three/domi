@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"path"
 	"sync"
 	"time"
 )
@@ -52,9 +53,9 @@ func Handler[Msg any, A App[Msg]](
 ) http.Handler {
 	sv := newServer(f, onURLRequest, onURLChange, o)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /{id}/events", sv.handleSSE)
-	mux.HandleFunc("POST /{id}/event", sv.handleEvent)
-	mux.HandleFunc("GET "+clientJSPath, func(w http.ResponseWriter, req *http.Request) {
+	mux.HandleFunc("GET "+path.Join("/", sv.prefix, "{id}/events"), sv.handleSSE)
+	mux.HandleFunc("POST "+path.Join("/", sv.prefix, "{id}/event"), sv.handleEvent)
+	mux.HandleFunc("GET "+sv.clientPath, func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "max-age=31536000, immutable")
 		http.ServeContent(w, req, "domi.js", time.Time{}, bytes.NewReader(clientJS))
@@ -65,11 +66,13 @@ func Handler[Msg any, A App[Msg]](
 
 type server[Msg any] struct {
 	// Config. Never changed after init. Safe to read concurrently.
-	document       func(title string, body Node) Node
+	document       func(clientPath, title string, body Node) Node
 	logger         *slog.Logger
 	sessionTimeout time.Duration
 	replayWindow   int
 	keepalive      time.Duration
+	prefix         string // namespace for internal URLs, e.g. "/-/domi"; "" for the site root
+	clientPath     string // full path the client runtime is served at, prefix included
 
 	appf         func(context.Context, *url.URL) (App[Msg], Cmd[Msg])
 	onURLRequest func(URLRequest) Msg
@@ -100,7 +103,11 @@ func newServer[Msg any, A App[Msg]](
 	for _, o := range opts {
 		switch o := o.(type) {
 		case documentOption:
-			sv.document = o.f
+			sv.document = func(_, title string, body Node) Node {
+				return o.f(title, body)
+			}
+		case internalURLPrefixOption:
+			sv.prefix = o.p
 		case sessionTimeoutOption:
 			sv.sessionTimeout = o.d
 		case replayWindowOption:
@@ -111,6 +118,7 @@ func newServer[Msg any, A App[Msg]](
 			sv.logger = o.l
 		}
 	}
+	sv.clientPath = path.Join("/", sv.prefix, clientJSPath)
 	return sv
 }
 
@@ -176,13 +184,13 @@ func (sv *server[Msg]) delete(id string) {
 	delete(sv.m, id)
 }
 
-func defaultDocument(title string, body Node) Node {
+func defaultDocument(clientPath, title string, body Node) Node {
 	return Tag("html")()(
 		Tag("head")()(
 			Tag("meta")(Name("charset")("utf-8")),
 			Tag("title")()(Text(title)),
 			Tag("script")(Name("type")("module"))(
-				Text(fmt.Sprintf(`import * as Domi from %q; Domi.run();`, clientJSPath)),
+				Text(fmt.Sprintf(`import * as Domi from %q; Domi.run();`, clientPath)),
 			),
 		),
 		body,

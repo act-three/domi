@@ -162,8 +162,8 @@ function datasetKeyFor(event) {
   return 'msg' + event.charAt(0).toUpperCase() + event.slice(1);
 }
 
-function postEnvelope(sessionId, h, e, ver) {
-  fetch(`/${encodeURIComponent(sessionId)}/event`, {
+function postEnvelope(eventURL, h, e, ver) {
+  fetch(eventURL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ Type: 'Dispatch', Handler: h, Event: e, Ver: ver }),
@@ -171,7 +171,7 @@ function postEnvelope(sessionId, h, e, ver) {
 }
 
 // run wires up the domi session on document.body and starts the SSE
-// patch stream. Reads the session ID from body[data-domi-session=…]
+// patch stream. Reads the URL prefix from body[data-domi-prefix=…]
 // (which the server emits on initial render) and removes the
 // attribute on its way out — so calling run() twice is a safe no-op,
 // and calling it in a non-domi context (no body, no attribute) does
@@ -179,9 +179,11 @@ function postEnvelope(sessionId, h, e, ver) {
 export function run() {
   if (typeof document === 'undefined' || !document.body) return;
   const container = document.body;
-  const sessionId = container.dataset.domiSession;
-  if (!sessionId) return;
-  delete container.dataset.domiSession;
+  const prefix = container.dataset.domiPrefix;
+  if (!prefix) return;
+  delete container.dataset.domiPrefix;
+  const eventURL = `${prefix}/event`;
+  const eventsURL = `${prefix}/events`;
   // The container is document.body. The framework treats it as the
   // patch root. App content becomes its children, addressed by patches
   // at [0], [1], …
@@ -266,7 +268,7 @@ export function run() {
     document.title = p.title ?? '';
     base = p.base;
     ver = p.ver;
-    fetch(`/${encodeURIComponent(sessionId)}/event`, {
+    fetch(eventURL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ Type: 'URLChange', URL: p.dest, SnapshotVer: p.base, ToPreview: true }),
@@ -293,7 +295,7 @@ export function run() {
               const p = pathSets.get(tok.slice(ci + 1));
               if (p) paths.push(...p);
             }
-            postEnvelope(sessionId, keys.join(','), getFields(e, el, paths), ver);
+            postEnvelope(eventURL, keys.join(','), getFields(e, el, paths), ver);
             return;
           }
         }
@@ -352,7 +354,7 @@ export function run() {
       return;
     }
     pv = null; // Clicking a different link abandons any preview.
-    fetch(`/${encodeURIComponent(sessionId)}/event`, {
+    fetch(eventURL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ Type: 'URLRequest', URL: urlStr, Internal: true }),
@@ -382,7 +384,7 @@ export function run() {
     if (pv && pv.isClicked) return; // a click is committed; don't supersede it
     if (pv && pv.url === urlStr) return; // already requested or holding it
     pv = { url: urlStr, isReady: false, isClicked: false };
-    fetch(`/${encodeURIComponent(sessionId)}/event`, {
+    fetch(eventURL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ Type: 'Prefetch', URL: urlStr }),
@@ -399,14 +401,14 @@ export function run() {
     const snapVer = e.state && e.state.domiSnapshot;
     pv = null; // it's based on the page we're leaving; drop it
     if (snapVer) restoreSnapshot(snapVer);
-    fetch(`/${encodeURIComponent(sessionId)}/event`, {
+    fetch(eventURL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ Type: 'URLChange', URL: url, SnapshotVer: snapVer || '' }),
     }).catch((err) => console.error('domi: urlChange POST failed', err));
   });
 
-  const sse = new EventSource(`/${encodeURIComponent(sessionId)}/events`);
+  const sse = new EventSource(eventsURL);
   sse.addEventListener('effect', (ev) => {
     checkPreviewTTL();
     let f;
@@ -467,7 +469,7 @@ export function run() {
             const { url, isClicked } = pv;
             pv = null;
             if (isClicked) {
-              fetch(`/${encodeURIComponent(sessionId)}/event`, {
+              fetch(eventURL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ Type: 'URLRequest', URL: url, Internal: true }),

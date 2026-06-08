@@ -8,20 +8,22 @@ import (
 // An Option configures a [Handler].
 type Option interface{ isOption() }
 
-func (documentOption) isOption()       {}
-func (keepaliveOption) isOption()      {}
-func (loggerOption) isOption()         {}
-func (replayWindowOption) isOption()   {}
-func (sessionTimeoutOption) isOption() {}
+func (documentOption) isOption()          {}
+func (internalURLPrefixOption) isOption() {}
+func (keepaliveOption) isOption()         {}
+func (loggerOption) isOption()            {}
+func (replayWindowOption) isOption()      {}
+func (sessionTimeoutOption) isOption()    {}
 
 type (
 	documentOption struct {
 		f func(title string, body Node) Node
 	}
-	keepaliveOption      struct{ d time.Duration }
-	loggerOption         struct{ l *slog.Logger }
-	replayWindowOption   struct{ n int }
-	sessionTimeoutOption struct{ d time.Duration }
+	internalURLPrefixOption struct{ p string }
+	keepaliveOption         struct{ d time.Duration }
+	loggerOption            struct{ l *slog.Logger }
+	replayWindowOption      struct{ n int }
+	sessionTimeoutOption    struct{ d time.Duration }
 )
 
 // Document supplies a custom builder for the initial HTML shell.
@@ -45,6 +47,17 @@ type (
 // Apps using Document are responsible for loading the Domi client JavaScript.
 // See [Bundling the Client] for details.
 func Document(f func(title string, body Node) Node) Option { return documentOption{f} }
+
+// InternalURLPrefix specifies the prefix p
+// used for the framework's internal URL paths.
+// This lets the application guarantee that the framework's
+// internal URL paths never overlap with paths the app uses.
+//
+// For instance, a prefix of "a/b"
+// results in internal URL paths like "/a/b/{id}/events"
+// (where "{id}" is a session id).
+// The default prefix is the empty string.
+func InternalURLPrefix(p string) Option { return internalURLPrefixOption{p} }
 
 // Keepalive sets the maximum SSE connection idle time
 // before the server sends an SSE comment line to the client.

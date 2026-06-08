@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -192,13 +193,69 @@ func TestHandlerDocumentOption(t *testing.T) {
 	if !strings.Contains(body, `<meta content="hello" name="test">`) {
 		t.Fatalf("custom head content missing; body: %s", body)
 	}
-	if !strings.Contains(body, `data-domi-session=`) {
+	if !strings.Contains(body, `data-domi-prefix=`) {
 		t.Fatalf("session marker not attached to body; got: %s", body)
 	}
 	// The default bootstrap script must not appear when Document is set —
 	// the App is responsible for loading the client itself.
 	if strings.Contains(body, "Domi.run()") {
 		t.Fatalf("default bootstrap leaked into custom Document; got: %s", body)
+	}
+}
+
+// InternalURLPrefix moves every framework-served URL beneath the chosen
+// path: the rendered session prefix, the client bootstrap import, the
+// path the client runtime is served at, and the event routes the client
+// posts back to. The site root stays the app's. A trailing slash in the
+// option is tolerated; path.Join folds the variants together.
+func TestHandlerInternalURLPrefix(t *testing.T) {
+	h := Handler(
+		func(context.Context, *url.URL) (*counterApp, Cmd[int]) {
+			return &counterApp{}, Batch[int]()
+		},
+		func(URLRequest) int { return 0 },
+		func(*url.URL) int { return 0 },
+		InternalURLPrefix("/-/domi/"),
+		Logger(slog.New(slog.DiscardHandler)),
+	)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	body := w.Body.String()
+
+	// The session's internal-URL base is the prefix joined with the id,
+	// joined cleanly (no doubled slash from the option's trailing one).
+	m := regexp.MustCompile(`data-domi-prefix="([^"]*)"`).FindStringSubmatch(body)
+	if m == nil {
+		t.Fatalf("session marker missing; body: %s", body)
+	}
+	base := m[1]
+	if !strings.HasPrefix(base, "/-/domi/") || base == "/-/domi/" || strings.Contains(base[1:], "//") {
+		t.Fatalf("session prefix not cleanly under /-/domi/: %q", base)
+	}
+
+	// The bootstrap imports the client runtime from under the prefix, and
+	// that path actually serves the script.
+	src := regexp.MustCompile(`import \* as Domi from "(/-/domi/domi\.[0-9a-f]+\.js)"`).FindStringSubmatch(body)
+	if src == nil {
+		t.Fatalf("client import not under prefix; body: %s", body)
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", src[1], nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("client runtime not served at %s: status %d", src[1], w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/javascript") {
+		t.Fatalf("client runtime content-type = %q", ct)
+	}
+
+	// The event sink answers under the prefix for the live session: a
+	// well-formed envelope is accepted, not met with the wrapper's 404 for
+	// an unknown session (which is what an unprefixed POST would hit).
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("POST", base+"/event", strings.NewReader("{}")))
+	if w.Code == http.StatusNotFound {
+		t.Fatalf("event route not wired under prefix at %s/event", base)
 	}
 }
 
