@@ -187,7 +187,7 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 // spawn runs each Cmd body in its own goroutine and feeds the
 // resulting Msg and optional nav back into apply.
 func (s *session[Msg]) spawn(cmd Cmd[Msg]) {
-	for f := range cmd.s {
+	for f := range Batch[Msg](cmd).(batch[Msg]) {
 		go func() {
 			msg, n := f(s)
 			s.apply(s.ctx, msg, n)

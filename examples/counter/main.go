@@ -32,7 +32,7 @@ type Counter struct {
 }
 
 func newCounter(_ context.Context, _ *url.URL) (*Counter, domi.Cmd[Msg]) {
-	return &Counter{}, domi.Batch[Msg]()
+	return &Counter{}, nil
 }
 
 func (c *Counter) Update(_ context.Context, msg Msg) domi.Cmd[Msg] {
@@ -44,7 +44,7 @@ func (c *Counter) Update(_ context.Context, msg Msg) domi.Cmd[Msg] {
 	case "Reset":
 		c.count = 0
 	}
-	return domi.Batch[Msg]()
+	return nil
 }
 
 func (c *Counter) View(_ context.Context) (string, N) {

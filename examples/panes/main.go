@@ -72,7 +72,7 @@ func newApp(_ context.Context, u *url.URL) (*App, domi.Cmd[Msg]) {
 		app.items = append(app.items, id)
 	}
 	app.applyRoute(u)
-	return app, domi.Batch[Msg]()
+	return app, nil
 }
 
 func (app *App) applyRoute(u *url.URL) {
@@ -109,7 +109,7 @@ func (app *App) Update(_ context.Context, msg Msg) domi.Cmd[Msg] {
 			}
 		}
 	}
-	return domi.Batch[Msg]()
+	return nil
 }
 
 func (app *App) View(_ context.Context) (string, N) { return app.view() }

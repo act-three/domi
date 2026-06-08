@@ -2,6 +2,7 @@ package domi
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"net/url"
 	"slices"
@@ -62,9 +63,17 @@ type App[Msg any] interface {
 // A Cmd is a deferred side-effect that eventually produces a Msg.
 // The framework runs each Cmd in its own goroutine
 // and passes the resulting Msg back into Update.
-type Cmd[Msg any] struct {
-	s iter.Seq[cmd[Msg]]
+//
+// A nil Cmd is a valid empty batch.
+type Cmd[Msg any] interface {
+	isCmd()
 }
+
+// batch is the lowered form of a [Cmd]: a sequence of command
+// functions that the framework spawns concurrently.
+type batch[Msg any] iter.Seq[cmd[Msg]]
+
+func (batch[Msg]) isCmd() {}
 
 // cmd is the internal function type of a [Cmd].
 // It receives the session for access to framework state
@@ -80,27 +89,32 @@ type cmd[Msg any] func(*session[Msg]) (Msg, *nav)
 // The app should capture the context
 // from [Update] or the [Handler] constructor for f to use.
 func Func[Msg any](f func() Msg) Cmd[Msg] {
-	return Cmd[Msg]{slices.Values([]cmd[Msg]{
+	return batch[Msg](slices.Values([]cmd[Msg]{
 		func(*session[Msg]) (Msg, *nav) {
 			return f(), nil
 		},
-	})}
+	}))
 }
 
 // Batch returns a [Cmd] that runs each item in c concurrently.
 // The resulting Msg values are dispatched to Update serially.
 func Batch[Msg any](c ...Cmd[Msg]) Cmd[Msg] {
-	return Cmd[Msg]{
-		func(yield func(cmd[Msg]) bool) {
-			for _, c := range c {
-				for c := range c.s {
-					if !yield(c) {
+	return batch[Msg](func(yield func(cmd[Msg]) bool) {
+		for _, c := range c {
+			switch v := c.(type) {
+			case nil:
+				// A nil Cmd contributes nothing, like an empty Batch.
+			case batch[Msg]:
+				for f := range v {
+					if !yield(f) {
 						return
 					}
 				}
+			default:
+				panic(fmt.Sprintf("domi: cannot lower %T", c))
 			}
-		},
-	}
+		}
+	})
 }
 
 // A Sub is a long-lived event source
