@@ -59,8 +59,8 @@ func (c *Counter) View(_ context.Context) (string, N) {
 
 func (c *Counter) Subscriptions(_ context.Context) (s domi.Sub[Msg]) { return s }
 
-func (c *Counter) Preview(ctx context.Context, _ *url.URL) (string, N, bool) {
-	return "", nil, false
+func (c *Counter) Preview(ctx context.Context, _ *url.URL) (string, string, N) {
+	return "", "", nil
 }
 
 func main() {

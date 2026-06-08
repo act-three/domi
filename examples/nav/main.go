@@ -91,18 +91,19 @@ func (app *App) View(_ context.Context) (string, N) {
 
 func (app *App) Subscriptions(_ context.Context) (s domi.Sub[Msg]) { return s }
 
-// Preview renders the page for url without mutating state — for
-// instant navigation when the user hovers over a link. NotFound
-// routes are denied so the click falls back to normal navigation
-// rather than racing the user to a 404.
-func (app *App) Preview(_ context.Context, u *url.URL) (string, N, bool) {
+// Preview renders the page for u without mutating state — for instant
+// navigation when the user hovers over a link. It returns u as the
+// destination, since this app routes each URL to itself. NotFound
+// routes return an empty dest, declining the preview so the click falls
+// back to normal navigation rather than racing the user to a 404.
+func (app *App) Preview(_ context.Context, u *url.URL) (string, string, N) {
 	preview := *app
 	preview.applyRoute(u)
 	if preview.route == NotFound {
-		return "", nil, false
+		return "", "", nil
 	}
 	t, v := preview.view()
-	return t, v, true
+	return u.String(), t, v
 }
 
 func (app *App) view() (string, N) {
