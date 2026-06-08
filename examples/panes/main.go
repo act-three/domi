@@ -32,9 +32,10 @@ import (
 )
 
 type Msg struct {
-	URLRequest *domi.URLRequest `json:"-"`
-	URLChange  *url.URL         `json:"-"`
-	Tick       bool             `json:"-"`
+	URLRequest *url.URL `json:"-"`
+	Internal   bool     `json:"-"`
+	URLChange  *url.URL `json:"-"`
+	Tick       bool     `json:"-"`
 }
 
 type N = domi.Node
@@ -89,10 +90,10 @@ func (app *App) applyRoute(u *url.URL) {
 func (app *App) Update(_ context.Context, msg Msg) domi.Cmd[Msg] {
 	switch {
 	case msg.URLRequest != nil:
-		if msg.URLRequest.Internal {
-			return domi.PushURL[Msg](msg.URLRequest.URL.String())
+		if msg.Internal {
+			return domi.PushURL[Msg](msg.URLRequest.String())
 		}
-		return domi.Load[Msg](msg.URLRequest.URL.String())
+		return domi.Load[Msg](msg.URLRequest.String())
 	case msg.URLChange != nil:
 		app.applyRoute(msg.URLChange)
 	case msg.Tick:
@@ -234,7 +235,7 @@ func detail(app *App) N {
 func main() {
 	h := domi.Handler(
 		newApp,
-		func(r domi.URLRequest) Msg { return Msg{URLRequest: &r} },
+		func(u *url.URL, internal bool) Msg { return Msg{URLRequest: u, Internal: internal} },
 		func(u *url.URL) Msg { return Msg{URLChange: u} },
 	)
 	addr := "127.0.0.1:3013"

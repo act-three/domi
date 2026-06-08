@@ -352,7 +352,7 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 			s.logger.WarnContext(ctx, "bad URLRequest URL", "url", envelope.URL, "error", err)
 			break
 		}
-		msg := s.sv.onURLRequest(URLRequest{URL: u, Internal: envelope.Internal})
+		msg := s.sv.onURLRequest(u, envelope.Internal)
 		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
 	case msgPrefetch:
 		u, err := url.Parse(envelope.URL)

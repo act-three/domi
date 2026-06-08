@@ -6,20 +6,6 @@ import (
 	"slices"
 )
 
-// A URLRequest represents a user clicking a link in the browser.
-// The framework intercepts the click, prevents the default navigation,
-// and dispatches the request through the onURLRequest callback
-// registered on [Handler].
-//
-// Internal is true when the link target shares the current page's
-// origin (same scheme, host, and port). For internal requests the app
-// typically returns a [PushURL] command; for external requests it may
-// ignore the event or navigate with a full page load.
-type URLRequest struct {
-	URL      *url.URL
-	Internal bool
-}
-
 // PushURL returns a [Cmd] that changes the browser URL
 // and adds an entry to the navigation history.
 // The url must be an origin-relative URL (path, query, fragment)
