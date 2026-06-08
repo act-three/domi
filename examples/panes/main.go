@@ -118,9 +118,16 @@ func (app *App) View(_ context.Context) (string, N) { return app.view() }
 // cadence, guaranteeing a server update lands in the window between a
 // link hover and the click that follows it.
 func (app *App) Subscriptions(_ context.Context) domi.Sub[Msg] {
-	return domi.Subscription("tick", func(ctx context.Context) iter.Seq[Msg] {
+	return ticker(250 * time.Millisecond)
+}
+
+// ticker is a subscription that yields a Tick Msg every d. Its key is a type
+// local to this function, so nothing else can name, forge, or collide with it.
+func ticker(d time.Duration) domi.Sub[Msg] {
+	type key struct{}
+	return domi.Subscription(key{}, func(ctx context.Context) iter.Seq[Msg] {
 		return func(yield func(Msg) bool) {
-			t := time.NewTicker(250 * time.Millisecond)
+			t := time.NewTicker(d)
 			defer t.Stop()
 			for {
 				select {
