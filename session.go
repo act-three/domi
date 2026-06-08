@@ -280,8 +280,9 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 // New keys start a goroutine that iterates the event stream;
 // absent keys cancel their goroutine via context.
 func (s *session[Msg]) updateSubs(wanted Sub[Msg]) {
-	next := make(map[any]func(context.Context) iter.Seq[Msg], len(wanted.s))
-	for _, e := range wanted.s {
+	all := Subs[Msg](wanted).(subs[Msg])
+	next := make(map[any]func(context.Context) iter.Seq[Msg], len(all))
+	for _, e := range all {
 		next[e.key] = e.events
 	}
 	for key, cancel := range s.subs {

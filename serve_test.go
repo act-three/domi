@@ -24,7 +24,7 @@ func (a *counterApp) Update(context.Context, int) Cmd[int] { a.n++; return Batch
 func (a *counterApp) View(context.Context) (string, Node) {
 	return "", Tag("div")()(Text(fmt.Sprintf("%d", a.n)))
 }
-func (a *counterApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
+func (a *counterApp) Subscriptions(context.Context) Sub[int] { return nil }
 func (a *counterApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
 	t, v := a.View(ctx)
 	return t, v, true
@@ -37,7 +37,7 @@ func (a *staticApp) Update(context.Context, int) Cmd[int] { return Batch[int]() 
 func (a *staticApp) View(context.Context) (string, Node) {
 	return "", Tag("div")()(Text("static"))
 }
-func (a *staticApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
+func (a *staticApp) Subscriptions(context.Context) Sub[int] { return nil }
 func (a *staticApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
 	t, v := a.View(ctx)
 	return t, v, true
@@ -54,7 +54,7 @@ func (a *fragmentApp) View(context.Context) (string, Node) {
 		Tag("div")()(Text(fmt.Sprintf("b%d", a.n))),
 	)
 }
-func (a *fragmentApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
+func (a *fragmentApp) Subscriptions(context.Context) Sub[int] { return nil }
 func (a *fragmentApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
 	t, v := a.View(ctx)
 	return t, v, true
@@ -68,7 +68,7 @@ func (a *titledApp) Update(context.Context, int) Cmd[int] { a.n++; return Batch[
 func (a *titledApp) View(context.Context) (string, Node) {
 	return fmt.Sprintf("title-%d", a.n), Tag("div")()(Text(fmt.Sprintf("%d", a.n)))
 }
-func (a *titledApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
+func (a *titledApp) Subscriptions(context.Context) Sub[int] { return nil }
 func (a *titledApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
 	t, v := a.View(ctx)
 	return t, v, true
@@ -89,7 +89,7 @@ func (a *previewApp) body() Node {
 	return Tag("div")()(Text(fmt.Sprintf("%s-%d", a.route, a.n)))
 }
 func (a *previewApp) View(context.Context) (string, Node)    { return a.route, a.body() }
-func (a *previewApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
+func (a *previewApp) Subscriptions(context.Context) Sub[int] { return nil }
 func (a *previewApp) Preview(_ context.Context, u *url.URL) (string, Node, bool) {
 	if u.Path == "/deny" {
 		return "", nil, false
@@ -651,7 +651,7 @@ func TestSessionSubCancelledOnRemoval(t *testing.T) {
 	s.mu.Unlock()
 
 	// Remove all subscriptions.
-	app.sub = Sub[int]{}
+	app.sub = nil
 	s.mu.Lock()
 	s.updateSubs(app.Subscriptions(s.ctx))
 	if len(s.subs) != 0 {
@@ -697,9 +697,43 @@ func TestSubsComposition(t *testing.T) {
 	noop := func(context.Context) iter.Seq[int] { return func(func(int) bool) {} }
 	a := Subscription[int](tickKey{"a"}, noop)
 	b := Subscription[int](tickKey{"b"}, noop)
-	combined := Subs(a, b)
-	if len(combined.s) != 2 {
-		t.Fatalf("expected 2 entries, got %d", len(combined.s))
+	combined := Subs[int](a, b).(subs[int])
+	if len(combined) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(combined))
+	}
+}
+
+// Subs treats a nil Sub like an empty Subs, so it drops out and the
+// surviving subscriptions remain.
+func TestSubsNilContributesNothing(t *testing.T) {
+	noop := func(context.Context) iter.Seq[int] { return func(func(int) bool) {} }
+	a := Subscription[int](tickKey{"a"}, noop)
+	combined := Subs[int](nil, a, nil).(subs[int])
+	if len(combined) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(combined))
+	}
+}
+
+// A nil Sub is the empty Subs' degenerate twin: reconciling it cancels
+// any active sources and starts none, so Subscriptions can return a
+// sub-or-nil with no guard at the use site.
+func TestUpdateSubsNilCancelsAll(t *testing.T) {
+	app := &subApp{}
+	s := newTestSession(app)
+	defer s.cancel()
+	started := make(chan struct{})
+	app.sub = Subscription(tickKey{"a"}, func(ctx context.Context) iter.Seq[int] {
+		return func(yield func(int) bool) {
+			close(started)
+			<-ctx.Done()
+		}
+	})
+	s.updateSubs(app.Subscriptions(s.ctx))
+	<-started
+	app.sub = nil
+	s.updateSubs(app.Subscriptions(s.ctx)) // nil must not panic
+	if len(s.subs) != 0 {
+		t.Fatalf("nil Sub should cancel all sources, %d remain", len(s.subs))
 	}
 }
 
@@ -1176,7 +1210,7 @@ func (a *captureApp) View(context.Context) (string, Node) {
 	n := a.n
 	return "", Tag("button")(On("click", msgInt(n)))(a.body(a.n))
 }
-func (a *captureApp) Subscriptions(context.Context) Sub[int] { return Sub[int]{} }
+func (a *captureApp) Subscriptions(context.Context) Sub[int] { return nil }
 func (a *captureApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
 	t, v := a.View(ctx)
 	return t, v, true
@@ -1309,7 +1343,7 @@ func (pathSetApp) Update(context.Context, int) Cmd[int] { return Batch[int]() }
 func (pathSetApp) View(context.Context) (string, Node) {
 	return "", Tag("input")(On("input", msgInt(1), []string{"target", "value"}))()
 }
-func (pathSetApp) Subscriptions(context.Context) Sub[int]                 { return Sub[int]{} }
+func (pathSetApp) Subscriptions(context.Context) Sub[int]                 { return nil }
 func (pathSetApp) Preview(context.Context, *url.URL) (string, Node, bool) { return "", nil, false }
 
 // The initial render seeds the client's path-set map from the same
