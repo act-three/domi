@@ -52,8 +52,8 @@ func Handler[Msg any, A App[Msg]](
 ) http.Handler {
 	sv := newServer(f, onURLRequest, onURLChange, o)
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /sse/{id}", sv.handleSSE)
-	mux.HandleFunc("POST /event/{id}", sv.handleEvent)
+	mux.HandleFunc("GET /{id}/events", sv.handleSSE)
+	mux.HandleFunc("POST /{id}/event", sv.handleEvent)
 	mux.HandleFunc("GET "+clientJSPath, func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
 		w.Header().Set("Cache-Control", "max-age=31536000, immutable")
