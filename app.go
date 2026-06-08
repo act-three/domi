@@ -64,7 +64,8 @@ type App[Msg any] interface {
 // The framework runs each Cmd in its own goroutine
 // and passes the resulting Msg back into Update.
 //
-// A nil Cmd is a valid empty batch.
+// A nil Cmd is a valid command that never executes.
+// It means "there is no command to run".
 type Cmd[Msg any] interface {
 	isCmd()
 }
