@@ -78,6 +78,7 @@ type effect struct {
 	Patches  []vdom.Patch       `json:",omitempty"` // ApplyPatch/SetPreview: DOM patches
 	Title    string             `json:",omitempty"` // SetTitle/SetPreview: the document title
 	URL      string             `json:",omitempty"` // PushURL/ReplaceURL/LoadURL/SetPreview/DeletePreview target
+	Dest     string             `json:",omitempty"` // SetPreview: the URL this preview navigates to (equals URL unless the app redirected)
 	Ver      string             `json:",omitempty"` // tree version for ApplyPatch, SetPreview
 	PathSets map[string]pathSet `json:",omitempty"`
 }
@@ -118,7 +119,8 @@ type snapshot struct {
 // We store the preview's view as a value so we can generate a new
 // patchset for each new view in the history.
 type preview struct {
-	url    string
+	url    string // the requested URL, the key the client matches on
+	dest   string // the URL this preview navigates to (equals url unless the app redirects)
 	view   []vdom.Node
 	title  string
 	ver    string // version id naming the preview tree
@@ -259,6 +261,7 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 				Patches: vdom.Diff(next, s.preview.view),
 				Title:   s.preview.title,
 				URL:     s.preview.url,
+				Dest:    s.preview.dest,
 				Ver:     s.preview.ver,
 			})
 		} else {
@@ -668,21 +671,28 @@ func (s *session[Msg]) restoreSnapshot(ver string) {
 // prefetch renders App.Preview for u and, if allowed, makes it the
 // outstanding preview. A denial emits DeletePreview, so the click falls
 // back to a normal request where onURLRequest can still deny or redirect.
+// The app may redirect the navigation
+// by returning a dest that differs from u.
+// The preview then lands on dest.
+// An empty dest denies the preview.
+// A non-empty dest must be relative, like a PushURL target; a malformed
+// one is an app bug and panics.
 func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	href := u.String()
-	title, view, ok := s.app.Preview(ctx, u)
-	if !ok {
+	dest, title, view := s.app.Preview(ctx, u)
+	if dest == "" {
 		if s.preview != nil && s.preview.url == href {
 			s.preview = nil
 		}
 		s.appendFrame(frame{Effects: []effect{{Type: effectDeletePreview, URL: href}}})
 		return
 	}
+	du := mustParseRelativeURL("domi.App.Preview", dest)
 	next, h := lower(0, view)
 	add := s.addPathSets(h)
-	p := &preview{url: href, view: next, title: title, ver: rand.Text()}
+	p := &preview{url: href, dest: du.String(), view: next, title: title, ver: rand.Text()}
 	s.tables[p.ver] = typed[Msg](h)
 	p.addView(s.ver, s.view, s.title)
 	s.preview = p
@@ -695,6 +705,7 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 		Patches: vdom.Diff(s.view, next),
 		Title:   title,
 		URL:     href,
+		Dest:    p.dest,
 		Ver:     p.ver,
 	})
 	s.appendFrame(frame{Base: s.base, Effects: effects})

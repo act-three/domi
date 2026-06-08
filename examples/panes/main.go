@@ -146,11 +146,12 @@ func ticker(d time.Duration) domi.Sub[Msg] {
 // Preview renders the page for u without mutating state, so a hover can
 // pre-render the detail pane. Copying the App is enough: applyRoute only
 // touches route/itemID, and the render reads items without changing them.
-func (app *App) Preview(_ context.Context, u *url.URL) (string, N, bool) {
+// The navigation lands on u; this app does not redirect.
+func (app *App) Preview(_ context.Context, u *url.URL) (string, string, N) {
 	preview := *app
 	preview.applyRoute(u)
 	t, v := preview.view()
-	return t, v, true
+	return u.String(), t, v
 }
 
 func (app *App) view() (string, N) {

@@ -25,9 +25,9 @@ func (a *counterApp) View(context.Context) (string, Node) {
 	return "", Tag("div")()(Text(fmt.Sprintf("%d", a.n)))
 }
 func (a *counterApp) Subscriptions(context.Context) Sub[int] { return nil }
-func (a *counterApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
+func (a *counterApp) Preview(ctx context.Context, u *url.URL) (string, string, Node) {
 	t, v := a.View(ctx)
-	return t, v, true
+	return u.String(), t, v
 }
 
 // staticApp's view never changes, so an Update produces no patches.
@@ -38,9 +38,9 @@ func (a *staticApp) View(context.Context) (string, Node) {
 	return "", Tag("div")()(Text("static"))
 }
 func (a *staticApp) Subscriptions(context.Context) Sub[int] { return nil }
-func (a *staticApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
+func (a *staticApp) Preview(ctx context.Context, u *url.URL) (string, string, Node) {
 	t, v := a.View(ctx)
-	return t, v, true
+	return u.String(), t, v
 }
 
 // fragmentApp's View returns a Fragment so the framework treats its
@@ -55,9 +55,9 @@ func (a *fragmentApp) View(context.Context) (string, Node) {
 	)
 }
 func (a *fragmentApp) Subscriptions(context.Context) Sub[int] { return nil }
-func (a *fragmentApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
+func (a *fragmentApp) Preview(ctx context.Context, u *url.URL) (string, string, Node) {
 	t, v := a.View(ctx)
-	return t, v, true
+	return u.String(), t, v
 }
 
 // titledApp changes both its body and its document title each Update, so
@@ -69,16 +69,18 @@ func (a *titledApp) View(context.Context) (string, Node) {
 	return fmt.Sprintf("title-%d", a.n), Tag("div")()(Text(fmt.Sprintf("%d", a.n)))
 }
 func (a *titledApp) Subscriptions(context.Context) Sub[int] { return nil }
-func (a *titledApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
+func (a *titledApp) Preview(ctx context.Context, u *url.URL) (string, string, Node) {
 	t, v := a.View(ctx)
-	return t, v, true
+	return u.String(), t, v
 }
 
 // previewApp renders a body that depends on both a per-Update counter and
 // the current route, and previews a route without changing state. So a
 // prefetch produces a non-empty patchset that differs from the live view,
 // and a later Update both moves the live view and rebases the preview.
-// The /deny route is refused, exercising the DeletePreview path.
+// The /deny route is refused, exercising the DeletePreview path; /bad
+// returns a non-relative dest, a contract violation that panics; and
+// /redirect lands on /landing, exercising the preview redirect.
 type previewApp struct {
 	n     int
 	route string
@@ -90,13 +92,19 @@ func (a *previewApp) body() Node {
 }
 func (a *previewApp) View(context.Context) (string, Node)    { return a.route, a.body() }
 func (a *previewApp) Subscriptions(context.Context) Sub[int] { return nil }
-func (a *previewApp) Preview(_ context.Context, u *url.URL) (string, Node, bool) {
-	if u.Path == "/deny" {
-		return "", nil, false
+func (a *previewApp) Preview(_ context.Context, u *url.URL) (string, string, Node) {
+	switch u.Path {
+	case "/deny":
+		return "", "", nil
+	case "/bad":
+		return "http://evil.example/", "", nil
 	}
 	p := *a
 	p.route = u.Path
-	return p.route, p.body(), true
+	if u.Path == "/redirect" {
+		p.route = "/landing"
+	}
+	return p.route, p.route, p.body()
 }
 
 // newTestSession wires up a session for direct method tests, bypassing
@@ -599,9 +607,9 @@ type subApp struct {
 func (a *subApp) Update(context.Context, int) Cmd[int]   { return Batch[int]() }
 func (a *subApp) View(context.Context) (string, Node)    { return "", Tag("div")()() }
 func (a *subApp) Subscriptions(context.Context) Sub[int] { return a.sub }
-func (a *subApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
+func (a *subApp) Preview(ctx context.Context, u *url.URL) (string, string, Node) {
 	t, v := a.View(ctx)
-	return t, v, true
+	return u.String(), t, v
 }
 
 type tickKey struct{ id string }
@@ -851,6 +859,11 @@ func TestSessionPrefetchEmitsSetPreview(t *testing.T) {
 	if e.Title != "/next" || e.URL != "/next" {
 		t.Fatalf("SetPreview = %+v, want title and url %q", e, "/next")
 	}
+	// Without a redirect the destination is the requested URL, sent
+	// unconditionally so the client never has to reconstruct it.
+	if e.Dest != "/next" {
+		t.Fatalf("SetPreview Dest = %q, want the requested url %q", e.Dest, "/next")
+	}
 	if e.Ver == "" {
 		t.Fatal("SetPreview must carry the preview tree's ver")
 	}
@@ -892,6 +905,48 @@ func TestSessionPrefetchDenyEmitsDeletePreview(t *testing.T) {
 	if pending {
 		t.Fatal("a denied prefetch must not set an outstanding preview")
 	}
+}
+
+// A prefetch whose Preview redirects keeps the requested URL as the
+// client's match key but carries the destination in Dest, so committing
+// the preview navigates to — and later routes on — the page actually
+// rendered rather than the URL the user hovered.
+func TestSessionPrefetchRedirectCarriesDest(t *testing.T) {
+	s := newTestSession[int](&previewApp{route: "/"})
+	defer s.cancel()
+	u, _ := url.Parse("/redirect")
+	s.prefetch(s.ctx, u)
+
+	e := s.log[1%uint64(len(s.log))].Effects[0]
+	if e.Type != effectSetPreview {
+		t.Fatalf("expected SetPreview, got %+v", e)
+	}
+	if e.URL != "/redirect" {
+		t.Fatalf("SetPreview URL = %q, want the requested url %q", e.URL, "/redirect")
+	}
+	if e.Dest != "/landing" || e.Title != "/landing" {
+		t.Fatalf("SetPreview = %+v, want dest and title %q", e, "/landing")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.preview == nil || s.preview.dest != "/landing" {
+		t.Fatalf("preview = %+v, want dest %q", s.preview, "/landing")
+	}
+}
+
+// A non-relative dest violates the Preview contract — the same rule
+// PushURL enforces — so prefetch panics rather than letting a bad URL
+// slip through where it would be easy to miss.
+func TestSessionPrefetchBadDestPanics(t *testing.T) {
+	s := newTestSession[int](&previewApp{route: "/"})
+	defer s.cancel()
+	u, _ := url.Parse("/bad")
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected a panic on a non-relative Preview dest")
+		}
+	}()
+	s.prefetch(s.ctx, u)
 }
 
 // While a preview is outstanding, each later frame is augmented with a
@@ -1211,9 +1266,9 @@ func (a *captureApp) View(context.Context) (string, Node) {
 	return "", Tag("button")(On("click", msgInt(n)))(a.body(a.n))
 }
 func (a *captureApp) Subscriptions(context.Context) Sub[int] { return nil }
-func (a *captureApp) Preview(ctx context.Context, _ *url.URL) (string, Node, bool) {
+func (a *captureApp) Preview(ctx context.Context, u *url.URL) (string, string, Node) {
 	t, v := a.View(ctx)
-	return t, v, true
+	return u.String(), t, v
 }
 
 // soleKey returns the only handler key in the table for ver.
@@ -1343,8 +1398,8 @@ func (pathSetApp) Update(context.Context, int) Cmd[int] { return Batch[int]() }
 func (pathSetApp) View(context.Context) (string, Node) {
 	return "", Tag("input")(On("input", msgInt(1), []string{"target", "value"}))()
 }
-func (pathSetApp) Subscriptions(context.Context) Sub[int]                 { return nil }
-func (pathSetApp) Preview(context.Context, *url.URL) (string, Node, bool) { return "", nil, false }
+func (pathSetApp) Subscriptions(context.Context) Sub[int]                   { return nil }
+func (pathSetApp) Preview(context.Context, *url.URL) (string, string, Node) { return "", "", nil }
 
 // The initial render seeds the client's path-set map from the same
 // handlers it renders, so a handler's path set ships with the first page

@@ -244,7 +244,7 @@ export function run() {
   // (Prefetch sent) → true (SetPreview received, a patchset to apply on
   // click); isClicked records a click that beat the SetPreview, so it
   // navigates the moment one arrives.
-  let pv = null; // { url, isReady, isClicked, patches?, title?, base?, ver?, at? }
+  let pv = null; // { url, isReady, isClicked, patches?, title?, dest?, base?, ver?, at? }
 
   function checkPreviewTTL() {
     const ttl = 5000; // ms
@@ -253,12 +253,15 @@ export function run() {
 
   // navigateToPreview applies the held preview by simulating
   // a normal navigation effect list: PushURL, ApplyPatch, SetTitle.
+  // It navigates to p.dest, which is the requested url unless the app
+  // redirected the preview, so the URL bar and the URLChange the server
+  // routes on both reflect the page actually rendered.
   function navigateToPreview() {
     const p = pv;
     pv = null;
     cacheSnapshot(p.base, root, document.title);
     history.replaceState({ domiSnapshot: p.base }, '', location.href);
-    history.pushState(null, '', p.url);
+    history.pushState(null, '', p.dest);
     for (const patch of p.patches ?? []) root = applyPatch(root, patch);
     document.title = p.title ?? '';
     base = p.base;
@@ -266,7 +269,7 @@ export function run() {
     fetch(`/event/${encodeURIComponent(sessionId)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ Type: 'URLChange', URL: p.url, SnapshotVer: p.base, ToPreview: true }),
+      body: JSON.stringify({ Type: 'URLChange', URL: p.dest, SnapshotVer: p.base, ToPreview: true }),
     }).catch((err) => console.error('domi: urlChange POST failed', err));
   }
 
@@ -443,11 +446,14 @@ export function run() {
           window.location.assign(eff.URL);
           return;
         case 'SetPreview':
-          // Ignore any preview we're not intentionally waiting for.
+          // Ignore any preview we're not intentionally waiting for. The
+          // match is on the requested url; Dest is where committing the
+          // preview navigates (it differs when the app redirected).
           if (!pv || pv.url !== eff.URL) break;
           pv.isReady = true;
           pv.patches = eff.Patches;
           pv.title = eff.Title;
+          pv.dest = eff.Dest;
           pv.base = ver;
           pv.ver = eff.Ver;
           pv.at ||= Date.now();

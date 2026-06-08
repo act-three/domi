@@ -42,22 +42,29 @@ type App[Msg any] interface {
 	// It is cancelled when the session ends.
 	Subscriptions(context.Context) Sub[Msg]
 
-	// Preview returns the document title and body tree
-	// that would be displayed if the browser navigated
-	// to the given URL, and whether the navigation is allowed.
-	// It must not modify the App's state.
+	// Preview returns the result of a potential navigation.
+	// This result comprises the destination URL dest, title, and body n.
+	// Preview must not modify the App's state.
 	//
+	// The call to Preview represents a hypothetical
+	// onURLRequest call by the framework.
+	// If Preview returns a nonempty dest value,
+	// it must be the same as the app uses for the PushURL command
+	// it issues in response to the URL request.
+	// The value for n must be the same as what View returns
+	// after a navigation to dest.
+	//
+	// An empty dest denotes that there is no preview available.
+	// It is always safe to decline to provide a preview.
+	// This method is an optimization only.
 	// The framework calls Preview to pre-render pages
 	// the user is likely to visit (e.g. on link hover),
 	// so navigation appears instant when the link is clicked.
-	// When ok is false the framework discards the title and view
-	// and the user's click falls back to normal navigation,
-	// giving the app a chance to deny or redirect.
 	//
 	// The context carries the session ID (see SessionID)
 	// as well as values from the HTTP request context, if any.
 	// It is cancelled when the session ends.
-	Preview(context.Context, *url.URL) (title string, n Node, ok bool)
+	Preview(context.Context, *url.URL) (dest, title string, n Node)
 }
 
 // A Cmd is a deferred side-effect that eventually produces a Msg.
