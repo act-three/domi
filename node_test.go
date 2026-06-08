@@ -151,6 +151,17 @@ func TestGroupEmptyContributesNothing(t *testing.T) {
 	}
 }
 
+// A nil Attr is the empty Group's degenerate twin: it lowers to nothing
+// wherever an Attr is accepted, so conditional attributes can be an
+// attr-or-nil with no guard at the use site.
+func TestNilAttrContributesNothing(t *testing.T) {
+	a := lowerOneNode(Tag("div")(Name("class")("a"), nil, Name("id")("x"))())
+	b := lowerOneNode(Tag("div")(Name("class")("a"), Name("id")("x"))())
+	if vdom.Render(a) != vdom.Render(b) {
+		t.Fatalf("nil attr should contribute nothing: %q vs %q", vdom.Render(a), vdom.Render(b))
+	}
+}
+
 func TestGroupPreservesAttrOrder(t *testing.T) {
 	a := lowerOneNode(Tag("div")(
 		Name("id")("x"),
