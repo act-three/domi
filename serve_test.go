@@ -127,7 +127,7 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 			keepalive:    25 * time.Second,
 
 			onURLChange:  func(*url.URL) Msg { var zero Msg; return zero },
-			onURLRequest: func(URLRequest) Msg { var zero Msg; return zero },
+			onURLRequest: func(*url.URL, bool) Msg { var zero Msg; return zero },
 		},
 		log:    make([]frame, replayWindow),
 		base:   verInitial,
@@ -178,7 +178,7 @@ func TestHandlerDocumentOption(t *testing.T) {
 		func(context.Context, *url.URL) (*counterApp, Cmd[int]) {
 			return &counterApp{}, Batch[int]()
 		},
-		func(URLRequest) int { return 0 },
+		func(*url.URL, bool) int { return 0 },
 		func(*url.URL) int { return 0 },
 		Document(custom),
 	)
@@ -213,7 +213,7 @@ func TestHandlerInternalURLPrefix(t *testing.T) {
 		func(context.Context, *url.URL) (*counterApp, Cmd[int]) {
 			return &counterApp{}, Batch[int]()
 		},
-		func(URLRequest) int { return 0 },
+		func(*url.URL, bool) int { return 0 },
 		func(*url.URL) int { return 0 },
 		InternalURLPrefix("/-/domi/"),
 		Logger(slog.New(slog.DiscardHandler)),
@@ -377,7 +377,7 @@ func TestServerSessionTimeoutNeverAttached(t *testing.T) {
 	const d = 50 * time.Millisecond
 	sv := newServer(
 		func(context.Context, *url.URL) (*counterApp, Cmd[int]) { return &counterApp{}, Batch[int]() },
-		func(URLRequest) int { return 0 },
+		func(*url.URL, bool) int { return 0 },
 		func(*url.URL) int { return 0 },
 		[]Option{SessionTimeout(d)},
 	)
@@ -1465,7 +1465,7 @@ func (pathSetApp) Preview(context.Context, *url.URL) (string, string, Node) { re
 func TestHandleRootSeedsPathSets(t *testing.T) {
 	sv := newServer(
 		func(context.Context, *url.URL) (pathSetApp, Cmd[int]) { return pathSetApp{}, Batch[int]() },
-		func(URLRequest) int { return 0 },
+		func(*url.URL, bool) int { return 0 },
 		func(*url.URL) int { return 0 },
 		nil,
 	)

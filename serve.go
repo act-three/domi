@@ -40,6 +40,11 @@ var clientJSPath = func() string {
 // The app's Update decides how to handle the request,
 // typically by returning a [PushURL] or [ReplaceURL] command.
 //
+// Internal is true when the link target
+// shares the current page's origin (same scheme, host, and port).
+// For internal requests, the app typically returns a [PushURL] command;
+// for external requests, it will often navigate with a full page load.
+//
 // When the URL changes
 // (from a navigation command or browser back/forward),
 // the framework calls onURLChange to produce a Msg.
@@ -47,7 +52,7 @@ var clientJSPath = func() string {
 // and updates its state accordingly.
 func Handler[Msg any, A App[Msg]](
 	f func(context.Context, *url.URL) (A, Cmd[Msg]),
-	onURLRequest func(URLRequest) Msg,
+	onURLRequest func(u *url.URL, internal bool) Msg,
 	onURLChange func(*url.URL) Msg,
 	o ...Option,
 ) http.Handler {
@@ -75,7 +80,7 @@ type server[Msg any] struct {
 	clientPath     string // full path the client runtime is served at, prefix included
 
 	appf         func(context.Context, *url.URL) (App[Msg], Cmd[Msg])
-	onURLRequest func(URLRequest) Msg
+	onURLRequest func(*url.URL, bool) Msg
 	onURLChange  func(*url.URL) Msg
 
 	mu sync.Mutex
@@ -84,7 +89,7 @@ type server[Msg any] struct {
 
 func newServer[Msg any, A App[Msg]](
 	f func(context.Context, *url.URL) (A, Cmd[Msg]),
-	onURLRequest func(URLRequest) Msg,
+	onURLRequest func(*url.URL, bool) Msg,
 	onURLChange func(*url.URL) Msg,
 	opts []Option,
 ) *server[Msg] {
