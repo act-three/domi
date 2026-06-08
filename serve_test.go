@@ -563,6 +563,33 @@ func TestSessionSpawnRunsCmds(t *testing.T) {
 	}
 }
 
+// A nil Cmd is the empty Batch's degenerate twin: spawning it runs
+// nothing, so Update can return a cmd-or-nil with no guard at the use
+// site.
+func TestSessionSpawnNilCmdRunsNothing(t *testing.T) {
+	s := newTestSession(&counterApp{})
+	defer s.cancel()
+	s.spawn(nil) // must not panic
+}
+
+// Batch treats a nil Cmd like an empty Batch, so it drops out of the
+// lowered sequence and the surviving commands still run.
+func TestBatchNilCmdContributesNothing(t *testing.T) {
+	s := newTestSession(&counterApp{})
+	defer s.cancel()
+	done := make(chan struct{})
+	cmd := Batch[int](nil, Func(func() int {
+		close(done)
+		return 0
+	}), nil)
+	s.spawn(cmd)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("surviving Cmd body never ran")
+	}
+}
+
 // subApp lets tests control the subscription set dynamically.
 // Subscriptions returns whatever sub is set to at the time.
 type subApp struct {
@@ -704,7 +731,7 @@ func TestLoadCmdProducesLoadNav(t *testing.T) {
 	defer s.cancel()
 	const target = "https://example.com/logout"
 	var got *nav
-	for f := range Load[int](target).s {
+	for f := range Load[int](target).(batch[int]) {
 		_, got = f(s)
 	}
 	if got == nil {

@@ -50,7 +50,7 @@ func newTodos(_ context.Context, _ *url.URL) (*Todos, domi.Cmd[Msg]) {
 		t.nextID++
 		t.items = append(t.items, Item{ID: t.nextID, Text: s})
 	}
-	return t, domi.Batch[Msg]()
+	return t, nil
 }
 
 func (t *Todos) Update(_ context.Context, msg Msg) domi.Cmd[Msg] {
@@ -83,7 +83,7 @@ func (t *Todos) Update(_ context.Context, msg Msg) domi.Cmd[Msg] {
 			}
 		}
 	}
-	return domi.Batch[Msg]()
+	return nil
 }
 
 func (t *Todos) Subscriptions(_ context.Context) (s domi.Sub[Msg]) { return s }

@@ -32,11 +32,11 @@ type URLRequest struct {
 func PushURL[Msg any](url string) Cmd[Msg] {
 	u := mustParseRelativeURL("domi.PushURL", url)
 	href := u.String()
-	return Cmd[Msg]{slices.Values([]cmd[Msg]{
+	return batch[Msg](slices.Values([]cmd[Msg]{
 		func(s *session[Msg]) (Msg, *nav) {
 			return s.sv.onURLChange(u), &nav{push: href}
 		},
-	})}
+	}))
 }
 
 // ReplaceURL returns a [Cmd] that changes the browser URL
@@ -51,11 +51,11 @@ func PushURL[Msg any](url string) Cmd[Msg] {
 func ReplaceURL[Msg any](url string) Cmd[Msg] {
 	u := mustParseRelativeURL("domi.ReplaceURL", url)
 	href := u.String()
-	return Cmd[Msg]{slices.Values([]cmd[Msg]{
+	return batch[Msg](slices.Values([]cmd[Msg]{
 		func(s *session[Msg]) (Msg, *nav) {
 			return s.sv.onURLChange(u), &nav{replace: href}
 		},
-	})}
+	}))
 }
 
 // Load returns a [Cmd] that triggers a full-page browser navigation
@@ -74,12 +74,12 @@ func ReplaceURL[Msg any](url string) Cmd[Msg] {
 // instead.
 func Load[Msg any](url string) Cmd[Msg] {
 	mustParseURL("domi.Load", url)
-	return Cmd[Msg]{slices.Values([]cmd[Msg]{
+	return batch[Msg](slices.Values([]cmd[Msg]{
 		func(s *session[Msg]) (Msg, *nav) {
 			var zero Msg
 			return zero, &nav{load: url}
 		},
-	})}
+	}))
 }
 
 // mustParseURL parses url and panics if it is malformed. Unlike
