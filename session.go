@@ -12,6 +12,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"path"
 	"strconv"
 	"strings"
 	"sync"
@@ -166,11 +167,11 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 		children[i] = prelowered{n}
 	}
 	body := Tag("body")(
-		Name("data-domi-session")(s.id),
+		Name("data-domi-prefix")(path.Join("/", s.sv.prefix, s.id)),
 		Name("data-domi-path-sets")(marshalPathSets(s.pathSets)),
 	)(children...)
 	// The document shell cannot contain event handlers.
-	root, _ := lowerOne(0, s.sv.document(title, body))
+	root, _ := lowerOne(0, s.sv.document(s.sv.clientPath, title, body))
 
 	s.updateSubs(app.Subscriptions(appCtx))
 	s.spawn(cmd)
