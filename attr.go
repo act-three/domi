@@ -10,7 +10,7 @@ import (
 var (
 	// Bypass annotates a link to use the browser's built-in navigation,
 	// rather than going through the framework.
-	Bypass = Bool("data-domi-bypass")
+	Bypass Attr = Bool("data-domi-bypass")(true)
 
 	// Opaque marks an element as opaque, ignored by the virtual DOM diff.
 	// Such an element is inserted,
