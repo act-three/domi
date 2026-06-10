@@ -159,17 +159,20 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	s.addPathSets(h)
 
 	// apply lowers the bare view, so handler addresses are rooted at
-	// body, the patch root. The initial render must match: embed the
+	// domi-root. The initial render must match: embed the
 	// already-lowered view in the shell rather than re-addressing it
 	// under the document element.
 	children := make([]Node, len(nodes))
 	for i, n := range nodes {
 		children[i] = prelowered{n}
 	}
-	body := Tag("body")(
-		Name("data-domi-prefix")(path.Join("/", s.sv.prefix, s.id)),
-		Name("data-domi-path-sets")(marshalPathSets(s.pathSets)),
-	)(children...)
+	body := Tag("body")()(
+		Tag("domi-root")(
+			Name("style")("display:contents"),
+			Name("data-domi-prefix")(path.Join("/", s.sv.prefix, s.id)),
+			Name("data-domi-path-sets")(marshalPathSets(s.pathSets)),
+		)(children...),
+	)
 	// The document shell cannot contain event handlers.
 	root, _ := lowerOne(0, s.sv.document(s.sv.clientPath, title, body))
 

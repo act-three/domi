@@ -170,22 +170,24 @@ function postEnvelope(eventURL, h, e, ver) {
   }).catch((err) => console.error('domi: event POST failed', err));
 }
 
-// run wires up the domi session on document.body and starts the SSE
-// patch stream. Reads the URL prefix from body[data-domi-prefix=…]
-// (which the server emits on initial render) and removes the
-// attribute on its way out.
+// run wires up the domi session on the <domi-root> mount element just
+// inside document.body and starts the SSE patch stream. Reads the URL
+// prefix from domi-root[data-domi-prefix=…] (which the server emits on
+// initial render) and removes the attribute on its way out.
 export function run() {
   if (typeof document === 'undefined') return; // synthetic test env is ok
-  const container = document.body;
-  if (!container) throw new Error('domi: document.body unavailable');
+  const container = document.querySelector('body > domi-root');
+  if (!container) throw new Error('domi: element domi-root not found');
   const prefix = container.dataset.domiPrefix;
-  if (!prefix) throw new Error('domi: no session on document.body, expected data-domi-prefix');
+  if (!prefix) throw new Error('domi: no session on domi-root, expected data-domi-prefix');
   delete container.dataset.domiPrefix;
   const eventURL = `${prefix}/event`;
   const eventsURL = `${prefix}/events`;
-  // The container is document.body. The framework treats it as the
-  // patch root. App content becomes its children, addressed by patches
-  // at [0], [1], …
+  // The container is the patch root: app content becomes its children,
+  // addressed by patches at [0], [1], … Nodes that other actors append
+  // to body — browser extensions, third-party scripts — sit outside the
+  // container, invisible to the patch stream and to the delegated
+  // listeners below.
   let root = container;
 
   const pathSets = new Map();
@@ -274,9 +276,9 @@ export function run() {
     }).catch((err) => console.error('domi: urlChange POST failed', err));
   }
 
-  // Delegated listeners on the container: body stays put for the
-  // session, so listeners don't have to migrate when patches mutate
-  // its subtree.
+  // Delegated listeners on the container: domi-root stays put for the
+  // session (even a Reset rebuilds only its children), so listeners
+  // don't have to migrate when patches mutate its subtree.
   for (const ev of EVENTS) {
     container.addEventListener(ev, (e) => {
       let el = e.target;
