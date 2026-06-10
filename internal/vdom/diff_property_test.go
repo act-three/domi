@@ -31,8 +31,9 @@ type canonNode struct {
 }
 
 // canonicalize parses an HTML fragment and returns its single root
-// element in canonical form. The generator only produces single-rooted
-// trees, so a multi-root result is a programming error.
+// element in canonical form. Both sides of the diff/apply comparison
+// wrap their child lists in a <domi-root> element, mirroring the
+// production mount, so the fragment is single-rooted by construction.
 func canonicalize(t *testing.T, htmlStr string) *canonNode {
 	t.Helper()
 	// ParseFragment with a <body> context handles general flow content
@@ -162,6 +163,19 @@ func genNode(seed uint64, depth int) Node {
 	return genElement(rng.Uint64(), depth)
 }
 
+// genChildren generates a random child list — the shape a lowered View
+// takes, and the shape [Diff] diffs. Adjacent text nodes are allowed;
+// Diff coalesces them, like it does for a production view.
+func genChildren(seed uint64) []Node {
+	rng := rand.New(rand.NewPCG(seed, 0xC0FFEE))
+	n := rng.IntN(genMaxChildren + 1)
+	children := make([]Node, 0, n)
+	for range n {
+		children = append(children, genNode(rng.Uint64(), 0))
+	}
+	return children
+}
+
 func genAttrs(seed uint64) iter.Seq[Attr] {
 	rng := rand.New(rand.NewPCG(seed, 0xC0FFEE))
 	n := rng.IntN(genMaxAttrs + 1)
@@ -185,10 +199,12 @@ func genAttrs(seed uint64) iter.Seq[Attr] {
 // ---- property test ----
 
 // TestDiffApplyProperty runs N iterations of: pick a random seed,
-// generate two trees from it, run the diff through the production JS
-// applier (jsdom under bun), and compare the post-apply HTML to
-// Render(new) via golang.org/x/net/html — so attr-order, void-slash,
-// and adjacent-text-merge differences in HTML serialization wash out.
+// generate two child lists from it, run the production [Diff] through
+// the production JS applier (jsdom under bun, patching a <domi-root>
+// wrapper like the session does), and compare the post-apply HTML to
+// the rendered new list via golang.org/x/net/html — so attr-order,
+// void-slash, and adjacent-text-merge differences in HTML
+// serialization wash out.
 //
 // Each iteration runs as its own t.Run subtest named for its seed, so
 // the failing iteration is identified by name without scrolling. The
@@ -232,29 +248,48 @@ func TestDiffApplyProperty(t *testing.T) {
 // at how to replay the case verbosely.
 func checkProperty(t *testing.T, a *bunApplier, seed uint64, verbose bool) {
 	rng := rand.New(rand.NewPCG(seed, 0xC0FFEE))
-	old := genElement(rng.Uint64(), 0)
-	new := genElement(rng.Uint64(), 0)
+	old := genChildren(rng.Uint64())
+	new := genChildren(rng.Uint64())
 
-	patches := diffOne(old, new)
-	gotHTML, err := a.apply(Render(old), patches)
+	patches := diffList(old, new)
+	gotHTML, err := a.apply(renderList(old), patches)
 	if err != nil {
 		if verbose {
 			t.Fatalf("bun apply: %v\nold:  %s\nnew:  %s\npatches: %s",
-				err, Render(old), Render(new), patchDebug(patches))
+				err, renderList(old), renderList(new), patchDebug(patches))
 		}
 		t.Fatalf("bun apply: %v  (replay: DOMI_SEED=%d go test -run TestDiffApplyProperty)", err, seed)
 	}
-	want := canonicalize(t, Render(new))
+	want := canonicalize(t, "<domi-root>"+renderList(new)+"</domi-root>")
 	got := canonicalize(t, gotHTML)
 	if !reflect.DeepEqual(got, want) {
 		if verbose {
 			t.Fatalf("diff/apply mismatch\nold:  %s\nnew:  %s\ngot html: %s\nwant: %s\ngot:  %s\npatches (%d): %s",
-				Render(old), Render(new), gotHTML,
+				renderList(old), renderList(new), gotHTML,
 				jsonStr(want), jsonStr(got),
 				len(patches), patchDebug(patches))
 		}
 		t.Fatalf("diff/apply mismatch  (replay: DOMI_SEED=%d go test -run TestDiffApplyProperty)", seed)
 	}
+}
+
+// diffList runs the production [Diff] and unwraps the resulting
+// patches for the bun harness and patchDebug.
+func diffList(old, new []Node) []patch {
+	ps := Diff(old, new)
+	out := make([]patch, len(ps))
+	for i, p := range ps {
+		out[i] = p.p
+	}
+	return out
+}
+
+func renderList(nodes []Node) string {
+	var b strings.Builder
+	for _, n := range nodes {
+		_ = RenderTo(&b, n)
+	}
+	return b.String()
 }
 
 // TestSetAttrEmptyValueAppliesAsEmptyString pins the JS-side coercion
@@ -267,14 +302,14 @@ func checkProperty(t *testing.T, a *bunApplier, seed uint64, verbose bool) {
 func TestSetAttrEmptyValueAppliesAsEmptyString(t *testing.T) {
 	a := startBunApplier(t)
 
-	old := NewElement("div", attrs(), nil, nil)
-	new := NewElement("div", attrs(Attr{Name: "class", Value: ""}), nil, nil)
+	old := []Node{NewElement("div", attrs(), nil, nil)}
+	new := []Node{NewElement("div", attrs(Attr{Name: "class", Value: ""}), nil, nil)}
 
-	gotHTML, err := a.apply(Render(old), diffOne(old, new))
+	gotHTML, err := a.apply(renderList(old), diffList(old, new))
 	if err != nil {
 		t.Fatalf("bun apply: %v", err)
 	}
-	want := canonicalize(t, Render(new))
+	want := canonicalize(t, "<domi-root>"+renderList(new)+"</domi-root>")
 	got := canonicalize(t, gotHTML)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %s, want %s (raw html: %s)", jsonStr(got), jsonStr(want), gotHTML)
@@ -293,21 +328,21 @@ func TestSetAttrEmptyValueAppliesAsEmptyString(t *testing.T) {
 func TestSetTextEmptyValueAppliesAsEmptyString(t *testing.T) {
 	a := startBunApplier(t)
 
-	old := el("div", tx("hi"))
-	new := el("div", tx(""))
+	old := []Node{el("div", tx("hi"))}
+	new := []Node{el("div", tx(""))}
 
-	patches := diffOne(old, new)
+	patches := diffList(old, new)
 	// Sanity: the change really is a single SetText with an empty value,
 	// so the omitempty wire path is the thing under test.
 	if len(patches) != 1 || patches[0].Op != "SetText" || patches[0].Value != "" {
 		t.Fatalf("expected one empty-valued SetText, got %+v", patches)
 	}
 
-	gotHTML, err := a.apply(Render(old), patches)
+	gotHTML, err := a.apply(renderList(old), patches)
 	if err != nil {
 		t.Fatalf("bun apply: %v", err)
 	}
-	want := canonicalize(t, Render(new))
+	want := canonicalize(t, "<domi-root>"+renderList(new)+"</domi-root>")
 	got := canonicalize(t, gotHTML)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %s, want %s (raw html: %s)", jsonStr(got), jsonStr(want), gotHTML)

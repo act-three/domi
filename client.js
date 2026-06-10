@@ -34,10 +34,10 @@ function walk(root, path) {
   return node;
 }
 
-// applyPatch applies a single patch to the tree rooted at `root` and
-// returns the (possibly new) root. The root only changes when a `Replace`
-// patch at path [] swaps the top-level element — callers must thread the
-// returned value back in for the next patch.
+// applyPatch applies a single patch to the tree rooted at `root`.
+// Patches address the root's children — a path names the root itself
+// only as the parent of a child op — so the root is never replaced; it
+// survives the whole patch stream.
 //
 // Every op is a pure DOM mutation of `root` alone — no document-level or
 // navigation side-effects — so it is safe to run against a detached
@@ -47,9 +47,8 @@ export function applyPatch(root, p) {
   switch (p.Op) {
     case 'Replace': {
       const node = walk(root, p.Path);
-      const newNode = fragmentFromHTML(p.HTML).firstChild;
-      if (node.parentNode) node.parentNode.replaceChild(newNode, node);
-      return node === root ? newNode : root;
+      node.parentNode.replaceChild(fragmentFromHTML(p.HTML).firstChild, node);
+      break;
     }
     case 'SetText': {
       // Write the new text straight to nodeValue: it takes a raw string
@@ -59,7 +58,7 @@ export function applyPatch(root, p) {
       // (an interpolated value blanks out) the Go side drops Value via
       // omitempty, and a missing field here means "clear it".
       walk(root, p.Path).nodeValue = p.Value ?? '';
-      return root;
+      break;
     }
     case 'SetAttr': {
       // Coerce undefined → "" so name-only / empty-valued attrs land as
@@ -67,11 +66,11 @@ export function applyPatch(root, p) {
       // empty string (omitempty on the Go side), so a missing field here
       // means "set this attribute to empty", not "set it to undefined".
       walk(root, p.Path).setAttribute(p.Name, p.Value ?? '');
-      return root;
+      break;
     }
     case 'RemoveAttr': {
       walk(root, p.Path).removeAttribute(p.Name);
-      return root;
+      break;
     }
     case 'InsertChild': {
       const parent = walk(root, p.Path);
@@ -84,7 +83,7 @@ export function applyPatch(root, p) {
       } else {
         parent.insertBefore(newNode, parent.childNodes[p.Index] || null);
       }
-      return root;
+      break;
     }
     case 'RemoveChild': {
       const parent = walk(root, p.Path);
@@ -98,7 +97,7 @@ export function applyPatch(root, p) {
       } else {
         parent.removeChild(parent.childNodes[p.Index]);
       }
-      return root;
+      break;
     }
     case 'MoveChild': {
       const parent = walk(root, p.Path);
@@ -112,7 +111,7 @@ export function applyPatch(root, p) {
         parent.removeChild(node);
         parent.insertBefore(node, parent.childNodes[p.To] || null);
       }
-      return root;
+      break;
     }
     case 'Reset': {
       // The root (and its delegated listeners) survives the rebuild, so
@@ -121,11 +120,10 @@ export function applyPatch(root, p) {
       delete root.__domiChildren;
       const frag = fragmentFromHTML(p.HTML);
       while (frag.firstChild) root.appendChild(frag.firstChild);
-      return root;
+      break;
     }
     default:
       console.warn('domi: unknown op', p);
-      return root;
   }
 }
 
@@ -176,30 +174,29 @@ function postEnvelope(eventURL, h, e, ver) {
 // initial render) and removes the attribute on its way out.
 export function run() {
   if (typeof document === 'undefined') return; // synthetic test env is ok
-  const container = document.querySelector('body > domi-root');
-  if (!container) throw new Error('domi: element domi-root not found');
-  const prefix = container.dataset.domiPrefix;
+  // root is the patch root.
+  // the patch address [] is root itself, [0] is its first child,
+  // [0,0] is the first child of its first child, etc.
+  // root itself is never replaced.
+  // delegated event handlers are set on root.
+  const root = document.querySelector('body > domi-root');
+  if (!root) throw new Error('domi: element domi-root not found');
+  const prefix = root.dataset.domiPrefix;
   if (!prefix) throw new Error('domi: no session on domi-root, expected data-domi-prefix');
-  delete container.dataset.domiPrefix;
+  delete root.dataset.domiPrefix;
   const eventURL = `${prefix}/event`;
   const eventsURL = `${prefix}/events`;
-  // The container is the patch root: app content becomes its children,
-  // addressed by patches at [0], [1], … Nodes that other actors append
-  // to body — browser extensions, third-party scripts — sit outside the
-  // container, invisible to the patch stream and to the delegated
-  // listeners below.
-  let root = container;
 
   const pathSets = new Map();
   function addPathSets(obj) {
     for (const k in obj) pathSets.set(k, obj[k]);
   }
   try {
-    addPathSets(JSON.parse(container.dataset.domiPathSets || '{}'));
+    addPathSets(JSON.parse(root.dataset.domiPathSets || '{}'));
   } catch (err) {
     console.error('domi: bad path sets', err);
   }
-  delete container.dataset.domiPathSets;
+  delete root.dataset.domiPathSets;
 
   // Snapshot cache for instant back/forward. Maps snapshot vers (the
   // tree versions of cached pages, stored in history.state) to
@@ -265,7 +262,7 @@ export function run() {
     cacheSnapshot(p.base, root, document.title);
     history.replaceState({ domiSnapshot: p.base }, '', location.href);
     history.pushState(null, '', p.dest);
-    for (const patch of p.patches ?? []) root = applyPatch(root, patch);
+    for (const patch of p.patches ?? []) applyPatch(root, patch);
     document.title = p.title ?? '';
     base = p.base;
     ver = p.ver;
@@ -276,13 +273,10 @@ export function run() {
     }).catch((err) => console.error('domi: urlChange POST failed', err));
   }
 
-  // Delegated listeners on the container: domi-root stays put for the
-  // session (even a Reset rebuilds only its children), so listeners
-  // don't have to migrate when patches mutate its subtree.
   for (const ev of EVENTS) {
-    container.addEventListener(ev, (e) => {
+    root.addEventListener(ev, (e) => {
       let el = e.target;
-      while (el && el !== container.parentNode) {
+      while (el && el !== root.parentNode) {
         if (el.nodeType === 1) {
           const key = datasetKeyFor(ev);
           const raw = el.dataset && el.dataset[key];
@@ -314,11 +308,11 @@ export function run() {
   // the browser navigates normally), and links where an ancestor
   // already has a data-msg-click handler (the app opted into explicit
   // handling).
-  container.addEventListener('click', (e) => {
+  root.addEventListener('click', (e) => {
     checkPreviewTTL();
     if (e.button !== 0 || e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) return;
     let a = e.target;
-    while (a && a !== container) {
+    while (a && a !== root) {
       if (a.tagName === 'A') break;
       a = a.parentNode;
     }
@@ -364,10 +358,10 @@ export function run() {
 
   // Hover handler: prefetch the link under the cursor, superseding any
   // tracked preview (see pv).
-  container.addEventListener('mouseover', (e) => {
+  root.addEventListener('mouseover', (e) => {
     checkPreviewTTL();
     let a = e.target;
-    while (a && a !== container) {
+    while (a && a !== root) {
       if (a.tagName === 'A') break;
       a = a.parentNode;
     }
@@ -428,7 +422,7 @@ export function run() {
     for (const eff of f.Effects) {
       switch (eff.Type) {
         case 'ApplyPatch':
-          for (const p of eff.Patches) root = applyPatch(root, p);
+          for (const p of eff.Patches) applyPatch(root, p);
           ver = eff.Ver;
           break;
         case 'SetTitle':
