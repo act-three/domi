@@ -19,10 +19,19 @@
 // (e.g. Br, Input) and other childless tags can appear in a parent's
 // child list without a trailing empty children call.
 //
-// Attribute names beginning with "data-domi-" are reserved for use by
-// this package and its subpackages. Application code and third-party
-// packages should pick data attributes outside that prefix to avoid
-// collisions with framework internals — present or future.
+// Element names beginning with "domi-"
+// and attribute names beginning with "data-domi-"
+// are reserved for use by this package and its subpackages.
+// Application code and third-party packages should pick data attributes
+// outside those prefixes to avoid collisions with framework internals.
+//
+// The framework renders the view inside a domi-root element just inside body,
+// so that browser extensions placing their own elements inside body
+// don't interfere with the app.
+// The domi-root element has display:contents, so the view's elements
+// participate in body's layout as if they were its direct children.
+// However, CSS child selectors anchored at body (e.g. "body > *")
+// do not match them.
 //
 // # Bundling the Client
 //

@@ -163,7 +163,7 @@ func TestSessionApplyFragmentAtRoot(t *testing.T) {
 
 // The Document option swaps the default HTML shell for the App's
 // builder, lets it own <head>, and still attaches the session marker
-// to body.
+// to domi-root.
 func TestHandlerDocumentOption(t *testing.T) {
 	custom := func(title string, body Node) Node {
 		return Tag("html")()(
@@ -194,7 +194,7 @@ func TestHandlerDocumentOption(t *testing.T) {
 		t.Fatalf("custom head content missing; body: %s", body)
 	}
 	if !strings.Contains(body, `data-domi-prefix=`) {
-		t.Fatalf("session marker not attached to body; got: %s", body)
+		t.Fatalf("session marker not attached to domi-root; got: %s", body)
 	}
 	// The default bootstrap script must not appear when Document is set —
 	// the App is responsible for loading the client itself.
@@ -1486,5 +1486,35 @@ func TestHandleRootSeedsPathSets(t *testing.T) {
 	blob = blob[:strings.IndexByte(blob, '"')]
 	if !strings.Contains(blob, psKey) {
 		t.Fatalf("path set %q not seeded into body blob %q", psKey, blob)
+	}
+}
+
+// The initial render mounts the view in a <domi-root> wrapper just
+// inside body, with the session markers riding on the wrapper. Body
+// itself carries nothing and is never patched, so nodes that browser
+// extensions and other scripts add to it stay outside the managed
+// tree; display:contents keeps the wrapper itself out of layout.
+func TestHandleRootMountsWrapperInsideBody(t *testing.T) {
+	sv := newServer(
+		func(context.Context, *url.URL) (*counterApp, Cmd[int]) { return &counterApp{}, Batch[int]() },
+		func(*url.URL, bool) int { return 0 },
+		func(*url.URL) int { return 0 },
+		nil,
+	)
+	rec := httptest.NewRecorder()
+	sv.handleRoot(rec, httptest.NewRequest("GET", "/", nil))
+	html := rec.Body.String()
+
+	if !strings.Contains(html, "<body><domi-root ") {
+		t.Fatalf("the mount is not the sole layer between body and the view:\n%s", html)
+	}
+	if !regexp.MustCompile(`<domi-root [^>]*style="display:contents"`).MatchString(html) {
+		t.Fatalf("mount lacks display:contents:\n%s", html)
+	}
+	if !regexp.MustCompile(`<domi-root [^>]*data-domi-prefix="`).MatchString(html) {
+		t.Fatalf("session marker not on the mount:\n%s", html)
+	}
+	if !strings.Contains(html, "<div>0</div></domi-root></body>") {
+		t.Fatalf("view not mounted inside the wrapper:\n%s", html)
 	}
 }
