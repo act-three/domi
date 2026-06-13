@@ -17,7 +17,11 @@
 // fresh wrapper we recreate each iteration.
 
 import { JSDOM } from 'jsdom';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import * as readline from 'node:readline';
+import { pathToFileURL } from 'node:url';
 
 // Set up jsdom globals BEFORE importing the applier: client.js has no
 // import side effects, but applyPatch parses patch HTML through
@@ -30,7 +34,18 @@ globalThis.Node = dom.window.Node;
 globalThis.NodeFilter = dom.window.NodeFilter;
 globalThis.DocumentFragment = dom.window.DocumentFragment;
 
-const { applyPatch } = await import('../../../client.js');
+// client.js keeps applyPatch internal — its only export is run. Copy the
+// source to a temp module that re-exports applyPatch, and import that, so
+// the property test drives the production applier without widening the
+// module's public surface. The copy differs from what ships only by the
+// appended export line, so the code under test is exactly the production
+// applier. (Importing the source as a data: URL would avoid the temp file,
+// but bun rejects a data: specifier this long.)
+const clientSrc = await readFile(new URL('../../../client.js', import.meta.url), 'utf8');
+const underTest = join(tmpdir(), `domi-applier-${process.pid}.mjs`);
+await writeFile(underTest, clientSrc + '\nexport { applyPatch };');
+const { applyPatch } = await import(pathToFileURL(underTest).href);
+await unlink(underTest);
 
 const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
 for await (const line of rl) {

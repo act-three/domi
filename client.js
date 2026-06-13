@@ -1,12 +1,11 @@
-// domi client — ES module. Exports [run] (the session bootstrap),
-// [applyPatch], and [getFields]. Importing the module has no side
-// effects; callers invoke [run] explicitly. The framework's HTML
-// renderer emits an inline module script that does exactly that.
+// domi client — ES module. Importing it has no side effects; a caller
+// boots a session by invoking [run] explicitly, as the framework's HTML
+// renderer does from an inline module script.
 
 // fragmentFromHTML parses an HTML string into a DocumentFragment using a
 // <template> element. Template parsing context is permissive — <tr>, <td>,
 // <option>, etc. parse without their natural ancestors.
-export function fragmentFromHTML(html) {
+function fragmentFromHTML(html) {
   const tmpl = document.createElement('template');
   tmpl.innerHTML = html;
   return tmpl.content;
@@ -15,7 +14,7 @@ export function fragmentFromHTML(html) {
 // childMap(parent) returns a Map<key, Element> for the parent's keyed
 // children, lazily building it on first access by scanning for
 // data-domi-key attributes on element children.
-export function childMap(parent) {
+function childMap(parent) {
   let map = parent.__domiChildren;
   if (!map) {
     map = new Map();
@@ -43,7 +42,7 @@ function walk(root, path) {
 // navigation side-effects — so it is safe to run against a detached
 // clone, as preview snapshot construction does. Document-level changes
 // travel as effects in an effect frame, run only against the live page.
-export function applyPatch(root, p) {
+function applyPatch(root, p) {
   switch (p.Op) {
     case 'Replace': {
       const node = walk(root, p.Path);
@@ -136,7 +135,7 @@ export function applyPatch(root, p) {
 //
 // Only values that can be represented in JSON are included,
 // others are skipped.
-export function getFields(e, el, paths) {
+function getFields(e, el, paths) {
   const out = {};
   for (const path of paths) {
     let node = path[0] === 'currentTarget' ? el : e;
