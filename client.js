@@ -33,6 +33,102 @@ function walk(root, path) {
   return node;
 }
 
+// nodePath finds the path of node in root: each step is a key for a keyed
+// child or a childNodes index for a positional one, so a keyed container is
+// addressed by key and survives its siblings reordering.
+function nodePath(root, node) {
+  const path = [];
+  for (let n = node; n !== root; n = n.parentNode) {
+    const parent = n.parentNode;
+    if (!parent) throw new Error('domi: mutate target is not inside domi-root');
+    const key = n.dataset && n.dataset.domiKey;
+    path.unshift(key != null ? key : indexOf(parent.childNodes, n));
+  }
+  return path;
+}
+
+function indexOf(nodes, node) {
+  for (let i = 0; i < nodes.length; i++) if (nodes[i] === node) return i;
+  return -1;
+}
+
+// uniqueKey returns a key derived from key that is not present in map. It
+// scans until it finds an unused one, so uniqueness is guaranteed by the
+// check, not by the derivation; the marker is purely internal and has no
+// significance — nothing depends on its format.
+function uniqueKey(map, key) {
+  for (let i = 1; ; i++) {
+    const k = `${key}~domi-dup-${i}`;
+    if (!map.has(k)) return k;
+  }
+}
+
+// applyClientMutations applies an event's optimistic mutation set to the
+// live tree and returns the wire ops to report. Each op names DOM nodes;
+// domi resolves them to the paths and keys the server replays. The app
+// hands over a clean tree — any transient drag visuals already undone — so
+// the resolved addresses match the server's shadow.
+//
+// The set is vetted before any of it is applied: if an op is unrecognized
+// or malformed, applyClientMutations warns and returns null without
+// touching the DOM, so the caller can fall back to a plain dispatch and let
+// the server's next render reconcile rather than commit a half-applied set.
+function applyClientMutations(root, muts) {
+  for (const m of muts) {
+    if (m.op !== 'move') {
+      console.warn('domi: unknown mutation op', m.op);
+      return null;
+    }
+    if (!moveOK(m)) {
+      console.warn('domi: malformed move, skipping optimistic commit', m);
+      return null;
+    }
+  }
+  return muts.map((m) => applyMove(root, m.node, m.before ?? null, m.into ?? null));
+}
+
+// moveOK reports whether a move can be applied: its node is connected and
+// keyed, and it has a destination — an anchor's parent, or an explicit
+// container. Mirrors applyMove's preconditions so a set can be vetted
+// before any of it touches the DOM.
+function moveOK(m) {
+  const dst = m.before ? m.before.parentNode : m.into;
+  return !!(m.node && m.node.parentNode && dst && m.node.dataset && m.node.dataset.domiKey != null);
+}
+
+// applyMove relocates the keyed node before `before`, or appends it into
+// `into` when there's no anchor, keeping the per-parent child maps domi
+// uses for keyed reconciliation in sync. If the destination already holds
+// the node's key, domi generates a fresh one so the maps stay consistent;
+// the server's next render owns the real key, so the re-keyed node is just
+// removed when the render lands. Returns the move as a wire op whose From
+// and To are the node's path before and after the move — each ending in the
+// node's key, the steps before it addressing its container.
+function applyMove(root, node, before, into) {
+  const src = node.parentNode;
+  const dst = before ? before.parentNode : into;
+  if (!src || !dst) throw new Error('domi: move needs a connected node and a destination');
+  const key = node.dataset && node.dataset.domiKey;
+  if (key == null) throw new Error('domi: move node has no data-domi-key');
+  const from = nodePath(root, node);
+  const beforeKey = before ? (before.dataset && before.dataset.domiKey) || '' : '';
+
+  const dstMap = childMap(dst);
+  let newKey = key;
+  const clash = dstMap.get(key);
+  if (clash && clash !== node) {
+    newKey = uniqueKey(dstMap, key);
+    console.warn('domi: move key', key, 'already in destination; generated', newKey);
+  }
+
+  childMap(src).delete(key);
+  node.dataset.domiKey = newKey;
+  dst.insertBefore(node, before || null);
+  dstMap.set(newKey, node);
+
+  return { Op: 'move', From: from, To: nodePath(root, node), Before: beforeKey };
+}
+
 // applyPatch applies a single patch to the tree rooted at `root`.
 // Patches address the root's children — a path names the root itself
 // only as the parent of a child op — so the root is never replaced; it
@@ -159,11 +255,13 @@ function datasetKeyFor(event) {
   return 'msg' + event.charAt(0).toUpperCase() + event.slice(1);
 }
 
-function postEnvelope(eventURL, h, e, ver) {
+function postEnvelope(eventURL, h, e, ver, mutations) {
+  const body = { Type: 'Dispatch', Handler: h, Event: e, Ver: ver };
+  if (mutations && mutations.length) body.Mutations = mutations;
   fetch(eventURL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ Type: 'Dispatch', Handler: h, Event: e, Ver: ver }),
+    body: JSON.stringify(body),
   }).catch((err) => console.error('domi: event POST failed', err));
 }
 
@@ -289,7 +387,23 @@ export function run() {
               const p = pathSets.get(tok.slice(ci + 1));
               if (p) paths.push(...p);
             }
-            postEnvelope(eventURL, keys.join(','), getFields(e, el, paths), ver);
+            const fields = getFields(e, el, paths);
+            const muts = e.detail && e.detail.domi && e.detail.domi.mutations;
+            const wire = Array.isArray(muts) && muts.length ? applyClientMutations(root, muts) : null;
+            if (wire) {
+              // Optimistic commit: the mutations are applied and we rebase
+              // onto a derived version (so frames built against the old tree
+              // drop), echoing the version we acted on. The server replays
+              // the ops to reconstruct what we show, then diffs forward to
+              // its render.
+              const acted = ver;
+              base = ver = acted + '-mutated';
+              postEnvelope(eventURL, keys.join(','), fields, acted, wire);
+            } else {
+              // No mutations, or a set we declined to apply: a plain
+              // dispatch, leaving the server's next render to reconcile.
+              postEnvelope(eventURL, keys.join(','), fields, ver);
+            }
             return;
           }
         }

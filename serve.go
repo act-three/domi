@@ -143,6 +143,7 @@ func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 		tables:    make(map[string]table[Msg]),
 		active:    time.Now(),
 		snapshots: newTreeRing(snapshotRingSize),
+		recent:    newTreeRing(recentRingSize),
 	}
 	sv.put(id, s)
 	go s.idleWatch(sv.sessionTimeout)
