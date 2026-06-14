@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -1191,7 +1192,7 @@ func TestSessionSnapshotRestore(t *testing.T) {
 
 	// Cache a different view under its ver.
 	otherView, _ := lower(0, Tag("div")()(Text("other")))
-	s.cacheSnapshot("ver1", otherView, "other title")
+	s.cacheSnapshot("ver1", snapshot{view: otherView, title: "other title"})
 
 	s.restoreSnapshot("ver1")
 	if s.title != "other title" {
@@ -1221,13 +1222,79 @@ func TestSessionSnapshotRestore(t *testing.T) {
 	}
 }
 
+// A path set delivered only in a frame the client drops would otherwise
+// strand: addPathSets marks it sent the moment a frame is built, so no
+// later render re-delivers it. Snapshots carry the path sets known at
+// their version, and restoring one resets s.pathSets to that set — so a
+// set added after the snapshot (in a frame the rebase drops) is forgotten
+// and re-sent, while sets the snapshot captured survive.
+func TestSessionSnapshotRestoreResetsPathSets(t *testing.T) {
+	s := newTestSession(&counterApp{})
+	defer s.cancel()
+
+	known := pathSet{{"currentTarget", "value"}}
+	s.pathSets = map[string]pathSet{known.key(): known}
+	s.cacheSnapshot("ver1", snapshot{view: s.view, title: s.title, pathSets: maps.Clone(s.pathSets)})
+
+	// A later frame delivers a new set, but the client drops it (it has
+	// rebased away). On the server the set still lands in s.pathSets.
+	stranded := pathSet{{"currentTarget", "dataset", "id"}}
+	s.pathSets[stranded.key()] = stranded
+
+	s.restoreSnapshot("ver1")
+
+	if _, ok := s.pathSets[stranded.key()]; ok {
+		t.Fatal("restore kept a set added after the snapshot; a frame-dropped set stays stranded")
+	}
+	if _, ok := s.pathSets[known.key()]; !ok {
+		t.Fatal("restore dropped a set the snapshot captured; the next render would needlessly re-send it")
+	}
+
+	// The restore must not alias the cached snapshot, or a later delivery
+	// would leak in and a second restore would resurrect it.
+	s.pathSets[stranded.key()] = stranded
+	if _, ok := s.snapshots["ver1"].pathSets[stranded.key()]; ok {
+		t.Fatal("restore aliased the cached snapshot's path sets")
+	}
+}
+
+// commitPreview rebases onto the preview and resets s.pathSets to the
+// preview's prefetch baseline, so a set stranded in a frame the client
+// dropped at the rebase is re-delivered rather than withheld.
+func TestSessionCommitPreviewResetsPathSets(t *testing.T) {
+	s := newTestSession[int](&previewApp{route: "/"})
+	defer s.cancel()
+	u, _ := url.Parse("/next")
+	s.prefetch(s.ctx, u)
+	cand := s.ver
+
+	// Strand a set as if its frame were dropped when the client committed:
+	// on the server it lands in s.pathSets after the preview captured its
+	// baseline at prefetch.
+	stranded := pathSet{{"currentTarget", "dataset", "id"}}
+	s.mu.Lock()
+	if s.pathSets == nil {
+		s.pathSets = map[string]pathSet{}
+	}
+	s.pathSets[stranded.key()] = stranded
+	s.mu.Unlock()
+
+	s.commitPreview(s.ctx, cand)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.pathSets[stranded.key()]; ok {
+		t.Fatal("commitPreview left a set stranded; it didn't reset to the preview baseline")
+	}
+}
+
 // The snapshot cache evicts the oldest entries when full.
 func TestSessionSnapshotEviction(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
 	view, _ := lower(0, Tag("div")()(Text("x")))
 	for i := range snapshotCacheSize + 5 {
-		s.cacheSnapshot(fmt.Sprintf("s%d", i), view, "t")
+		s.cacheSnapshot(fmt.Sprintf("s%d", i), snapshot{view: view, title: "t"})
 	}
 	if len(s.snapshots) != snapshotCacheSize {
 		t.Fatalf("expected %d snapshots, got %d", snapshotCacheSize, len(s.snapshots))
@@ -1254,16 +1321,16 @@ func TestSessionSnapshotRecachingRefreshesAge(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
 	view, _ := lower(0, Tag("div")()(Text("x")))
-	s.cacheSnapshot("a", view, "t")
+	s.cacheSnapshot("a", snapshot{view: view, title: "t"})
 	for i := range snapshotCacheSize - 2 {
-		s.cacheSnapshot(fmt.Sprintf("s%d", i), view, "t")
+		s.cacheSnapshot(fmt.Sprintf("s%d", i), snapshot{view: view, title: "t"})
 	}
 	// "a" is the oldest entry. Re-cache it, then add two more distinct
 	// vers: the first recycles the hole "a" left, the second evicts the
 	// oldest survivor — s0, not "a".
-	s.cacheSnapshot("a", view, "t")
-	s.cacheSnapshot("y", view, "t")
-	s.cacheSnapshot("z", view, "t")
+	s.cacheSnapshot("a", snapshot{view: view, title: "t"})
+	s.cacheSnapshot("y", snapshot{view: view, title: "t"})
+	s.cacheSnapshot("z", snapshot{view: view, title: "t"})
 	if _, ok := s.snapshots["a"]; !ok {
 		t.Fatal("re-cached ver evicted at its original age")
 	}
