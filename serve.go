@@ -132,16 +132,17 @@ func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = context.WithValue(ctx, sessionIDKey{}, id)
 	s := &session[Msg]{
-		ctx:    ctx,
-		cancel: cancel,
-		id:     id,
-		sv:     sv,
-		logger: sv.logger.With("session", id),
-		log:    make([]frame, sv.replayWindow),
-		base:   verInitial,
-		ver:    verInitial,
-		tables: make(map[string]table[Msg]),
-		active: time.Now(),
+		ctx:       ctx,
+		cancel:    cancel,
+		id:        id,
+		sv:        sv,
+		logger:    sv.logger.With("session", id),
+		log:       make([]frame, sv.replayWindow),
+		base:      verInitial,
+		ver:       verInitial,
+		tables:    make(map[string]table[Msg]),
+		active:    time.Now(),
+		snapshots: newTreeRing(snapshotRingSize),
 	}
 	sv.put(id, s)
 	go s.idleWatch(sv.sessionTimeout)
