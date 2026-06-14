@@ -111,9 +111,16 @@ type nav struct {
 
 const snapshotCacheSize = 30
 
+// A snapshot captures the client-visible state at a tree version: its
+// view and title, and the path sets delivered to the client as of that
+// version. Restoring one (see restoreSnapshot) re-roots the lineage and
+// resets path-set delivery to the captured set, so the next render
+// re-sends any path set that reached the client only in a frame later
+// dropped at the rebase.
 type snapshot struct {
-	view  []vdom.Node
-	title string
+	view     []vdom.Node
+	title    string
+	pathSets map[string]pathSet
 }
 
 // preview is the session's single outstanding link preview.
@@ -131,11 +138,15 @@ type preview struct {
 	// When the client navigates to a preview, the chosen candidate is
 	// added to the snapshot cache.
 	log map[string]snapshot
+	// pathSets is the set delivered to the client when this preview was
+	// prefetched. Committing rebases onto the preview (see commitPreview),
+	// so this becomes the baseline the next render re-delivers from.
+	pathSets map[string]pathSet
 }
 
 // addView logs the outgoing view named ver as a back-button candidate.
 // It returns false if there's no remaining capacity.
-func (p *preview) addView(ver string, view []vdom.Node, title string) bool {
+func (p *preview) addView(ver string, sn snapshot) bool {
 	const cap = 128
 	if len(p.log) >= cap {
 		return false
@@ -143,7 +154,7 @@ func (p *preview) addView(ver string, view []vdom.Node, title string) bool {
 	if p.log == nil {
 		p.log = make(map[string]snapshot)
 	}
-	p.log[ver] = snapshot{view: view, title: title}
+	p.log[ver] = sn
 	return true
 }
 
@@ -244,7 +255,7 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 		// Goes before ApplyPatches+SetTitle to snapshot outgoing state.
 		switch {
 		case n.push != "":
-			s.cacheSnapshot(oldVer, s.view, s.title)
+			s.cacheSnapshot(oldVer, snapshot{view: s.view, title: s.title, pathSets: maps.Clone(s.pathSets)})
 			effects = append(effects, effect{Type: effectPushURL, URL: n.push})
 		case n.replace != "":
 			effects = append(effects, effect{Type: effectReplaceURL, URL: n.replace})
@@ -259,7 +270,7 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 	}
 
 	if s.preview != nil && !s.preview.frozen && len(patches) > 0 {
-		if s.preview.addView(s.ver, next, title) {
+		if s.preview.addView(s.ver, snapshot{view: next, title: title, pathSets: maps.Clone(s.pathSets)}) {
 			effects = append(effects, effect{
 				Type:    effectSetPreview,
 				Patches: vdom.Diff(next, s.preview.view),
@@ -628,11 +639,11 @@ func (s *session[Msg]) framesSince(seen uint64) []frame {
 	return out
 }
 
-// cacheSnapshot stores a vdom snapshot, named by tree version ver,
-// evicting the oldest entry if the cache is at capacity. Re-caching a
-// ver already present refreshes its recency rather than consuming a
-// second eviction slot. Must be called with s.mu held.
-func (s *session[Msg]) cacheSnapshot(ver string, view []vdom.Node, title string) {
+// cacheSnapshot stores snapshot sn, named by tree version ver, evicting
+// the oldest entry if the cache is at capacity. Re-caching a ver already
+// present refreshes its recency rather than consuming a second eviction
+// slot. Must be called with s.mu held.
+func (s *session[Msg]) cacheSnapshot(ver string, sn snapshot) {
 	if s.snapshots == nil {
 		s.snapshots = make(map[string]snapshot, snapshotCacheSize)
 		s.snapshotAge = make([]string, snapshotCacheSize)
@@ -652,14 +663,16 @@ func (s *session[Msg]) cacheSnapshot(ver string, view []vdom.Node, title string)
 	}
 	s.snapshotAge[s.snapshotNext] = ver
 	s.snapshotNext = (s.snapshotNext + 1) % snapshotCacheSize
-	s.snapshots[ver] = snapshot{view: view, title: title}
+	s.snapshots[ver] = sn
 }
 
-// restoreSnapshot replaces s.view and s.title with the cached tree
-// named ver, if present, and roots a new patch lineage there. The next
-// apply cycle diffs against the restored view, producing corrective
-// patches for any staleness. Frames committed under an older base
-// are dropped by the client.
+// restoreSnapshot replaces s.view, s.title, and s.pathSets with the
+// cached state named ver, if present, and roots a new patch lineage
+// there. The next apply cycle diffs against the restored view, producing
+// corrective patches for any staleness; restoring the snapshot's path
+// sets likewise lets that render re-deliver any path set that reached the
+// client only in a frame dropped at the rebase. Frames committed under an
+// older base are dropped by the client.
 func (s *session[Msg]) restoreSnapshot(ver string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -669,6 +682,7 @@ func (s *session[Msg]) restoreSnapshot(ver string) {
 		s.view = sn.view
 		s.title = sn.title
 		s.ver = ver
+		s.pathSets = maps.Clone(sn.pathSets)
 	}
 }
 
@@ -696,9 +710,9 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 	du := mustParseRelativeURL("domi.App.Preview", dest)
 	next, h := lower(0, view)
 	add := s.addPathSets(h)
-	p := &preview{url: href, dest: du.String(), view: next, title: title, ver: rand.Text()}
+	p := &preview{url: href, dest: du.String(), view: next, title: title, ver: rand.Text(), pathSets: maps.Clone(s.pathSets)}
 	s.tables[p.ver] = typed[Msg](h)
-	p.addView(s.ver, s.view, s.title)
+	p.addView(s.ver, snapshot{view: s.view, title: s.title, pathSets: maps.Clone(s.pathSets)})
 	s.preview = p
 	var effects []effect
 	if len(add) > 0 {
@@ -716,7 +730,11 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 }
 
 // commitPreview installs the outstanding preview as the current view.
-// ver names the outgoing candidate the client is leaving behind.
+// ver names the outgoing candidate the client is leaving behind, cached
+// for its back button. Path-set delivery resets to the preview's baseline
+// — the sets known when it was prefetched, which the client had received
+// before it could commit — so any set stranded in a frame dropped at the
+// rebase is re-delivered by the next render.
 func (s *session[Msg]) commitPreview(ctx context.Context, ver string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -728,12 +746,13 @@ func (s *session[Msg]) commitPreview(ctx context.Context, ver string) {
 	// The committed outgoing view becomes a real navigation snapshot for
 	// the back button; the rest of the log is dropped with the preview.
 	if cand, ok := s.preview.log[ver]; ok {
-		s.cacheSnapshot(ver, cand.view, cand.title)
+		s.cacheSnapshot(ver, cand)
 	}
 	s.base = ver
 	s.view = s.preview.view
 	s.title = s.preview.title
 	s.ver = s.preview.ver
+	s.pathSets = maps.Clone(s.preview.pathSets)
 	s.preview = nil
 }
 
