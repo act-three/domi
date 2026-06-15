@@ -26,6 +26,12 @@ import (
 // rooted in the initial tree.
 const verInitial = "11111111111111111111111111"
 
+// verMutatedSuffix names the tree a client mints when it applies a
+// mutation: the version it acted on, plus this suffix. The
+// server derives the same name from the version the client echoes, so the
+// two agree without it ever travelling on the wire.
+const verMutatedSuffix = "-mutated"
+
 type session[Msg any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -48,6 +54,7 @@ type session[Msg any] struct {
 	active    time.Time
 	subs      map[any]context.CancelFunc // active subscription keys → cancel
 	snapshots treeRing                   // back/forward snapshots, keyed by tree version
+	recent    treeRing                   // recent renders, for applying client mutations
 	preview   *preview                   // the outstanding link preview, or nil
 }
 
@@ -109,6 +116,13 @@ type nav struct {
 
 const snapshotRingSize = 30
 
+// recentRingSize bounds the recent-render ring: a handful of the latest
+// trees a client may still be acting on. It need only cover the brief
+// window an unrelated update can open between a client's last sync and a
+// client mutation based on that sync (plus a short chain of un-acked
+// client mutations); older bases fall back to a reset.
+const recentRingSize = 16
+
 // preview is the session's single outstanding link preview.
 // We store the preview's view as a value so we can generate a new
 // patchset for each new view in the history.
@@ -154,6 +168,10 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	s.title, s.view = title, nodes
 	s.tables[s.ver] = typed[Msg](h)
 	s.addPathSets(h)
+	// Retain the initial render so a client's first client-initiated mutation
+	// can be reconstructed against even if an unrelated update has since
+	// advanced the live version.
+	s.recent.put(s.ver, tree{view: nodes, title: title, pathSets: maps.Clone(s.pathSets)})
 
 	// apply lowers the bare view, so handler addresses are rooted at
 	// domi-root. The initial render must match: embed the
@@ -276,6 +294,9 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 	}
 	s.view = next
 	s.title = title
+	// Retain this render so a client acting on it can be reconstructed
+	// against even after an unrelated update advances the live version.
+	s.recent.put(s.ver, tree{view: next, title: title, pathSets: maps.Clone(s.pathSets)})
 	s.updateSubs(s.app.Subscriptions(ctx))
 	s.spawn(cmd)
 }
@@ -336,6 +357,8 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		// Ver echoes the version id of the tree the client displayed
 		// when a Dispatch event fired. See effect.Ver.
 		Ver string `json:",omitempty"`
+		// Mutations carries optional client-initiated DOM changes.
+		Mutations []vdom.ClientMutation `json:",omitempty"`
 	}
 	if err := json.UnmarshalRead(req.Body, &envelope); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -345,6 +368,11 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 
 	switch envelope.Type {
 	case msgDispatch:
+		// The client can optionally apply DOM mutations before an event.
+		// We must do the same here, to stay in sync with its state.
+		if len(envelope.Mutations) > 0 {
+			s.applyClientMutations(ctx, envelope.Ver, envelope.Mutations)
+		}
 		s.dispatch(ctx, envelope.Ver, envelope.Handler, envelope.Event)
 	case msgURLRequest:
 		u, err := url.Parse(envelope.URL)
@@ -429,6 +457,96 @@ func (s *session[Msg]) dispatch(ctx context.Context, ver, handler string, event 
 		}
 		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
 	}
+}
+
+// applyClientMutations brings the server's tree into line with what the
+// client is showing after it mutates the DOM, so the dispatch that
+// follows diffs forward from there to the authoritative render. The client
+// applied muts to its DOM and rebased onto a derived version; the server
+// reconstructs that same tree and rebases its lineage onto it. When the
+// following render agrees the forward diff is empty and the client's
+// mutation stands with no repaint; when it doesn't, the diff is the
+// correction. If the acted-on tree can't be reconstructed — it named a
+// version the server no longer retains, or a mutation didn't fit — the
+// client is reset onto its derived base to rebuild from the authoritative
+// tree instead.
+func (s *session[Msg]) applyClientMutations(ctx context.Context, ver string, muts []vdom.ClientMutation) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	derived := ver + verMutatedSuffix
+	client, err := s.reconstruct(ver, muts)
+	if err != nil {
+		// Can't reconstruct what the client shows: re-root the lineage at the
+		// derived base and rebuild the client's tree from the authoritative one.
+		s.logger.DebugContext(ctx, "client state reconstruct failed", "ver", ver, "error", err)
+		s.base = derived
+		s.appendFrame(frame{Base: derived, Effects: resetEffects(s.view, s.title, s.ver, maps.Clone(s.pathSets))})
+		return
+	}
+	s.base = derived
+	s.ver = derived
+	s.view = client.view
+	s.title = client.title
+	s.pathSets = client.pathSets
+	// The mutation relocates nodes, not handlers, and the client's DOM
+	// still carries the acted-on render's bindings (the move didn't
+	// re-render them). Carry that table onto the derived version so a
+	// chained mutation echoing it still resolves its handler.
+	if tbl, ok := s.tables[ver]; ok {
+		s.tables[derived] = tbl
+	}
+	// Retain this tree among recent renders so a chained mutation
+	// echoing this derived version can use it as a base.
+	s.recent.put(derived, tree{view: client.view, title: client.title, pathSets: maps.Clone(client.pathSets)})
+}
+
+// reconstruct replays muts onto the tree the client acted on — the live
+// view when ver still names it, else a cached snapshot — to rebuild what
+// the client is now showing. The returned snapshot carries the acted-on
+// version's path sets, so rebasing onto it re-delivers any set the client
+// missed (see restoreSnapshot). It errors if the acted-on tree is gone or
+// a mutation doesn't fit, signalling the caller to reset rather than trust
+// a bad reconstruction. Must be called with s.mu held.
+func (s *session[Msg]) reconstruct(ver string, muts []vdom.ClientMutation) (tree, error) {
+	base, ok := s.actedOn(ver)
+	if !ok {
+		return tree{}, fmt.Errorf("no retained tree for version %q", ver)
+	}
+	v, err := vdom.Apply(base.view, muts)
+	if err != nil {
+		return tree{}, err
+	}
+	return tree{view: v, title: base.title, pathSets: maps.Clone(base.pathSets)}, nil
+}
+
+// actedOn returns the tree named ver: the live view when ver is current,
+// else a recent render (which another update may have moved off of).
+// else a back/forward snapshot. Must be called with s.mu held.
+func (s *session[Msg]) actedOn(ver string) (tree, bool) {
+	if ver == s.ver {
+		return tree{view: s.view, title: s.title, pathSets: s.pathSets}, true
+	}
+	if sn, ok := s.recent.get(ver); ok {
+		return sn, true
+	}
+	return s.snapshots.get(ver)
+}
+
+// resetEffects rebuilds the client's tree from scratch and clears transient
+// client state: re-deliver the path sets so the rebuilt handlers resolve,
+// Reset the view named ver, set the title, and drop any held preview (stale
+// against the new tree). ps is taken as the caller's to keep.
+func resetEffects(view []vdom.Node, title, ver string, ps map[string]pathSet) []effect {
+	efs := []effect{}
+	if len(ps) > 0 {
+		efs = append(efs, effect{Type: effectAddPathSets, PathSets: ps})
+	}
+	return append(efs,
+		effect{Type: effectApplyPatch, Patches: []vdom.Patch{vdom.Reset(view)}, Ver: ver},
+		effect{Type: effectSetTitle, Title: title},
+		effect{Type: effectDeletePreview},
+	)
 }
 
 // table returns the handler bindings for the tree version named ver,
@@ -517,16 +635,7 @@ func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 	rc.Flush()
 
 	if resync, view, title, head, base, ver, ps := s.needsResync(seen); resync {
-		efs := []effect{}
-		if len(ps) > 0 {
-			efs = append(efs, effect{Type: effectAddPathSets, PathSets: ps})
-		}
-		efs = append(efs, []effect{
-			{Type: effectApplyPatch, Patches: []vdom.Patch{vdom.Reset(view)}, Ver: ver},
-			{Type: effectSetTitle, Title: title},
-			{Type: effectDeletePreview},
-		}...)
-		f := frame{seq: head, Base: base, Effects: efs}
+		f := frame{seq: head, Base: base, Effects: resetEffects(view, title, ver, ps)}
 		if err := writeFrame(w, rc, f); err != nil {
 			s.logger.DebugContext(req.Context(), "sse", "error", err)
 			return

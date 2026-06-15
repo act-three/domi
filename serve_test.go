@@ -16,6 +16,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"ily.dev/domi/internal/vdom"
 )
 
 // counterApp is a minimal App used in lifecycle tests. Each Update bumps n
@@ -136,8 +138,10 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 		view:      nodes,
 		active:    time.Now(),
 		snapshots: newTreeRing(snapshotRingSize),
+		recent:    newTreeRing(recentRingSize),
 	}
 	s.tables = map[string]table[Msg]{verInitial: typed[Msg](h)}
+	s.recent.put(verInitial, tree{view: nodes})
 	return s
 }
 
@@ -1584,5 +1588,278 @@ func TestHandleRootMountsWrapperInsideBody(t *testing.T) {
 	}
 	if !strings.Contains(html, "<div>0</div></domi-root></body>") {
 		t.Fatalf("view not mounted inside the wrapper:\n%s", html)
+	}
+}
+
+// --- optimistic mutations (DOM-43) ---
+
+// moveMsg is the message a sortApp's change handler reports: relocate Key
+// ahead of Before (or to the end when Before is empty).
+type moveMsg struct{ Key, Before string }
+
+// sortApp renders a keyed <ul> with a change handler, and reorders its
+// model when the handler's move is accepted. reject models a server that
+// declines the move, so the reconciling diff has to revert it.
+type sortApp struct {
+	order  []string
+	move   moveMsg
+	reject bool
+}
+
+func (a *sortApp) Update(_ context.Context, m moveMsg) Cmd[moveMsg] {
+	if !a.reject {
+		a.order = reorder(a.order, m.Key, m.Before)
+	}
+	return Batch[moveMsg]()
+}
+
+func (a *sortApp) View(context.Context) (string, Node) {
+	return "", Keyed("ul")(On("change", func(jsontext.Value) (moveMsg, error) { return a.move, nil }))(
+		func(yield func(string, Node) bool) {
+			for _, k := range a.order {
+				if !yield(k, Tag("li")()(Text(k))) {
+					return
+				}
+			}
+		})
+}
+
+func (a *sortApp) Subscriptions(context.Context) Sub[moveMsg] { return nil }
+func (a *sortApp) Preview(ctx context.Context, u *url.URL) (string, string, Node) {
+	t, v := a.View(ctx)
+	return u.String(), t, v
+}
+
+// reorder returns order with key moved ahead of before, or to the end when
+// before is empty or absent.
+func reorder(order []string, key, before string) []string {
+	out := slices.DeleteFunc(slices.Clone(order), func(k string) bool { return k == key })
+	at := len(out)
+	if before != "" {
+		if j := slices.Index(out, before); j >= 0 {
+			at = j
+		}
+	}
+	return slices.Insert(out, at, key)
+}
+
+// keyedUL builds the same keyed <ul> a sortApp renders, minus the handler —
+// for constructing expected reconstructions.
+func keyedUL(keys ...string) Node {
+	return Keyed("ul")()(func(yield func(string, Node) bool) {
+		for _, k := range keys {
+			if !yield(k, Tag("li")()(Text(k))) {
+				return
+			}
+		}
+	})
+}
+
+func lastFrame[Msg any](s *session[Msg]) frame {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.log[s.head%uint64(len(s.log))]
+}
+
+func hasApplyPatch(f frame) bool {
+	for _, e := range f.Effects {
+		if e.Type == effectApplyPatch {
+			return true
+		}
+	}
+	return false
+}
+
+// topMove is a one-move mutation set within the top-level keyed list:
+// relocate key ahead of before (or to the end when before is empty).
+func topMove(key, before string) []vdom.ClientMutation {
+	at := []vdom.Step{vdom.Index(0), vdom.Key(key)}
+	return []vdom.ClientMutation{{Op: "move", From: at, To: at, Before: before}}
+}
+
+// optimistic drives an event carrying a client mutation set the way
+// handleEvent does — apply the mutations, then dispatch the event msg on
+// top — and waits out the async handler so callers can assert. The wait
+// mirrors the existing dispatch tests (TODO: a deterministic apply hook).
+func optimistic(s *session[moveMsg], ver, handler string, muts []vdom.ClientMutation) {
+	s.applyClientMutations(s.ctx, ver, muts)
+	s.dispatch(s.ctx, ver, handler, nil)
+	time.Sleep(20 * time.Millisecond)
+}
+
+// reconstruct replays a reported move onto the acted-on tree, rebuilding
+// what the client is showing — the same tree a fresh render of the moved
+// order produces (minus the handler the move carries along).
+func TestSessionReconstructReplaysMove(t *testing.T) {
+	s := newTestSession[moveMsg](&sortApp{order: []string{"a", "b", "c"}})
+	defer s.cancel()
+
+	s.mu.Lock()
+	got, err := s.reconstruct(s.ver, topMove("c", "a"))
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, moved := (&sortApp{order: []string{"c", "a", "b"}}).View(context.Background())
+	want, _ := lower(0, moved)
+	if !reflect.DeepEqual(got.view, want) {
+		t.Fatalf("reconstructed view = %+v,\nwant %+v", got.view, want)
+	}
+}
+
+// reconstruct fails for a version the session no longer holds, so the
+// caller can fall back to a reset rather than trust a bad replay.
+func TestSessionReconstructUnknownVersion(t *testing.T) {
+	s := newTestSession[moveMsg](&sortApp{order: []string{"a", "b"}})
+	defer s.cancel()
+	s.mu.Lock()
+	_, err := s.reconstruct("gone", topMove("a", ""))
+	s.mu.Unlock()
+	if err == nil {
+		t.Fatal("expected an error for an unretained version")
+	}
+}
+
+// When the server's render agrees with the optimistic move, the forward
+// diff is empty: no DOM patch is sent, so the row never visibly reverts.
+// The lineage rebases onto the client's derived version.
+func TestDispatchOptimisticAgreementPaintsOnce(t *testing.T) {
+	app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
+	s := newTestSession[moveMsg](app)
+	defer s.cancel()
+	v0 := s.ver
+	key := soleKey(t, s, v0)
+
+	optimistic(s, v0, key, topMove("c", "a"))
+
+	derived := v0 + verMutatedSuffix
+	s.mu.Lock()
+	base, ver, order := s.base, s.ver, slices.Clone(app.order)
+	s.mu.Unlock()
+	if base != derived || ver != derived {
+		t.Fatalf("base/ver = %q/%q, want both %q", base, ver, derived)
+	}
+	if !slices.Equal(order, []string{"c", "a", "b"}) {
+		t.Fatalf("model order = %v, want [c a b]", order)
+	}
+	if hasApplyPatch(lastFrame(s)) {
+		t.Fatal("agreement emitted a DOM patch; the optimistic row should stand untouched")
+	}
+}
+
+// When the server declines the move, the forward diff is the correction:
+// a DOM patch that returns the row to its server-known place.
+func TestDispatchOptimisticRejectionReverts(t *testing.T) {
+	app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}, reject: true}
+	s := newTestSession[moveMsg](app)
+	defer s.cancel()
+	v0 := s.ver
+	key := soleKey(t, s, v0)
+
+	optimistic(s, v0, key, topMove("c", "a"))
+
+	s.mu.Lock()
+	base, order := s.base, slices.Clone(app.order)
+	s.mu.Unlock()
+	if base != v0+verMutatedSuffix {
+		t.Fatalf("base = %q, want derived", base)
+	}
+	if !slices.Equal(order, []string{"a", "b", "c"}) {
+		t.Fatalf("model order = %v, want unchanged [a b c]", order)
+	}
+	if !hasApplyPatch(lastFrame(s)) {
+		t.Fatal("rejection should emit a corrective DOM patch")
+	}
+}
+
+// A second optimistic move arriving before the first's catch-up chains: the
+// server reconstructs from the tree the first move left, so both stand.
+func TestDispatchOptimisticChains(t *testing.T) {
+	app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
+	s := newTestSession[moveMsg](app)
+	defer s.cancel()
+	v0 := s.ver
+	key := soleKey(t, s, v0)
+
+	// Move 1: c before a → [c a b].
+	optimistic(s, v0, key, topMove("c", "a"))
+	d1 := v0 + verMutatedSuffix
+
+	// Move 2, echoing the first's derived version: b before c → [b c a].
+	app.move = moveMsg{Key: "b", Before: "c"}
+	optimistic(s, d1, key, topMove("b", "c"))
+
+	s.mu.Lock()
+	base, order := s.base, slices.Clone(app.order)
+	s.mu.Unlock()
+	if want := d1 + verMutatedSuffix; base != want {
+		t.Fatalf("base = %q, want twice-derived %q", base, want)
+	}
+	if !slices.Equal(order, []string{"b", "c", "a"}) {
+		t.Fatalf("model order = %v, want [b c a]", order)
+	}
+}
+
+// An unrelated update can advance the live version between a client's last
+// sync and an optimistic action it based on that sync. The acted-on tree is
+// still retained among recent renders, so the server reconstructs and diffs
+// forward — a minimal correction, not a disruptive reset.
+func TestDispatchOptimisticSurvivesRacedUpdate(t *testing.T) {
+	app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
+	s := newTestSession[moveMsg](app)
+	defer s.cancel()
+	v0 := s.ver
+	key := soleKey(t, s, v0)
+
+	// An unrelated update advances the live version off v0.
+	s.apply(s.ctx, moveMsg{Key: "a", Before: ""}, nil)
+	if s.ver == v0 {
+		t.Fatal("setup: expected the unrelated update to mint a fresh version")
+	}
+
+	// The client acted on v0 — still retained — not the live version.
+	optimistic(s, v0, key, topMove("c", "a"))
+
+	derived := v0 + verMutatedSuffix
+	s.mu.Lock()
+	base := s.base
+	_, rebased := s.recent.get(derived)
+	s.mu.Unlock()
+	if base != derived {
+		t.Fatalf("base = %q, want derived %q", base, derived)
+	}
+	if !rebased {
+		t.Fatal("expected reconstruct to rebase onto the optimistic tree, not reset")
+	}
+}
+
+// Only when the acted-on tree is genuinely gone — evicted from the recent
+// ring (its handler table outlives it) and never snapshotted — does the
+// action run and the client reset onto its derived base to rebuild from the
+// authoritative tree.
+func TestDispatchOptimisticResetsWhenTreeGone(t *testing.T) {
+	app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
+	s := newTestSession[moveMsg](app)
+	defer s.cancel()
+	v0 := s.ver
+	key := soleKey(t, s, v0)
+
+	// An unrelated update advances the live version, then enough renders to
+	// evict v0's tree from the recent ring entirely.
+	s.apply(s.ctx, moveMsg{Key: "a", Before: ""}, nil) // [a b c] → [b c a]
+	s.mu.Lock()
+	for i := 0; i < recentRingSize; i++ {
+		s.recent.put(fmt.Sprintf("filler-%d", i), tree{})
+	}
+	s.mu.Unlock()
+
+	optimistic(s, v0, key, topMove("c", "a"))
+
+	f := lastFrame(s)
+	if f.Base != v0+verMutatedSuffix {
+		t.Fatalf("reset frame base = %q, want the client's derived base", f.Base)
+	}
+	if !hasApplyPatch(f) {
+		t.Fatal("reset should rebuild the client's tree with a DOM patch")
 	}
 }
