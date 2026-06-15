@@ -130,11 +130,12 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 			onURLChange:  func(*url.URL) Msg { var zero Msg; return zero },
 			onURLRequest: func(*url.URL, bool) Msg { var zero Msg; return zero },
 		},
-		log:    make([]frame, replayWindow),
-		base:   verInitial,
-		ver:    verInitial,
-		view:   nodes,
-		active: time.Now(),
+		log:       make([]frame, replayWindow),
+		base:      verInitial,
+		ver:       verInitial,
+		view:      nodes,
+		active:    time.Now(),
+		snapshots: newTreeRing(snapshotRingSize),
 	}
 	s.tables = map[string]table[Msg]{verInitial: typed[Msg](h)}
 	return s
@@ -803,23 +804,23 @@ func TestUpdateSubsNilCancelsAll(t *testing.T) {
 	}
 }
 
-// apply with a push nav caches the outgoing s.view (not the new view)
+// apply with a push nav stores the outgoing s.view (not the new view)
 // under the outgoing tree's ver.
-func TestSessionSnapshotCacheOnApply(t *testing.T) {
+func TestSessionSnapshotStoredOnApply(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
 	origView := s.view
 	origVer := s.ver
 	s.apply(s.ctx, 1, &nav{push: "/about"})
 	s.mu.Lock()
-	sn, ok := s.snapshots[origVer]
+	sn, ok := s.snapshots.get(origVer)
 	s.mu.Unlock()
 	if !ok {
-		t.Fatal("snapshot not cached under the outgoing ver after apply with push nav")
+		t.Fatal("snapshot not stored under the outgoing ver after apply with push nav")
 	}
-	// The cached view should be the outgoing view, not the new one.
+	// The stored view should be the outgoing view, not the new one.
 	if len(sn.view) != len(origView) {
-		t.Fatalf("cached snapshot should be outgoing view (len %d), got len %d", len(origView), len(sn.view))
+		t.Fatalf("stored snapshot should be outgoing view (len %d), got len %d", len(origView), len(sn.view))
 	}
 }
 
@@ -936,9 +937,9 @@ func TestSessionPrefetchEmitsSetPreview(t *testing.T) {
 	if _, ok := s.preview.log[s.ver]; !ok {
 		t.Fatalf("candidate (outgoing) view %q not recorded in the preview log", s.ver)
 	}
-	// A speculative preview must not touch the navigation snapshot cache.
-	if _, ok := s.snapshots[s.ver]; ok {
-		t.Fatalf("candidate %q leaked into the snapshot cache", s.ver)
+	// A speculative preview must not touch the navigation snapshot history.
+	if _, ok := s.snapshots.get(s.ver); ok {
+		t.Fatalf("candidate %q leaked into the snapshot history", s.ver)
 	}
 }
 
@@ -1010,7 +1011,7 @@ func TestSessionPrefetchBadDestPanics(t *testing.T) {
 // While a preview is outstanding, each later frame is augmented with a
 // SetPreview that rebases the preview onto the new view (so the client
 // always holds a clean patchset from its current DOM to the preview), and
-// caches that view as a fresh candidate outgoing snapshot.
+// stores that view as a fresh candidate outgoing snapshot.
 func TestSessionPreviewRebasedOnApply(t *testing.T) {
 	s := newTestSession[int](&previewApp{route: "/"})
 	defer s.cancel()
@@ -1084,10 +1085,10 @@ func TestSessionCommitPreviewInstallsView(t *testing.T) {
 		t.Fatalf("committed view = %+v, want the previewed page", s.view)
 	}
 	// The outgoing page (the view at prefetch) is promoted into the
-	// snapshot cache under the committed candidate id, for back nav.
-	sn, ok := s.snapshots[cand]
+	// snapshot history under the committed candidate id, for back nav.
+	sn, ok := s.snapshots.get(cand)
 	if !ok {
-		t.Fatal("committed outgoing view should move into the snapshot cache")
+		t.Fatal("committed outgoing view should move into the snapshot history")
 	}
 	if outgoing, _ := lower(0, Tag("div")()(Text("/-0"))); !reflect.DeepEqual(sn.view, outgoing) {
 		t.Fatalf("promoted snapshot view = %+v, want the outgoing page", sn.view)
@@ -1182,7 +1183,7 @@ func TestSessionPrefetchSupersedes(t *testing.T) {
 	}
 }
 
-// restoreSnapshot swaps s.view and s.title to the cached values
+// restoreSnapshot swaps s.view and s.title to the stored values
 // and updates the epoch.
 func TestSessionSnapshotRestore(t *testing.T) {
 	s := newTestSession(&counterApp{})
@@ -1190,9 +1191,9 @@ func TestSessionSnapshotRestore(t *testing.T) {
 	origView := s.view
 	origTitle := s.title
 
-	// Cache a different view under its ver.
+	// Store a different view under its ver.
 	otherView, _ := lower(0, Tag("div")()(Text("other")))
-	s.cacheSnapshot("ver1", snapshot{view: otherView, title: "other title"})
+	s.snapshots.put("ver1", tree{view: otherView, title: "other title"})
 
 	s.restoreSnapshot("ver1")
 	if s.title != "other title" {
@@ -1234,7 +1235,7 @@ func TestSessionSnapshotRestoreResetsPathSets(t *testing.T) {
 
 	known := pathSet{{"currentTarget", "value"}}
 	s.pathSets = map[string]pathSet{known.key(): known}
-	s.cacheSnapshot("ver1", snapshot{view: s.view, title: s.title, pathSets: maps.Clone(s.pathSets)})
+	s.snapshots.put("ver1", tree{view: s.view, title: s.title, pathSets: maps.Clone(s.pathSets)})
 
 	// A later frame delivers a new set, but the client drops it (it has
 	// rebased away). On the server the set still lands in s.pathSets.
@@ -1250,11 +1251,11 @@ func TestSessionSnapshotRestoreResetsPathSets(t *testing.T) {
 		t.Fatal("restore dropped a set the snapshot captured; the next render would needlessly re-send it")
 	}
 
-	// The restore must not alias the cached snapshot, or a later delivery
+	// The restore must not alias the stored snapshot, or a later delivery
 	// would leak in and a second restore would resurrect it.
 	s.pathSets[stranded.key()] = stranded
-	if _, ok := s.snapshots["ver1"].pathSets[stranded.key()]; ok {
-		t.Fatal("restore aliased the cached snapshot's path sets")
+	if sn, _ := s.snapshots.get("ver1"); sn.pathSets[stranded.key()] != nil {
+		t.Fatal("restore aliased the stored snapshot's path sets")
 	}
 }
 
@@ -1288,57 +1289,57 @@ func TestSessionCommitPreviewResetsPathSets(t *testing.T) {
 	}
 }
 
-// The snapshot cache evicts the oldest entries when full.
+// The snapshot history evicts the oldest entries when full.
 func TestSessionSnapshotEviction(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
 	view, _ := lower(0, Tag("div")()(Text("x")))
-	for i := range snapshotCacheSize + 5 {
-		s.cacheSnapshot(fmt.Sprintf("s%d", i), snapshot{view: view, title: "t"})
+	for i := range snapshotRingSize + 5 {
+		s.snapshots.put(fmt.Sprintf("s%d", i), tree{view: view, title: "t"})
 	}
-	if len(s.snapshots) != snapshotCacheSize {
-		t.Fatalf("expected %d snapshots, got %d", snapshotCacheSize, len(s.snapshots))
+	if s.snapshots.len() != snapshotRingSize {
+		t.Fatalf("expected %d snapshots, got %d", snapshotRingSize, s.snapshots.len())
 	}
 	// The first 5 should be evicted.
 	for i := range 5 {
-		if _, ok := s.snapshots[fmt.Sprintf("s%d", i)]; ok {
+		if _, ok := s.snapshots.get(fmt.Sprintf("s%d", i)); ok {
 			t.Fatalf("s%d should have been evicted", i)
 		}
 	}
 	// The rest should be present.
-	for i := 5; i < snapshotCacheSize+5; i++ {
-		if _, ok := s.snapshots[fmt.Sprintf("s%d", i)]; !ok {
+	for i := 5; i < snapshotRingSize+5; i++ {
+		if _, ok := s.snapshots.get(fmt.Sprintf("s%d", i)); !ok {
 			t.Fatalf("s%d should be present", i)
 		}
 	}
 }
 
-// Re-caching a ver refreshes its recency rather than consuming a second
-// eviction slot: a tree pushed again moves to the young end of the ring
-// instead of aging out at its first caching's position, and the hole it
+// Re-putting a ver refreshes its recency rather than consuming a second
+// eviction slot: a tree put again moves to the young end of the ring
+// instead of aging out at its first put's position, and the hole it
 // leaves behind doesn't evict an innocent neighbor.
-func TestSessionSnapshotRecachingRefreshesAge(t *testing.T) {
+func TestSessionSnapshotRePutRefreshesAge(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
 	view, _ := lower(0, Tag("div")()(Text("x")))
-	s.cacheSnapshot("a", snapshot{view: view, title: "t"})
-	for i := range snapshotCacheSize - 2 {
-		s.cacheSnapshot(fmt.Sprintf("s%d", i), snapshot{view: view, title: "t"})
+	s.snapshots.put("a", tree{view: view, title: "t"})
+	for i := range snapshotRingSize - 2 {
+		s.snapshots.put(fmt.Sprintf("s%d", i), tree{view: view, title: "t"})
 	}
-	// "a" is the oldest entry. Re-cache it, then add two more distinct
+	// "a" is the oldest entry. Put it again, then add two more distinct
 	// vers: the first recycles the hole "a" left, the second evicts the
 	// oldest survivor — s0, not "a".
-	s.cacheSnapshot("a", snapshot{view: view, title: "t"})
-	s.cacheSnapshot("y", snapshot{view: view, title: "t"})
-	s.cacheSnapshot("z", snapshot{view: view, title: "t"})
-	if _, ok := s.snapshots["a"]; !ok {
-		t.Fatal("re-cached ver evicted at its original age")
+	s.snapshots.put("a", tree{view: view, title: "t"})
+	s.snapshots.put("y", tree{view: view, title: "t"})
+	s.snapshots.put("z", tree{view: view, title: "t"})
+	if _, ok := s.snapshots.get("a"); !ok {
+		t.Fatal("re-put ver evicted at its original age")
 	}
-	if _, ok := s.snapshots["s0"]; ok {
+	if _, ok := s.snapshots.get("s0"); ok {
 		t.Fatal("oldest distinct ver should have been evicted")
 	}
-	if len(s.snapshots) != snapshotCacheSize {
-		t.Fatalf("expected %d snapshots, got %d", snapshotCacheSize, len(s.snapshots))
+	if s.snapshots.len() != snapshotRingSize {
+		t.Fatalf("expected %d snapshots, got %d", snapshotRingSize, s.snapshots.len())
 	}
 }
 

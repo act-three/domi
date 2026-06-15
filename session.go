@@ -35,22 +35,20 @@ type session[Msg any] struct {
 	sv     *server[Msg]
 	logger *slog.Logger
 
-	mu           sync.Mutex // protects the following fields
-	title        string
-	view         []vdom.Node
-	ver          string                // version id naming the current view; see effect.Ver
-	tables       map[string]table[Msg] // tree version → its handler bindings; see dispatch
-	pathSets     map[string]pathSet    // items already delivered to the client
-	log          []frame               // fixed-size ring; log[seq%len(log)] holds frame seq
-	head         uint64                // seq of the most recent frame; 0 if none
-	base         string                // tree version the patch lineage builds on
-	sse          *sseAttachment        // nil if no current consumer
-	active       time.Time
-	subs         map[any]context.CancelFunc // active subscription keys → cancel
-	snapshots    map[string]snapshot        // snapshot ver → cached vdom
-	snapshotAge  []string                   // ring of vers in insertion order, for eviction
-	snapshotNext int                        // next write position in snapshotAge
-	preview      *preview                   // the outstanding link preview, or nil
+	mu        sync.Mutex // protects the following fields
+	title     string
+	view      []vdom.Node
+	ver       string                // version id naming the current view; see effect.Ver
+	tables    map[string]table[Msg] // tree version → its handler bindings; see dispatch
+	pathSets  map[string]pathSet    // items already delivered to the client
+	log       []frame               // fixed-size ring; log[seq%len(log)] holds frame seq
+	head      uint64                // seq of the most recent frame; 0 if none
+	base      string                // tree version the patch lineage builds on
+	sse       *sseAttachment        // nil if no current consumer
+	active    time.Time
+	subs      map[any]context.CancelFunc // active subscription keys → cancel
+	snapshots treeRing                   // back/forward snapshots, keyed by tree version
+	preview   *preview                   // the outstanding link preview, or nil
 }
 
 // Each new SSE request builds a fresh sseAttachment and evicts any
@@ -109,19 +107,7 @@ type nav struct {
 	load    string // Load target URL (full-page navigation), or empty
 }
 
-const snapshotCacheSize = 30
-
-// A snapshot captures the client-visible state at a tree version: its
-// view and title, and the path sets delivered to the client as of that
-// version. Restoring one (see restoreSnapshot) re-roots the lineage and
-// resets path-set delivery to the captured set, so the next render
-// re-sends any path set that reached the client only in a frame later
-// dropped at the rebase.
-type snapshot struct {
-	view     []vdom.Node
-	title    string
-	pathSets map[string]pathSet
-}
+const snapshotRingSize = 30
 
 // preview is the session's single outstanding link preview.
 // We store the preview's view as a value so we can generate a new
@@ -136,8 +122,8 @@ type preview struct {
 	// log holds, keyed by its ver, each outgoing view the client would
 	// leave by clicking after a given frame, kept for its back button.
 	// When the client navigates to a preview, the chosen candidate is
-	// added to the snapshot cache.
-	log map[string]snapshot
+	// added to the snapshot history.
+	log map[string]tree
 	// pathSets is the set delivered to the client when this preview was
 	// prefetched. Committing rebases onto the preview (see commitPreview),
 	// so this becomes the baseline the next render re-delivers from.
@@ -146,13 +132,13 @@ type preview struct {
 
 // addView logs the outgoing view named ver as a back-button candidate.
 // It returns false if there's no remaining capacity.
-func (p *preview) addView(ver string, sn snapshot) bool {
+func (p *preview) addView(ver string, sn tree) bool {
 	const cap = 128
 	if len(p.log) >= cap {
 		return false
 	}
 	if p.log == nil {
-		p.log = make(map[string]snapshot)
+		p.log = map[string]tree{}
 	}
 	p.log[ver] = sn
 	return true
@@ -255,7 +241,7 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 		// Goes before ApplyPatches+SetTitle to snapshot outgoing state.
 		switch {
 		case n.push != "":
-			s.cacheSnapshot(oldVer, snapshot{view: s.view, title: s.title, pathSets: maps.Clone(s.pathSets)})
+			s.snapshots.put(oldVer, tree{view: s.view, title: s.title, pathSets: maps.Clone(s.pathSets)})
 			effects = append(effects, effect{Type: effectPushURL, URL: n.push})
 		case n.replace != "":
 			effects = append(effects, effect{Type: effectReplaceURL, URL: n.replace})
@@ -270,7 +256,7 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 	}
 
 	if s.preview != nil && !s.preview.frozen && len(patches) > 0 {
-		if s.preview.addView(s.ver, snapshot{view: next, title: title, pathSets: maps.Clone(s.pathSets)}) {
+		if s.preview.addView(s.ver, tree{view: next, title: title, pathSets: maps.Clone(s.pathSets)}) {
 			effects = append(effects, effect{
 				Type:    effectSetPreview,
 				Patches: vdom.Diff(next, s.preview.view),
@@ -639,35 +625,8 @@ func (s *session[Msg]) framesSince(seen uint64) []frame {
 	return out
 }
 
-// cacheSnapshot stores snapshot sn, named by tree version ver, evicting
-// the oldest entry if the cache is at capacity. Re-caching a ver already
-// present refreshes its recency rather than consuming a second eviction
-// slot. Must be called with s.mu held.
-func (s *session[Msg]) cacheSnapshot(ver string, sn snapshot) {
-	if s.snapshots == nil {
-		s.snapshots = make(map[string]snapshot, snapshotCacheSize)
-		s.snapshotAge = make([]string, snapshotCacheSize)
-	}
-	if _, ok := s.snapshots[ver]; ok {
-		// Clear the old ring slot — a later write recycles the hole —
-		// and fall through to re-append at the young end.
-		for i, old := range s.snapshotAge {
-			if old == ver {
-				s.snapshotAge[i] = ""
-				break
-			}
-		}
-	}
-	if old := s.snapshotAge[s.snapshotNext]; old != "" {
-		delete(s.snapshots, old)
-	}
-	s.snapshotAge[s.snapshotNext] = ver
-	s.snapshotNext = (s.snapshotNext + 1) % snapshotCacheSize
-	s.snapshots[ver] = sn
-}
-
 // restoreSnapshot replaces s.view, s.title, and s.pathSets with the
-// cached state named ver, if present, and roots a new patch lineage
+// stored state named ver, if present, and roots a new patch lineage
 // there. The next apply cycle diffs against the restored view, producing
 // corrective patches for any staleness; restoring the snapshot's path
 // sets likewise lets that render re-deliver any path set that reached the
@@ -678,7 +637,7 @@ func (s *session[Msg]) restoreSnapshot(ver string) {
 	defer s.mu.Unlock()
 	s.base = ver
 	s.preview = nil
-	if sn, ok := s.snapshots[ver]; ok {
+	if sn, ok := s.snapshots.get(ver); ok {
 		s.view = sn.view
 		s.title = sn.title
 		s.ver = ver
@@ -712,7 +671,7 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 	add := s.addPathSets(h)
 	p := &preview{url: href, dest: du.String(), view: next, title: title, ver: rand.Text(), pathSets: maps.Clone(s.pathSets)}
 	s.tables[p.ver] = typed[Msg](h)
-	p.addView(s.ver, snapshot{view: s.view, title: s.title, pathSets: maps.Clone(s.pathSets)})
+	p.addView(s.ver, tree{view: s.view, title: s.title, pathSets: maps.Clone(s.pathSets)})
 	s.preview = p
 	var effects []effect
 	if len(add) > 0 {
@@ -730,7 +689,7 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 }
 
 // commitPreview installs the outstanding preview as the current view.
-// ver names the outgoing candidate the client is leaving behind, cached
+// ver names the outgoing candidate the client is leaving behind, stored
 // for its back button. Path-set delivery resets to the preview's baseline
 // — the sets known when it was prefetched, which the client had received
 // before it could commit — so any set stranded in a frame dropped at the
@@ -746,7 +705,7 @@ func (s *session[Msg]) commitPreview(ctx context.Context, ver string) {
 	// The committed outgoing view becomes a real navigation snapshot for
 	// the back button; the rest of the log is dropped with the preview.
 	if cand, ok := s.preview.log[ver]; ok {
-		s.cacheSnapshot(ver, cand)
+		s.snapshots.put(ver, cand)
 	}
 	s.base = ver
 	s.view = s.preview.view
