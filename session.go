@@ -439,7 +439,7 @@ func typed[Msg any](h handlers) table[Msg] {
 func (s *session[Msg]) dispatch(ctx context.Context, ver, handler string, event jsontext.Value) {
 	table, ok := s.table(ver)
 	if !ok {
-		s.logger.DebugContext(ctx, "unknown tree version", "ver", ver)
+		s.logger.WarnContext(ctx, "unknown tree version", "ver", ver)
 		return
 	}
 	for key := range strings.SplitSeq(handler, ",") {
@@ -479,7 +479,7 @@ func (s *session[Msg]) applyClientMutations(ctx context.Context, ver string, mut
 	if err != nil {
 		// Can't reconstruct what the client shows: re-root the lineage at the
 		// derived base and rebuild the client's tree from the authoritative one.
-		s.logger.DebugContext(ctx, "client state reconstruct failed", "ver", ver, "error", err)
+		s.logger.WarnContext(ctx, "client state reconstruct failed", "ver", ver, "error", err)
 		s.base = derived
 		s.appendFrame(frame{Base: derived, Effects: resetEffects(s.view, s.title, s.ver, maps.Clone(s.pathSets))})
 		return
