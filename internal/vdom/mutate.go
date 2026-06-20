@@ -42,7 +42,11 @@ func (s *Step) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 	case '"':
 		s.key = tok.String()
 	case '0':
-		s.index = int(tok.Int())
+		i, err := tok.Int()
+		if err != nil {
+			return err
+		}
+		s.index = int(i)
 	default:
 		return fmt.Errorf("vdom: move path step is a %q, want a key or index", tok.Kind())
 	}

@@ -5,9 +5,6 @@ on:
   push:
     branches: [main]
 
-env:
-  GOEXPERIMENT: jsonv2
-
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -16,7 +13,10 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          # setup-go can't resolve the "1.27rc1" toolchain directive in go.mod;
+          # pin the release candidate explicitly. Revert to go-version-file once
+          # Go 1.27 ships.
+          go-version: 1.27.0-rc.1
           cache: true
 
       - uses: actions/setup-node@v4
