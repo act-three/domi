@@ -316,26 +316,19 @@ func TestSetAttrEmptyValueAppliesAsEmptyString(t *testing.T) {
 	}
 }
 
-// TestSetTextEmptyValueAppliesAsEmptyString pins the JS-side coercion
-// for SetText patches whose value is the empty string — the text
-// counterpart to TestSetAttrEmptyValueAppliesAsEmptyString. This arises
-// whenever a text node's content transitions to empty (e.g. an
-// interpolated value blanks out): the node persists as an empty text
-// node rather than being removed, and the Go wire format omits the
-// `Value` field via omitempty when it's "". Without nullish-coalescing
-// on the JS side the applier would write `undefined` to nodeValue and
-// the DOM would show the literal string "undefined".
-func TestSetTextEmptyValueAppliesAsEmptyString(t *testing.T) {
+// TestTextToEmptyRemovesTextNode pins the canonical DOM shape for a text
+// node whose content transitions to empty: rendered HTML parses without
+// an empty text child, so the patch removes the text node instead of
+// setting it to "".
+func TestTextToEmptyRemovesTextNode(t *testing.T) {
 	a := startBunApplier(t)
 
 	old := []Node{el("div", tx("hi"))}
 	new := []Node{el("div", tx(""))}
 
 	patches := diffList(old, new)
-	// Sanity: the change really is a single SetText with an empty value,
-	// so the omitempty wire path is the thing under test.
-	if len(patches) != 1 || patches[0].Op != "SetText" || patches[0].Value != "" {
-		t.Fatalf("expected one empty-valued SetText, got %+v", patches)
+	if len(patches) != 1 || patches[0].Op != "RemoveChild" || patches[0].Index == nil || *patches[0].Index != 0 {
+		t.Fatalf("expected one RemoveChild, got %+v", patches)
 	}
 
 	gotHTML, err := a.apply(renderList(old), patches)

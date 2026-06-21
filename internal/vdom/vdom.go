@@ -210,21 +210,30 @@ func combineSep(name string) (string, bool) {
 // node, matching the shape an HTML parser produces: it merges adjacent
 // text nodes when it reparses the rendered output, so the vdom child
 // list must merge them too or positional indices drift off the live DOM.
+// Empty text nodes are dropped for the same reason: they produce no DOM
+// node when parsed from rendered HTML.
 //
 // Merging also keeps later edits cheap: one combined Text node lets a
 // content change ride a single in-place update. Element nodes never
 // participate here.
 //
-// Returns the input slice unchanged when no coalescing is needed.
+// Returns the input slice unchanged when no coalescing or empty-text
+// dropping is needed.
 func coalesceText(children []Node) []Node {
-	merged := false
-	for i := 1; i < len(children); i++ {
-		if isText(children[i-1]) && isText(children[i]) {
-			merged = true
+	changed := false
+	for _, c := range children {
+		if t, ok := c.(Text); ok && t == "" {
+			changed = true
 			break
 		}
 	}
-	if !merged {
+	for i := 1; i < len(children); i++ {
+		if isText(children[i-1]) && isText(children[i]) {
+			changed = true
+			break
+		}
+	}
+	if !changed {
 		return children
 	}
 	out := make([]Node, 0, len(children))
