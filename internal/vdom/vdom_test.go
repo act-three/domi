@@ -1,6 +1,9 @@
 package vdom
 
-import "testing"
+import (
+	"slices"
+	"testing"
+)
 
 func TestRegisterCombining(t *testing.T) {
 	RegisterCombining("data-test", ",")
@@ -17,6 +20,61 @@ func TestRegisterCombining(t *testing.T) {
 	}
 	if got[0].Value != "x,y,z" {
 		t.Fatalf("got %q, want %q", got[0].Value, "x,y,z")
+	}
+}
+
+// nodeSummary renders a child list into a compact, comparable form so a
+// table test can assert the post-coalesce shape: a text node shows as
+// "t:" + its content, an element as "e:" + its tag.
+func nodeSummary(nodes []Node) []string {
+	out := make([]string, len(nodes))
+	for i, n := range nodes {
+		switch x := n.(type) {
+		case Text:
+			out[i] = "t:" + string(x)
+		case Element:
+			out[i] = "e:" + x.tag
+		}
+	}
+	return out
+}
+
+// coalesceText canonicalizes a child list to match the shape an HTML
+// parser yields when it reparses the rendered output: adjacent text
+// merges into one node and empty text — which renders to nothing and so
+// parses to no node — is dropped. Whitespace-only text is real text the
+// parser keeps, so it survives.
+func TestCoalesceText(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []Node
+		want []string
+	}{
+		{"lone empty text dropped", []Node{tx("")}, nil},
+		{"empty between elements dropped", []Node{el("a"), tx(""), el("b")}, []string{"e:a", "e:b"}},
+		{"mixed run keeps only non-empty", []Node{tx(""), tx("hi"), tx("")}, []string{"t:hi"}},
+		{"adjacent text merges", []Node{tx("Count: "), tx("5")}, []string{"t:Count: 5"}},
+		{"whitespace-only text survives", []Node{tx(" ")}, []string{"t: "}},
+		{"whitespace merges with text", []Node{tx("a"), tx(" "), tx("b")}, []string{"t:a b"}},
+		{"text is not merged across an element", []Node{tx("a"), el("x"), tx("b")}, []string{"t:a", "e:x", "t:b"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := nodeSummary(coalesceText(tt.in))
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// coalesceText returns the input slice untouched when nothing needs
+// merging or dropping, so an unchanged child list costs no allocation.
+func TestCoalesceTextNoChangeReturnsInput(t *testing.T) {
+	in := []Node{el("a"), tx("hi"), el("b")}
+	out := coalesceText(in)
+	if &out[0] != &in[0] {
+		t.Fatal("no-op path should return input slice unchanged")
 	}
 }
 

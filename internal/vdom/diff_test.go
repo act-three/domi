@@ -95,6 +95,15 @@ func TestCoalescedTextChangeIsSetText(t *testing.T) {
 	}
 }
 
+func TestEmptyTextChangeInsertsTextNode(t *testing.T) {
+	a := el("div", tx(""))
+	b := el("div", tx("hi"))
+	got := diffOne(a, b)
+	if len(got) != 1 || got[0].Op != "InsertChild" || got[0].Index == nil || *got[0].Index != 0 || got[0].HTML != "hi" {
+		t.Fatalf("expected InsertChild text, got %+v", got)
+	}
+}
+
 // Changing a node's kind (text → element) is structural: it replaces
 // the subtree rather than editing text in place.
 func TestTextToElementReplaces(t *testing.T) {
