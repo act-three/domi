@@ -187,6 +187,41 @@ func TestAttrRemoved(t *testing.T) {
 	}
 }
 
+func TestPositionalReorderPatchesAttrs(t *testing.T) {
+	row := func(href, title string, selected bool) Element {
+		a := []Attr{at("href", href)}
+		if selected {
+			a = append(a, at("data-selected", ""))
+		}
+		return NewElement("a", attrs(a...), []Node{tx(title)}, nil)
+	}
+	a := el("div",
+		row("/app/movies/mo123", "New Movie", true),
+		row("/app/movies/star-wars", "Star Wars", false),
+	)
+	b := el("div",
+		row("/app/movies/star-wars", "Star Wars", false),
+		row("/app/movies/star-wars-mo123", "Star Wars", true),
+	)
+	got := diffOne(a, b)
+
+	want := []patch{
+		{Op: "RemoveAttr", Path: []int{0}, Name: "data-selected"},
+		{Op: "SetAttr", Path: []int{0}, Name: "href", Value: "/app/movies/star-wars"},
+		{Op: "SetText", Path: []int{0, 0}, Value: "Star Wars"},
+		{Op: "SetAttr", Path: []int{1}, Name: "data-selected"},
+		{Op: "SetAttr", Path: []int{1}, Name: "href", Value: "/app/movies/star-wars-mo123"},
+	}
+	if !slices.EqualFunc(got, want, func(a, b patch) bool {
+		return a.Op == b.Op &&
+			slices.Equal(a.Path, b.Path) &&
+			a.Name == b.Name &&
+			a.Value == b.Value
+	}) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
 func TestReplacePatchCarriesHTML(t *testing.T) {
 	a := el("div")
 	b := el("span", tx("hi"))
