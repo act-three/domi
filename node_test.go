@@ -269,6 +269,44 @@ func TestRegisterCombining(t *testing.T) {
 	}
 }
 
+// ---- variadic Name tests ----
+//
+// A single Name(...) call with multiple values lowers to one attr per
+// value, so it resolves through the same combining rules as repeated
+// calls. These pin that equivalence at the builder's own signature.
+
+func TestNameVariadicClass(t *testing.T) {
+	got := vdom.Render(lowerOneNode(Tag("div")(Name("class")("a", "b"))()))
+	want := `<div class="a b"></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestNameVariadicStyle(t *testing.T) {
+	got := vdom.Render(lowerOneNode(Tag("div")(Name("style")("color:red", "font-weight:bold"))()))
+	want := `<div style="color:red;font-weight:bold"></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestNameZeroArgBare(t *testing.T) {
+	got := vdom.Render(lowerOneNode(Tag("div")(Name("disabled")())()))
+	want := `<div disabled></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestNameVariadicFirstWins(t *testing.T) {
+	got := vdom.Render(lowerOneNode(Tag("div")(Name("id")("first", "second"))()))
+	want := `<div id="first"></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 // ---- UnsafeParseRaw tests ----
 
 // renderTree lowers a node and renders it (and any fragment siblings)

@@ -59,9 +59,24 @@ func (attr) isAttr() {}
 
 // Name returns a builder for an HTML attribute with the given name. (e.g. class).
 // Call it to obtain an [Attr] with the given value (e.g. class="foo").
-func Name(name string) func(value string) Attr {
-	return func(value string) Attr {
-		return attr{vdom.Attr{Name: name, Value: value}, nil}
+//
+// Providing multiple value arguments produces multiple attribute declarations,
+// which combine using the same rules described on [Attr] and [RegisterCombining].
+// In particular, for most attributes, only the first value will be used.
+// If zero value arguments are provided, Name emits a bare attribute name.
+func Name(name string) func(value ...string) Attr {
+	return func(value ...string) Attr {
+		switch len(value) {
+		case 0:
+			return attr{vdom.Attr{Name: name}, nil}
+		case 1:
+			return attr{vdom.Attr{Name: name, Value: value[0]}, nil}
+		}
+		var a []Attr
+		for _, v := range value {
+			a = append(a, attr{vdom.Attr{Name: name, Value: v}, nil})
+		}
+		return Group(a...)
 	}
 }
 
