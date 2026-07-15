@@ -4,8 +4,9 @@ import "context"
 
 type sessionIDKey struct{}
 
-// SessionID returns the session ID inside an [App] or [Cmd],
-// otherwise the empty string.
+// SessionID returns the session ID if present in ctx.
+// A session ID is present in [App] methods
+// and the constructor given to [Handler].
 func SessionID(ctx context.Context) string {
 	v, _ := ctx.Value(sessionIDKey{}).(string)
 	return v

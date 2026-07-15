@@ -25,31 +25,26 @@ var clientJSPath = func() string {
 
 // Handler serves an [App].
 //
-// At the start of a session,
-// the returned Handler calls f,
-// providing the initial request URL,
-// to obtain a fresh App instance plus an initial [Cmd].
+// On each initial page load, Handler calls f with the request URL.
+// The callback f is responsible for constructing an App instance
+// and returning any initial [Cmd] to be run.
 // The context carries the session ID (see [SessionID])
 // and is cancelled when the session ends.
-// This instance is associated with the session,
-// so each browser gets its own independent state.
 //
 // When the user clicks a link,
-// the framework intercepts the navigation
+// domi intercepts the navigation
 // and calls onURLRequest to produce a Msg.
-// The app's Update decides how to handle the request,
+// Param internal indicates whether the link target
+// is to the same origin as the current page.
+// Method Update decides how to handle the request,
 // typically by returning a [PushURL] or [ReplaceURL] command.
 //
-// Internal is true when the link target
-// shares the current page's origin (same scheme, host, and port).
-// For internal requests, the app typically returns a [PushURL] command;
-// for external requests, it will often navigate with a full page load.
-//
 // When the URL changes
-// (from a navigation command or browser back/forward),
-// the framework calls onURLChange to produce a Msg.
-// The app's Update typically translates the URL into a route
-// and updates its state accordingly.
+// (from a navigation command or the browser's back and forward buttons),
+// domi calls onURLChange to produce a Msg.
+// The app's Update method then updates its state accordingly.
+//
+// Option values provide further control over Handler's behavior.
 func Handler[Msg any, A App[Msg]](
 	f func(context.Context, *url.URL) (A, Cmd[Msg]),
 	onURLRequest func(u *url.URL, internal bool) Msg,

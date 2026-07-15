@@ -8,10 +8,9 @@ import (
 	"ily.dev/domi/internal/vdom"
 )
 
-// A Node is an HTML node (text or an element)
-// or an HTML fragment (a sequence of nodes).
+// A Node is text, an HTML element, or a fragment (a sequence of nodes).
 //
-// The zero value of Node (nil) is an empty fragment.
+// A nil Node is an empty fragment.
 type Node interface {
 	isNode()
 }
@@ -31,26 +30,48 @@ type text vdom.Text
 func (text) isNode()                              {}
 func (t text) lowered(addr) (vdom.Node, handlers) { return vdom.Text(t), nil }
 
-// Text returns a text node. The string is escaped for safe embedding
-// in HTML when rendered; use [UnsafeParseRaw] for trusted HTML markup.
+// Text constructs a text node.
+//
+// The contents of s will be preserved exactly
+// in the browser's DOM text node,
+// so Text cannot be used to construct HTML elements from a string.
+// Use [Safe] for HTML markup.
 func Text(s string) Node {
 	return text(s)
 }
 
-// Textf returns a text node formatted with [fmt.Sprintf].
+// Textf constructs a text node with [fmt.Sprintf].
 func Textf(format string, a ...any) Node {
 	return Text(fmt.Sprintf(format, a...))
 }
 
-// Element is the partially-applied builder returned by Tag(name)(attrs).
-// Calling it with children produces a finished element node; an Element
-// with no children is itself a [Node], so childless tags can appear in a
-// parent's child list without a trailing empty children call.
+// An Element is an HTML element containing a tag name and attributes.
+// See [Tag].
+//
+// An Element is a function.
+// Calling it with child values produces a Node
+// that renders the HTML element including its children.
+//
+//	Tag("div")(attr.Class("a"))(Text("hello")) // <div class="a">hello</div>
+//
+// Element itself also satisfies [Node],
+// and renders without children.
+//
+//	Tag("div")(attr.Class("bg"))() // <div class="bg"></div>
+//	Tag("div")(attr.Class("bg"))   // <div class="bg"></div>
+//	Tag("input")(attr.Value("x"))  // <input value="x">
+//
+// Note that [void elements] never render children,
+// even when child values are provided.
+//
+//	Tag("input")()(Text("not rendered")) // <input>
 //
 // Child nodes must not use the [Opaque] attr.
 // If a child node is opaque, Element panics.
 // See [Keyed] to use opaque nodes.
-type Element func(...Node) Node
+//
+// [void elements]: https://html.spec.whatwg.org/multipage/syntax.html#void-elements
+type Element func(child ...Node) Node
 
 func (Element) isNode() {}
 
@@ -106,22 +127,9 @@ func (e element) lowered(a addr) (vdom.Node, handlers) {
 	return vdom.NewElement(e.tag, slices.Values(attrs), children, nil), h.merge(ch)
 }
 
-// Tag returns a curried builder for an HTML element with the given name.
-// Its first call takes attributes, and the second takes children.
-//
-//	Tag("div")(attr.Class("x"))(Text("hi"))
-//
-// Void elements (and any other "no children" case) can skip the trailing
-// empty children call. Element is itself a Node.
-//
-//	Div()(Text("a"), Br(), Text("b"))
-//
+// Tag constructs an HTML element with the given name and attributes.
 // Helpers for common tags can be found in [ily.dev/domi/html].
-//
-// Child nodes must not use the [Opaque] attr.
-// If a child node is opaque, Tag panics.
-// See [Keyed] to use opaque nodes.
-func Tag(name string) func(...Attr) Element {
+func Tag(name string) func(attr ...Attr) Element {
 	return func(attrs ...Attr) Element {
 		opaque := hasOpaque(attrs)
 		return func(children ...Node) Node {
@@ -144,15 +152,15 @@ func opaqueMustBeKeyed(children []Node) {
 	}
 }
 
-// Keyed returns a curried builder for an element whose children are
-// paired with stable keys. The framework reconciles updates to keyed
-// children by identity rather than position, so inserting, removing, or
-// reordering items in the middle of a list updates the surviving
-// children in place instead of replacing the entire affected suffix.
+// Keyed constructs an element whose children are paired with stable keys.
+// Domi reconciles updates to keyed children by identity rather than position.
+// Inserting, removing, or reordering items in the middle of a list
+// moves the surviving children intact to their new positions
+// instead of replacing their contents.
 //
-// The children sequence yields (key, child) pairs in the desired order:
+// The sequence argument yields key-child pairs in the desired order:
 //
-//	Keyed("ul")(attr.Class("items"))(func(yield func(string, Node) bool) {
+//	Keyed("ul")()(func(yield func(string, Node) bool) {
 //	    for _, it := range items {
 //	        if !yield(itemKey(it), itemRow(it)) {
 //	            return
@@ -160,13 +168,16 @@ func opaqueMustBeKeyed(children []Node) {
 //	    }
 //	})
 //
-// Each yielded child must be an element; text and [Fragment] children
-// cannot be keyed, and Keyed panics on a non-element child. Keys must
-// be unique within the sequence and stable across renders for the same
-// logical item.
+// Keys must be stable
+// (any given item should be assigned the same key every time)
+// and unique within the sequence.
 //
-// A child of Keyed can optionally use the [Opaque] attr.
+// A child can optionally use the [Opaque] attr.
 // See [Opaque] for details on its behavior.
+//
+// Each child must be an element.
+// Text and [Fragment] children cannot be keyed.
+// If Keyed is given a non-element child, it panics.
 func Keyed(name string) func(...Attr) func(iter.Seq2[string, Node]) Node {
 	return func(attrs ...Attr) func(iter.Seq2[string, Node]) Node {
 		opaque := hasOpaque(attrs)

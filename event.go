@@ -56,14 +56,13 @@ func (dst handlers) merge(src handlers) handlers {
 	return dst
 }
 
-// On calls f when the named event occurs,
-// and delivers the resulting message to Update.
-// If f returns an error, the event is discarded.
-// If f is nil, On panics.
+// On calls f when the named browser event occurs,
+// then calls Update with the resulting Msg value.
 //
-// Each field value is a path of property names into the browser event.
-// The client reads the value at each path,
-// and the resulting JSON object is given to f.
+// Each of the given field values
+// is a path of property names into the event object.
+// The client reads the value at each path
+// and includes it in the JSON object given to f.
 // For instance,
 //
 //	On("input", f, []string{"target", "value"})
@@ -76,6 +75,8 @@ func (dst handlers) merge(src handlers) handlers {
 //
 // Multiple handlers for the same event on the same element
 // all fire when their event occurs.
+// If f returns an error, the event is discarded.
+// If f is nil, On panics.
 func On[Msg any](event string, f func(jsontext.Value) (Msg, error), field ...[]string) Attr {
 	if f == nil {
 		panic("domi: On called with a nil unmarshal function")

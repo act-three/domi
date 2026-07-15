@@ -30,7 +30,7 @@ type (
 // The builder is called once per session
 // with the initial document title and the body element.
 // It is responsible for returning a complete html element.
-// The framework always writes the HTML5 doctype declaration
+// Domi always writes the HTML5 doctype declaration
 // before the html element.
 //
 //	domi.Handler(newApp, domi.Document(func(title string, body domi.Node) domi.Node {
@@ -49,8 +49,8 @@ type (
 func Document(f func(title string, body Node) Node) Option { return documentOption{f} }
 
 // InternalURLPrefix specifies the prefix p
-// used for the framework's internal URL paths.
-// This lets the application guarantee that the framework's
+// used for domi's internal URL paths.
+// This lets the application guarantee that domi's
 // internal URL paths never overlap with paths the app uses.
 //
 // For instance, a prefix of "a/b"
@@ -65,7 +65,7 @@ func InternalURLPrefix(p string) Option { return internalURLPrefixOption{p} }
 // The default interval is 25 seconds.
 func Keepalive(d time.Duration) Option { return keepaliveOption{d} }
 
-// Logger sets the structured logger used by the framework
+// Logger sets the structured logger used by domi
 // for internal diagnostics such as malformed client events
 // and handler registry misses.
 // The default logger is [slog.Default].
@@ -79,7 +79,7 @@ func Logger(l *slog.Logger) Option { return loggerOption{l} }
 // The default window is 128 frames.
 func ReplayWindow(n int) Option { return replayWindowOption{n} }
 
-// SessionTimeout sets how long a session can remain idle before the
-// framework releases it.
+// SessionTimeout sets how long a session can remain idle
+// before domi releases it.
 // The default timeout is 48 hours.
 func SessionTimeout(d time.Duration) Option { return sessionTimeoutOption{d} }

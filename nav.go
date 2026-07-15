@@ -6,7 +6,7 @@ import (
 	"slices"
 )
 
-// PushURL returns a [Cmd] that changes the browser URL
+// PushURL returns a Cmd that changes the browser URL
 // and adds an entry to the navigation history.
 // The url must be an origin-relative URL (path, query, fragment)
 // with no scheme or host.
@@ -25,7 +25,7 @@ func PushURL[Msg any](url string) Cmd[Msg] {
 	}))
 }
 
-// ReplaceURL returns a [Cmd] that changes the browser URL
+// ReplaceURL returns a Cmd that changes the browser URL
 // without adding an entry to the navigation history.
 // The url must be an origin-relative URL (path, query, fragment)
 // with no scheme or host.
@@ -44,7 +44,7 @@ func ReplaceURL[Msg any](url string) Cmd[Msg] {
 	}))
 }
 
-// Load returns a [Cmd] that triggers a full-page browser navigation
+// Load returns a Cmd that triggers a full-page browser navigation
 // to url, leaving the current session behind. Unlike [PushURL] and
 // [ReplaceURL], which update the history of the running application,
 // Load performs a real navigation (window.location): the browser
