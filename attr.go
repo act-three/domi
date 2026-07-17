@@ -9,7 +9,7 @@ import (
 
 var (
 	// Bypass annotates a link to use the browser's built-in navigation,
-	// rather than going through the framework.
+	// rather than being intercepted by domi.
 	Bypass Attr = Bool("data-domi-bypass")(true)
 
 	// Opaque marks an element as opaque, ignored by the virtual DOM diff.
@@ -36,13 +36,13 @@ func internal(a vdom.Attr) Attr {
 // on any given element:
 //
 //  1. For each combining attribute,
-//     the framework combines the values into a single value.
+//     domi combines the values into a single value.
 //     See [RegisterCombining] for more.
 //  2. Event handlers are combined internally.
 //  3. For all other attributes,
 //     only the first occurrence appears.
 //
-// The zero value of Attr (nil) is an empty group.
+// A nil Attr is a valid Attr that emits nothing.
 type Attr interface {
 	isAttr()
 }
@@ -57,14 +57,31 @@ type attr struct {
 
 func (attr) isAttr() {}
 
-// Name returns a builder for an HTML attribute with the given name. (e.g. class).
-// Call it to obtain an [Attr] with the given value (e.g. class="foo").
+// Name constructs an HTML attribute with the given name and value.
 //
-// Providing multiple value arguments produces multiple attribute declarations,
-// which combine using the same rules described on [Attr] and [RegisterCombining].
+// Providing the empty string or zero value arguments
+// produces a name-only attribute.
+// Name(s)() is equivalent to Name(s)("").
+//
+//	Name("value")()    // value
+//	Name("value")("")  // value
+//	Name("value")("a") // value="a"
+//
+// Providing multiple value arguments produces multiple attribute declarations.
+// Name(s)(a, b, ...) is equivalent to Group(Name(s)(a), Name(s)(b), ...).
+// These combine using the same rules described on [Attr] and [RegisterCombining].
 // In particular, for most attributes, only the first value will be used.
-// If zero value arguments are provided, Name emits a bare attribute name.
+//
+//	Name("value")("a")      // value="a"
+//	Name("value")("a", "b") // value="a"
+//	Name("class")("a")      // class="a"
+//	Name("class")("a", "b") // class="a b"
+//	Name("style")("a")      // style="a"
+//	Name("style")("a", "b") // style="a;b"
 func Name(name string) func(value ...string) Attr {
+	// TODO: panic on boolean attributes.
+	// See https://html.spec.whatwg.org/multipage/indices.html#attributes-3.
+	// Maybe also define RegisterBoolean.
 	return func(value ...string) Attr {
 		switch len(value) {
 		case 0:
@@ -80,20 +97,37 @@ func Name(name string) func(value ...string) Attr {
 	}
 }
 
-// Bool returns a builder for a boolean HTML attribute. For standard
-// boolean attributes (disabled, checked, …), true means present
-// (name-only) and false means absent:
+// Bool constructs a boolean HTML attribute.
 //
-//	Tag("input")(attr.Disabled(true))()   // <input disabled>
-//	Tag("input")(attr.Disabled(false))()  // <input>
+// For [enumerated attributes]
+// with exactly two permitted values "true" and "false",
+// (contenteditable, draggable, spellcheck, and translate),
+// Bool emits a string value.
 //
-// For enumerated boolean attributes (contenteditable, draggable,
-// spellcheck, translate), true and false emit the corresponding
-// string value instead:
+//	Bool("contenteditable")(true)  // contenteditable="true"
+//	Bool("contenteditable")(false) // contenteditable="false"
 //
-//	Tag("div")(attr.ContentEditable(true))()   // <div contenteditable="true">
-//	Tag("div")(attr.ContentEditable(false))()  // <div contenteditable="false">
+// For all other names, including standard [boolean attributes]
+// like disabled and checked,
+// true emits a name-only attribute and false emits nothing:
+//
+//	Tag("input")(Bool("disabled")(true))  // <input disabled>
+//	Tag("input")(Bool("disabled")(false)) // <input>
+//
+// [enumerated attributes]: https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#keywords-and-enumerated-attributes
+// [boolean attributes]: https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#boolean-attributes
 func Bool(name string) func(bool) Attr {
+	// BUG: translate should produce "yes"/"no", NOT "true"/"false".
+	// TODO: handle other enumerated bools ("yes"/"no" and "on"/"off").
+	// See https://html.spec.whatwg.org/multipage/indices.html#attributes-3.
+	// Maybe also define RegisterEnumerated.
+	//
+	// Future godoc:
+	// For [enumerated attributes]
+	// with exactly two permitted values that map to true and false
+	// ("on"/"off", "yes"/"no", and "true"/"false"),
+	// Bool emits a string value.
+	// See [RegisterEnumerated].
 	if enumeratedBool[name] {
 		return func(v bool) Attr {
 			if v {
@@ -131,8 +165,6 @@ func (group) isAttr() {}
 // It contributes its contents
 // to its parent's child list in order,
 // as if they had been written there directly.
-//
-// Groups may be nested arbitrarily.
 func Group(a ...Attr) Attr {
 	return group(func(yield func(attr) bool) {
 		for _, a := range a {
