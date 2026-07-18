@@ -21,6 +21,10 @@ import (
 // It is only suitable for HTML text the app fully controls
 // or knows to be trustworthy.
 // Use [Safe] for HTML, or [Text] for plain text.
+//
+// Note that domi's rendered output (e.g. from [RenderTo])
+// can contain reserved tag names and attributes
+// and should not be used as input to UnsafeParseRaw.
 func UnsafeParseRaw(s string) (Node, error) {
 	ctx := &html.Node{Type: html.ElementNode, DataAtom: atom.Template, Data: "template"}
 	nodes, err := html.ParseFragment(strings.NewReader(s), ctx)

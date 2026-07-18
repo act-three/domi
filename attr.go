@@ -19,7 +19,8 @@ var (
 	// This allows client-side browser code to take ownership of the element
 	// without worrying about patches modifying it underfoot.
 	//
-	// An opaque element must be a keyed child. See [Keyed].
+	// An opaque element must be keyed.
+	// See [WithKey].
 	// Inserting an opaque node anywhere else panics.
 	Opaque Attr = internal(vdom.Opaque)
 )

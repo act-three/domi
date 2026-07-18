@@ -8,6 +8,15 @@ import (
 	"testing"
 )
 
+// childKeys lists e's children's keys, "" for an unkeyed child.
+func childKeys(e Element) []string {
+	out := make([]string, len(e.children))
+	for i, c := range e.children {
+		out[i] = childKey(c)
+	}
+	return out
+}
+
 // nodeAt descends nodes by child index, returning the element at path.
 func nodeAt(t *testing.T, nodes []Node, path ...int) Element {
 	t.Helper()
@@ -101,17 +110,19 @@ func TestApplyMoveAcrossContainers(t *testing.T) {
 // an item moves between them addressed as [0, "s1"] → [0, "s2"].
 func TestApplyMoveThroughKeyedAncestor(t *testing.T) {
 	main := func() []Node {
-		return []Node{NewElement("main", attrs(),
-			[]Node{keyedList("a", "b"), keyedList("x", "y")},
-			[]string{"s1", "s2"})}
+		return []Node{NewElement("main", attrs(), []Node{
+			keyedList("a", "b").WithKey("s1"),
+			keyedList("x", "y").WithKey("s2"),
+		})}
 	}
 	got, err := Apply(main(), move([]any{0, "s1"}, "a", []any{0, "s2"}, "x"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Node{NewElement("main", attrs(),
-		[]Node{keyedList("b"), keyedList("a", "x", "y")},
-		[]string{"s1", "s2"})}
+	want := []Node{NewElement("main", attrs(), []Node{
+		keyedList("b").WithKey("s1"),
+		keyedList("a", "x", "y").WithKey("s2"),
+	})}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -126,8 +137,7 @@ func TestApplyMoveThroughKeyedAncestor(t *testing.T) {
 // Appending into an empty destination container, where no anchor can name
 // the spot.
 func TestApplyMoveIntoEmptyContainer(t *testing.T) {
-	emptyKeyed := NewElement("ul", attrs(), nil, []string{})
-	roots := []Node{el("div", keyedList("a", "b"), emptyKeyed)}
+	roots := []Node{el("div", keyedList("a", "b"), el("ul"))}
 	got, err := Apply(roots, move([]any{0, 0}, "a", []any{0, 1}, ""))
 	if err != nil {
 		t.Fatal(err)
@@ -135,6 +145,79 @@ func TestApplyMoveIntoEmptyContainer(t *testing.T) {
 	want := []Node{el("div", keyedList("b"), keyedList("a"))}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// Root-level children are their own container: a single-step path
+// names a child of the domi-root mount, and a move with no container
+// steps reorders the root list directly.
+func TestApplyMoveAtRoot(t *testing.T) {
+	li := func(k string) Node { return el("li", tx(k)).WithKey(k) }
+	roots := []Node{li("a"), li("b")}
+	got, err := Apply(roots, move([]any{}, "a", []any{}, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Node{li("b"), li("a")}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// A move can cross between the root list and a nested container; the
+// destination path addresses the tree as it stands after the removal,
+// the way the client reports it.
+func TestApplyMoveFromRootIntoContainer(t *testing.T) {
+	roots := []Node{el("li", tx("a")).WithKey("a"), keyedList("x")}
+	got, err := Apply(roots, []ClientMutation{{Op: "move", From: steps("a"), To: steps(0, "a"), Before: "x"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Node{keyedList("a", "x")}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// A move whose key already names a child in the destination is
+// rejected: the client re-keys to dodge collisions before reporting,
+// so a colliding move is forged or stale, and accepting it would
+// plant duplicate sibling keys in the shadow tree.
+func TestApplyMoveKeyCollisionErrors(t *testing.T) {
+	roots := []Node{el("div", keyedList("a", "b"), keyedList("a", "c"))}
+	if _, err := Apply(roots, move([]any{0, 0}, "a", []any{0, 1}, "")); err == nil {
+		t.Fatal("expected an error for a key collision in the destination")
+	}
+}
+
+// A destination that cannot hold element children — a raw-text or
+// void element — is rejected rather than corrupting the shadow tree
+// into something the renderer must refuse.
+func TestApplyMoveIntoChildlessElementErrors(t *testing.T) {
+	for name, dst := range map[string]Node{
+		"raw text": NewElement("script", attrs(), []Node{tx("x")}),
+		"void":     el("br"),
+	} {
+		roots := []Node{el("div", keyedList("a"), dst)}
+		if _, err := Apply(roots, move([]any{0, 0}, "a", []any{0, 1}, "")); err == nil {
+			t.Fatalf("%s: expected an error for a childless destination", name)
+		}
+	}
+}
+
+// A move into a container with no keyed children makes it mixed: the
+// moved child keeps its key among its unkeyed siblings.
+func TestApplyMoveIntoUnkeyedContainer(t *testing.T) {
+	roots := []Node{el("div", keyedList("a", "b"), el("p", tx("plain")))}
+	got, err := Apply(roots, move([]any{0, 0}, "b", []any{0, 1}, ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if src := nodeAt(t, got, 0, 0); !slices.Equal(childKeys(src), []string{"a"}) {
+		t.Fatalf("source keys = %v, want [a]", childKeys(src))
+	}
+	if dst := nodeAt(t, got, 0, 1); !slices.Equal(childKeys(dst), []string{"", "b"}) {
+		t.Fatalf(`destination keys = %v, want ["" b]`, childKeys(dst))
 	}
 }
 
@@ -164,11 +247,11 @@ func TestApplyMoveRekeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if src := nodeAt(t, got, 0, 0); !slices.Equal(src.keys, []string{"b"}) {
-		t.Fatalf("source keys = %v, want [b]", src.keys)
+	if src := nodeAt(t, got, 0, 0); !slices.Equal(childKeys(src), []string{"b"}) {
+		t.Fatalf("source keys = %v, want [b]", childKeys(src))
 	}
-	if dst := nodeAt(t, got, 0, 1); !slices.Equal(dst.keys, []string{"a", "a#dup", "c"}) {
-		t.Fatalf("destination keys = %v, want [a a#dup c]", dst.keys)
+	if dst := nodeAt(t, got, 0, 1); !slices.Equal(childKeys(dst), []string{"a", "a#dup", "c"}) {
+		t.Fatalf("destination keys = %v, want [a a#dup c]", childKeys(dst))
 	}
 }
 
@@ -197,8 +280,7 @@ func TestApplyErrors(t *testing.T) {
 		muts []ClientMutation
 	}{
 		{"key absent from source", move([]any{0, 0}, "z", []any{0, 0}, "a")},
-		{"source not keyed", move([]any{0}, "a", []any{0, 0}, "")},
-		{"destination not keyed", move([]any{0, 0}, "a", []any{0}, "")},
+		{"key absent from unkeyed source", move([]any{0}, "a", []any{0, 0}, "")},
 		{"anchor absent from destination", move([]any{0, 0}, "a", []any{0, 0}, "z")},
 		{"path index out of range", move([]any{0, 9}, "a", []any{0, 0}, "")},
 		{"path descends into text", move([]any{0, 1, 0}, "a", []any{0, 0}, "")},
@@ -223,14 +305,18 @@ func TestApplyJSONPath(t *testing.T) {
 	if err := json.Unmarshal([]byte(wire), &muts); err != nil {
 		t.Fatal(err)
 	}
-	roots := []Node{NewElement("main", attrs(),
-		[]Node{keyedList("a", "b"), keyedList("x", "y")}, []string{"s1", "s2"})}
+	roots := []Node{NewElement("main", attrs(), []Node{
+		keyedList("a", "b").WithKey("s1"),
+		keyedList("x", "y").WithKey("s2"),
+	})}
 	got, err := Apply(roots, muts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Node{NewElement("main", attrs(),
-		[]Node{keyedList("b"), keyedList("a", "x", "y")}, []string{"s1", "s2"})}
+	want := []Node{NewElement("main", attrs(), []Node{
+		keyedList("b").WithKey("s1"),
+		keyedList("a", "x", "y").WithKey("s2"),
+	})}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}

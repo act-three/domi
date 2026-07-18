@@ -47,9 +47,10 @@ var (
 	h1      = html.H1
 	h2      = html.H2
 	p       = html.P
+	ul      = html.UL
 	li      = html.LI
 	a       = html.A
-	keyedUL = domi.Keyed("ul")
+	withKey = domi.WithKey
 )
 
 type route int
@@ -189,13 +190,7 @@ func middle(app *App) N {
 	return div(style("width:16rem;flex:none;display:flex;flex-direction:column;border-right:1px solid #ccc"))(
 		progressBar(app.tick),
 		div(style("flex:1;overflow:auto"))(
-			keyedUL(style("list-style:none;margin:0;padding:0"))(func(yield func(string, N) bool) {
-				for _, id := range app.items {
-					if !yield(strconv.Itoa(id), itemRow(id)) {
-						return
-					}
-				}
-			}),
+			ul(style("list-style:none;margin:0;padding:0"))(itemRows(app.items)),
 		),
 	)
 }
@@ -208,6 +203,14 @@ func progressBar(tick int) N {
 			div(attr.Stylef("height:6px;width:%d%%;background:#4a90d9;border-radius:3px", pct))(),
 		),
 	)
+}
+
+func itemRows(ids []int) N {
+	rows := make([]N, len(ids))
+	for i, id := range ids {
+		rows[i] = withKey(strconv.Itoa(id), itemRow(id))
+	}
+	return domi.Fragment(rows...)
 }
 
 func itemRow(id int) N {

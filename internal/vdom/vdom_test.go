@@ -68,6 +68,46 @@ func TestCoalesceText(t *testing.T) {
 	}
 }
 
+// A keyed element parts adjacent text like any element — its DOM node
+// sits between them — and keeps its key through the rewrite.
+func TestCoalesceTextAroundKeyedElement(t *testing.T) {
+	in := []Node{tx("a"), tx("b"), el("x").WithKey("kx"), tx("")}
+	got := coalesceText(in)
+	if want := []string{"t:ab", "e:x"}; !slices.Equal(nodeSummary(got), want) {
+		t.Fatalf("got %v, want %v", nodeSummary(got), want)
+	}
+	if childKey(got[1]) != "kx" {
+		t.Fatalf("keyed element lost its key: %q", childKey(got[1]))
+	}
+}
+
+// Sibling keys must be unique: identity-based reconciliation resolves
+// siblings by key on both sides of the wire, so a collision would
+// silently corrupt the client. NewElement rejects it at construction,
+// where the panic points at the render that introduced it.
+func TestDuplicateSiblingKeysPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for duplicate sibling keys")
+		}
+	}()
+	_ = NewElement("ul", attrs(), []Node{
+		el("li").WithKey("a"),
+		el("li"),
+		el("li").WithKey("a"),
+	})
+}
+
+// The same holds for the root list, validated by Diff.
+func TestDuplicateRootKeysPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for duplicate root keys")
+		}
+	}()
+	_ = Diff(nil, []Node{el("li").WithKey("a"), el("li").WithKey("a")})
+}
+
 // coalesceText returns the input slice untouched when nothing needs
 // merging or dropping, so an unchanged child list costs no allocation.
 func TestCoalesceTextNoChangeReturnsInput(t *testing.T) {

@@ -53,15 +53,12 @@ func (s *Step) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 	return nil
 }
 
-// resolve returns the index of the child this step selects among nodes,
-// whose parent's keys are keys (nil at the positional top level). A keyed
-// step looks its key up in keys; a positional step is a direct index.
-func (s Step) resolve(nodes []Node, keys []string) (int, error) {
+// resolve returns the index of the child this step selects among
+// nodes. A keyed step looks up the child carrying its key; a
+// positional step is a direct index.
+func (s Step) resolve(nodes []Node) (int, error) {
 	if s.key != "" {
-		if keys == nil {
-			return 0, fmt.Errorf("vdom: move path key %q in a positional container", s.key)
-		}
-		if i := slices.Index(keys, s.key); i >= 0 {
+		if i := keyIndex(nodes, s.key); i >= 0 {
 			return i, nil
 		}
 		return 0, fmt.Errorf("vdom: move path key %q not found", s.key)
@@ -98,10 +95,11 @@ func Apply(roots []Node, muts []ClientMutation) ([]Node, error) {
 // applyMove relocates a keyed child named by from to the container named by
 // to, placing it before the child named before — or at the end when before is
 // empty. Each path names the child itself: its last step is the child's key
-// and the steps before it address its container. The destination key (to's
-// last step) equals the source key unless the client re-keyed the child to
-// avoid a collision in the destination. Paths address the tree the way the
-// client walks it (see updateAt); the rewrite is functional.
+// and the steps before it address its container — an element, or the root
+// list itself when no steps remain. The destination key (to's last step)
+// equals the source key unless the client re-keyed the child to avoid a
+// collision in the destination. Paths address the tree the way the client
+// walks it (see updateAt); the rewrite is functional.
 func applyMove(roots []Node, from, to []Step, before string) ([]Node, error) {
 	srcPath, fromKey, err := splitKey(from)
 	if err != nil {
@@ -113,36 +111,57 @@ func applyMove(roots []Node, from, to []Step, before string) ([]Node, error) {
 	}
 
 	var moved Element
-	tree, err := updateAt(roots, nil, srcPath, func(src Element) (Element, error) {
-		if src.keys == nil {
-			return Element{}, fmt.Errorf("vdom: move source is not a keyed container")
-		}
-		j := slices.Index(src.keys, fromKey)
+	tree, err := withList(roots, srcPath, func(kids []Node, _ string) ([]Node, error) {
+		j := keyIndex(kids, fromKey)
 		if j < 0 {
-			return Element{}, fmt.Errorf("vdom: move key %q absent from source", fromKey)
+			return nil, fmt.Errorf("vdom: move key %q absent from source", fromKey)
 		}
-		me, ok := src.children[j].(Element)
-		if !ok {
-			return Element{}, fmt.Errorf("vdom: move key %q names a non-element child", fromKey)
-		}
-		moved = me
-		return src.removeChildAt(j), nil
+		// A keyed child is an Element by construction; see childKey.
+		moved = kids[j].(Element)
+		return slices.Delete(slices.Clone(kids), j, j+1), nil
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return updateAt(tree, nil, dstPath, func(dst Element) (Element, error) {
-		if dst.keys == nil {
-			return Element{}, fmt.Errorf("vdom: move destination is not a keyed container")
+	if toKey != fromKey {
+		// The client re-keyed the moved node to dodge a collision in the
+		// destination; mirror it, key and attribute both.
+		moved = moved.WithKey(toKey)
+	}
+
+	return withList(tree, dstPath, func(kids []Node, tag string) ([]Node, error) {
+		if isRawTextElement(tag) || isVoid(tag) {
+			return nil, fmt.Errorf("vdom: move destination <%s> cannot hold element children", tag)
 		}
-		pos := len(dst.children)
+		if keyIndex(kids, toKey) >= 0 {
+			return nil, fmt.Errorf("vdom: move key %q already in destination", toKey)
+		}
+		pos := len(kids)
 		if before != "" {
-			if pos = slices.Index(dst.keys, before); pos < 0 {
-				return Element{}, fmt.Errorf("vdom: move anchor %q absent from destination", before)
+			if pos = keyIndex(kids, before); pos < 0 {
+				return nil, fmt.Errorf("vdom: move anchor %q absent from destination", before)
 			}
 		}
-		return dst.insertChildAt(pos, moved, toKey), nil
+		return slices.Insert(slices.Clone(kids), pos, Node(moved)), nil
+	})
+}
+
+// withList applies f to the child list its path names — the roots
+// themselves when the path is empty (the domi-root mount is the
+// container), else the children of the element at path — rebuilding
+// the ancestors around f's result. f also receives the container's
+// tag, empty for the root.
+func withList(nodes []Node, path []Step, f func(kids []Node, tag string) ([]Node, error)) ([]Node, error) {
+	if len(path) == 0 {
+		return f(nodes, "")
+	}
+	return updateAt(nodes, path, func(e Element) (Element, error) {
+		kids, err := f(e.children, e.tag)
+		if err != nil {
+			return Element{}, err
+		}
+		return e.withChildren(kids), nil
 	})
 }
 
@@ -163,17 +182,15 @@ func splitKey(path []Step) ([]Step, string, error) {
 // it, rebuilding the ancestors along the way (Elements are immutable, so
 // each level is cloned rather than mutated).
 //
-// nodes are the children of a parent whose keys are keys (nil at the
-// positional top level). Each path step selects a child: a key resolves
-// against keys, an index against nodes — so a keyed container is reached by
-// key and survives reordering. It errors if a step doesn't fit (a key in a
-// positional container, a missing key, an out-of-range index, a descent
-// through a text node).
-func updateAt(nodes []Node, keys []string, path []Step, f func(Element) (Element, error)) ([]Node, error) {
+// Each path step selects a child: a key resolves to the child carrying
+// it, an index to a position — so a keyed container is reached by key
+// and survives reordering. It errors if a step doesn't fit (a missing
+// key, an out-of-range index, a descent through a text node).
+func updateAt(nodes []Node, path []Step, f func(Element) (Element, error)) ([]Node, error) {
 	if len(path) == 0 {
 		return nil, fmt.Errorf("vdom: empty move path")
 	}
-	i, err := path[0].resolve(nodes, keys)
+	i, err := path[0].resolve(nodes)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +205,7 @@ func updateAt(nodes []Node, keys []string, path []Step, f func(Element) (Element
 			return nil, err
 		}
 	} else {
-		kids, err := updateAt(e.children, e.keys, path[1:], f)
+		kids, err := updateAt(e.children, path[1:], f)
 		if err != nil {
 			return nil, err
 		}
@@ -201,32 +218,8 @@ func updateAt(nodes []Node, keys []string, path []Step, f func(Element) (Element
 }
 
 // withChildren returns a copy of e carrying children in place of its own,
-// for rebuilding an ancestor whose child count is unchanged (its keys, if
-// any, stay aligned).
+// for rebuilding an ancestor along an updateAt path.
 func (e Element) withChildren(children []Node) Element {
-	return Element{tag: e.tag, attrs: e.attrs, children: children, keys: e.keys, opaque: e.opaque}
-}
-
-// removeChildAt returns a copy of keyed element e without the child and
-// key at index i.
-func (e Element) removeChildAt(i int) Element {
-	return Element{
-		tag:      e.tag,
-		attrs:    e.attrs,
-		children: slices.Delete(slices.Clone(e.children), i, i+1),
-		keys:     slices.Delete(slices.Clone(e.keys), i, i+1),
-		opaque:   e.opaque,
-	}
-}
-
-// insertChildAt returns a copy of keyed element e with child inserted at
-// index i under key.
-func (e Element) insertChildAt(i int, child Element, key string) Element {
-	return Element{
-		tag:      e.tag,
-		attrs:    e.attrs,
-		children: slices.Insert(slices.Clone(e.children), i, Node(child)),
-		keys:     slices.Insert(slices.Clone(e.keys), i, key),
-		opaque:   e.opaque,
-	}
+	e.children = children
+	return e
 }

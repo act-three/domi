@@ -11,6 +11,7 @@ package vdom
 
 import (
 	"cmp"
+	"fmt"
 	"iter"
 	"slices"
 	"strings"
@@ -26,16 +27,16 @@ type Node interface {
 // can't be mutated post-hoc (the renderer and differ rely on the tree
 // being stable for the lifetime of a diff/render call).
 //
-// keys discriminates positional from keyed elements: nil means
-// positional; non-nil (even empty) means children are paired with
-// these keys for identity-based reconciliation. When non-nil,
-// len(keys) equals len(children), and each child is an Element (text
-// nodes can't carry a data-domi-key attribute).
+// key is the element's reconciliation key in its parent's child list,
+// set via [Element.WithKey]: nonempty means the differ matches the
+// element by identity, empty means it is matched by position. Keyed
+// and unkeyed children mix freely in one list; only elements carry
+// keys (a text node has none, so text is always positional).
 type Element struct {
 	tag      string
+	key      string
 	attrs    []Attr
 	children []Node
-	keys     []string
 
 	// opaque marks the element as ignored by the differ.
 	// It is rendered once and thereafter no patches are emitted
@@ -49,16 +50,17 @@ func (Element) vdomNode() {}
 // so client javascript can own its DOM state.
 var Opaque Attr = Attr{Internal: true, Name: "opaque"}
 
-// NewElement constructs an [Element]. Pass nil for keys to build a
-// positional element; pass a slice (even empty) parallel to children
-// to build a keyed element.
+// NewElement constructs an [Element]. Children carry their own
+// reconciliation keys (see [Element.WithKey]); sibling keys must be
+// unique and an opaque child must be keyed — NewElement panics
+// otherwise.
 //
 // Attrs are sorted by name and deduplicated according to the combining rules.
-func NewElement(tag string, attrs iter.Seq[Attr], children []Node, keys []string) Element {
+func NewElement(tag string, attrs iter.Seq[Attr], children []Node) Element {
 	a := slices.Collect(attrs)
 	slices.SortStableFunc(a, Attr.cmp)
 
-	e := Element{tag: tag, keys: keys}
+	e := Element{tag: tag}
 
 	for len(a) > 0 && a[0].Internal {
 		switch a[0].Name {
@@ -68,24 +70,49 @@ func NewElement(tag string, attrs iter.Seq[Attr], children []Node, keys []string
 		a = a[1:]
 	}
 
-	if keys == nil {
-		opaqueMustBeKeyed(children)
-		children = coalesceText(children)
-	}
+	children = coalesceText(children)
+	validateChildren(children)
 
 	e.attrs = combineAttrs(a)
 	e.children = children
 	return e
 }
 
-// opaqueMustBeKeyed panics if nodes holds an opaque element.
-// The differ needs a stable identifier for each opaque node,
-// so they must be keyed children.
-func opaqueMustBeKeyed(nodes []Node) {
+// childKey returns n's reconciliation key: the key of an [Element], or
+// the empty string — unkeyed — for any other node (text cannot carry
+// a key).
+func childKey(n Node) string {
+	if e, ok := n.(Element); ok {
+		return e.key
+	}
+	return ""
+}
+
+// validateChildren panics if nodes violates a child-list invariant
+// the differ depends on: sibling keys must be unique (identity-based
+// reconciliation — server- and client-side both — resolves siblings
+// by key), and an opaque element must be keyed (the differ needs a
+// stable identifier to leave it alone by).
+func validateChildren(nodes []Node) {
+	var seen map[string]struct{}
 	for _, n := range nodes {
-		if e, ok := n.(Element); ok && e.opaque {
+		e, ok := n.(Element)
+		if !ok {
+			continue
+		}
+		if e.opaque && e.key == "" {
 			panic("domi: an opaque node must be a keyed child")
 		}
+		if e.key == "" {
+			continue
+		}
+		if seen == nil {
+			seen = make(map[string]struct{}, len(nodes))
+		}
+		if _, dup := seen[e.key]; dup {
+			panic(fmt.Sprintf("domi: duplicate key %q among sibling children", e.key))
+		}
+		seen[e.key] = struct{}{}
 	}
 }
 
@@ -106,17 +133,28 @@ func (a Attr) rank() int {
 	return 1
 }
 
-// WithAttr returns a copy of e with a single additional attribute
-// inserted in sorted position. Used by [ily.dev/domi.Keyed] to
-// inject the data-domi-key attribute onto child elements without
-// mutating the original.
-func (e Element) WithAttr(a Attr) Element {
-	i, _ := slices.BinarySearchFunc(e.attrs, a, Attr.cmp)
-	out := make([]Attr, len(e.attrs)+1)
-	copy(out, e.attrs[:i])
-	out[i] = a
-	copy(out[i+1:], e.attrs[i:])
-	return Element{tag: e.tag, attrs: out, children: e.children, keys: e.keys, opaque: e.opaque}
+// WithKey returns a copy of e keyed by key: the key is recorded for
+// identity-based reconciliation and mirrored into the data-domi-key
+// attribute the client resolves keyed ops against, replacing any
+// previous key. Writing both in one place keeps them from diverging.
+// Used by domi's lowering, and by client-mutation replay when the
+// client re-keys a moved child.
+func (e Element) WithKey(key string) Element {
+	if key == "" {
+		panic("domi: a keyed child must have a nonempty key")
+	}
+	e.key = key
+	a := Attr{Name: "data-domi-key", Value: key}
+	i, found := slices.BinarySearchFunc(e.attrs, a, Attr.cmp)
+	attrs := make([]Attr, len(e.attrs), len(e.attrs)+1)
+	copy(attrs, e.attrs)
+	if found {
+		attrs[i] = a
+	} else {
+		attrs = slices.Insert(attrs, i, a)
+	}
+	e.attrs = attrs
+	return e
 }
 
 // Text is a text leaf node holding plain, unescaped text. The renderer
@@ -215,7 +253,8 @@ func combineSep(name string) (string, bool) {
 //
 // Merging also keeps later edits cheap: one combined Text node lets a
 // content change ride a single in-place update. Element nodes never
-// participate here.
+// participate here — in particular a keyed element between two text
+// nodes keeps them apart, exactly as its DOM element does.
 //
 // Returns the input slice unchanged when no coalescing or empty-text
 // dropping is needed.

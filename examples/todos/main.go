@@ -27,10 +27,11 @@ var (
 	div     = html.Div
 	h1      = html.H1
 	span    = html.Span
-	keyedUL = domi.Keyed("ul")
+	ul      = html.UL
 	li      = html.LI
 	button  = html.Button
 	onClick = event.Click[Msg]
+	withKey = domi.WithKey
 )
 
 type Item struct {
@@ -96,15 +97,17 @@ func (t *Todos) View(_ context.Context) (string, N) {
 	return "todos",
 		div(style("font-family:system-ui;padding:2rem;max-width:32rem"))(
 			h1()(text("todos")),
-			keyedUL(style("list-style:none;padding:0"))(func(yield func(string, N) bool) {
-				for _, it := range t.items {
-					if !yield(strconv.FormatUint(it.ID, 10), itemRow(it)) {
-						return
-					}
-				}
-			}),
+			ul(style("list-style:none;padding:0"))(itemRows(t.items)),
 			button(onClick(Msg{Tag: "Add"}))(text("+ add item")),
 		)
+}
+
+func itemRows(items []Item) N {
+	rows := make([]N, len(items))
+	for i, it := range items {
+		rows[i] = withKey(strconv.FormatUint(it.ID, 10), itemRow(it))
+	}
+	return domi.Fragment(rows...)
 }
 
 func itemRow(it Item) N {

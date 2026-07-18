@@ -74,15 +74,106 @@ func TestFragmentAtRootLowers(t *testing.T) {
 	}
 }
 
-func TestFragmentInKeyedPanics(t *testing.T) {
+// ---- WithKey tests ----
+
+// keyedLis builds a Fragment of keyed <li> items, one per key, each
+// wrapping its key as text.
+func keyedLis(keys ...string) Node {
+	rows := make([]Node, len(keys))
+	for i, k := range keys {
+		rows[i] = WithKey(k, Tag("li")()(Text(k)))
+	}
+	return Fragment(rows...)
+}
+
+// Keyed children compose with unkeyed siblings in one parent: they
+// render in place, carrying their keys, between the unkeyed header
+// and footer.
+func TestWithKeyMixesWithUnkeyedSiblings(t *testing.T) {
+	got := vdom.Render(lowerOneNode(Tag("ul")()(
+		Tag("li")()(Text("header")),
+		keyedLis("a", "b"),
+		Tag("li")()(Text("footer")),
+	)))
+	want := `<ul><li>header</li><li data-domi-key="a">a</li><li data-domi-key="b">b</li><li>footer</li></ul>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// WithKey accepts a childless [Element] builder just as a child list
+// does, applying it to a finished element.
+func TestWithKeyAppliesElementBuilder(t *testing.T) {
+	a := vdom.Render(lowerOneNode(Tag("ul")()(WithKey("a", Tag("li")(Name("class")("x"))))))
+	b := vdom.Render(lowerOneNode(Tag("ul")()(WithKey("a", Tag("li")(Name("class")("x"))()))))
+	if a != b {
+		t.Fatalf("builder and element should key identically: %q vs %q", a, b)
+	}
+}
+
+// Appending to the keyed run of a mixed list is a single patch: the
+// unkeyed header and footer are matched in place, not rebuilt.
+func TestWithKeyAppendIsSinglePatch(t *testing.T) {
+	view := func(keys ...string) []vdom.Node {
+		return lowerNodes(Tag("ul")()(
+			Tag("li")()(Text("header")),
+			keyedLis(keys...),
+			Tag("li")()(Text("footer")),
+		))
+	}
+	if ps := vdom.Diff(view("a"), view("a", "b")); len(ps) != 1 {
+		t.Fatalf("append into a mixed list should be a single patch, got %d", len(ps))
+	}
+}
+
+// The view's roots are the children of the domi-root mount, so keyed
+// children work there like anywhere else: a root-level reorder is a
+// move, not a rebuild.
+func TestWithKeyAtRoot(t *testing.T) {
+	got := lowerNodes(keyedLis("a", "b"))
+	if len(got) != 2 {
+		t.Fatalf("expected 2 lowered roots, got %d", len(got))
+	}
+	if html := vdom.Render(got[0]); html != `<li data-domi-key="a">a</li>` {
+		t.Fatalf("keyed root should carry its key: %q", html)
+	}
+	ps := vdom.Diff(lowerNodes(keyedLis("a", "b")), lowerNodes(keyedLis("b", "a")))
+	if len(ps) != 1 {
+		t.Fatalf("root-level keyed reorder should be a single move, got %d patches", len(ps))
+	}
+}
+
+// The empty string marks an unkeyed child in the lowered form, so it
+// cannot be a key; WithKey panics at construction.
+func TestWithKeyEmptyKeyPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
-			t.Fatalf("expected panic for Fragment yielded into Keyed, got none")
+			t.Fatal("expected panic for an empty key")
 		}
 	}()
-	_ = Keyed("ul")()(func(yield func(string, Node) bool) {
-		yield("a", Fragment(Tag("li")()(Text("x"))))
-	})
+	_ = keyedLis("")
+}
+
+// A Fragment has no single identity to key; WithKey panics at
+// construction.
+func TestWithKeyFragmentPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for a keyed Fragment")
+		}
+	}()
+	_ = WithKey("a", Fragment(Tag("li")()(Text("x"))))
+}
+
+// Re-keying a keyed node is a construction error, not a silent
+// override.
+func TestWithKeyTwicePanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for a doubly keyed child")
+		}
+	}()
+	_ = WithKey("b", WithKey("a", Tag("li")()))
 }
 
 // ---- nil Node tests ----
@@ -107,16 +198,14 @@ func TestNilNodeAtRootLowersToNothing(t *testing.T) {
 }
 
 // A keyed child must be a real element with an identity; a nil child has
-// none, so Keyed panics rather than silently dropping the slot.
+// none, so WithKey panics rather than silently dropping the slot.
 func TestNilKeyedChildPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
-			t.Fatalf("expected panic for nil child yielded into Keyed, got none")
+			t.Fatalf("expected panic for a nil keyed child, got none")
 		}
 	}()
-	_ = Keyed("ul")()(func(yield func(string, Node) bool) {
-		yield("a", nil)
-	})
+	_ = WithKey("a", nil)
 }
 
 // lowerOne needs exactly one node; a nil Node lowers to zero, so it
@@ -187,16 +276,6 @@ func TestGroupClassCombinesAcrossBoundary(t *testing.T) {
 	b := lowerOneNode(Tag("div")(Name("class")("a"), Name("class")("b"), Name("class")("c"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("Group-of-classes should combine like inline: %q vs %q", vdom.Render(a), vdom.Render(b))
-	}
-}
-
-// Group works in Keyed's attrs slot for the same reason it works in
-// Tag's — both lower attrs at construction via the same path.
-func TestGroupInKeyedAttrs(t *testing.T) {
-	a := lowerOneNode(Keyed("ul")(Group(Name("class")("a"), Name("id")("x")))(func(yield func(string, Node) bool) {}))
-	b := lowerOneNode(Keyed("ul")(Name("class")("a"), Name("id")("x"))(func(yield func(string, Node) bool) {}))
-	if vdom.Render(a) != vdom.Render(b) {
-		t.Fatalf("Group in Keyed attrs should flatten: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
 }
 
@@ -422,22 +501,16 @@ func TestUnsafeParseRawTableFragment(t *testing.T) {
 	}
 }
 
-// A tree built with domi's own constructors, rendered to HTML and then
-// re-adopted via UnsafeParseRaw, renders identically: parsing faithfully
-// round-trips the framework's own output, so a prerendered subtree and
-// its live-built equivalent converge.
-func TestUnsafeParseRawRoundTripsRenderedTree(t *testing.T) {
-	tree := Tag("div")(Name("class")("card"))(
-		Tag("h1")()(Text("Title & co")),
-		Tag("p")()(Text("a < b"), Tag("br")(), Text("done")),
-		Tag("ul")()(
-			Tag("li")()(Text("one")),
-			Tag("li")()(Text("two")),
-		),
-	)
-	first := renderTree(t, tree)
-	if again := renderParsed(t, first); again != first {
-		t.Fatalf("round-trip changed output:\n first: %s\n again: %s", first, again)
+// Parsing renders faithfully on nested flow content: markup already in
+// the parser's canonical form — entities escaped, void elements bare —
+// comes back byte for byte. This pins parser fidelity for the adoption
+// use case (inlining trusted static markup); it makes no promise about
+// re-ingesting domi's own rendered output, which is not a supported
+// flow.
+func TestUnsafeParseRawCanonicalMarkupIsStable(t *testing.T) {
+	const src = `<div class="card"><h1>Title &amp; co</h1><p>a &lt; b<br>done</p><ul><li>one</li><li>two</li></ul></div>`
+	if got := renderParsed(t, src); got != src {
+		t.Fatalf("canonical markup changed in the round trip:\n src: %s\n got: %s", src, got)
 	}
 }
 
@@ -582,9 +655,9 @@ func TestRegularBoolStillUsesPresenceAbsence(t *testing.T) {
 // the public Opaque attribute to the differ's freeze behavior end to end.
 func TestOpaqueKeyedChildFreezes(t *testing.T) {
 	build := func(body string) []vdom.Node {
-		return lowerNodes(Keyed("main")()(func(yield func(string, Node) bool) {
-			yield("player", Tag("div")(Opaque, Name("data-controller")("player"))(Text(body)))
-		}))
+		return lowerNodes(Tag("main")()(
+			WithKey("player", Tag("div")(Opaque, Name("data-controller")("player"))(Text(body))),
+		))
 	}
 	if got := vdom.Diff(build("first"), build("second")); len(got) != 0 {
 		t.Fatalf("opaque keyed child must freeze, got %+v", got)
@@ -595,9 +668,9 @@ func TestOpaqueKeyedChildFreezes(t *testing.T) {
 // it never reaches the rendered output — unlike data-domi-key, which the
 // client reads and which stays in the markup.
 func TestOpaqueNotRendered(t *testing.T) {
-	html := vdom.Render(lowerOneNode(Keyed("ul")()(func(yield func(string, Node) bool) {
-		yield("a", Tag("li")(Opaque, Name("class")("widget"))(Text("x")))
-	})))
+	html := vdom.Render(lowerOneNode(Tag("ul")()(
+		WithKey("a", Tag("li")(Opaque, Name("class")("widget"))(Text("x"))),
+	)))
 	if strings.Contains(html, "opaque") {
 		t.Fatalf("internal opaque marker leaked into HTML: %q", html)
 	}

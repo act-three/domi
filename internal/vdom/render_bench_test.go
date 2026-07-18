@@ -14,23 +14,23 @@ func benchTree() Node {
 			Attr{Name: "data-idx", Value: strconv.Itoa(i)},
 		), []Node{
 			NewElement("span", attrs(Attr{Name: "class", Value: "label"}),
-				[]Node{Text("Item " + strconv.Itoa(i))}, nil),
+				[]Node{Text("Item " + strconv.Itoa(i))}),
 			NewElement("button", attrs(
 				Attr{Name: "class", Value: "btn delete"},
 				Attr{Name: "data-msg-click", Value: "abc123"},
-			), []Node{Text("×")}, nil),
-		}, nil)
+			), []Node{Text("×")}),
+		})
 	}
 	return NewElement("div", attrs(Attr{Name: "id", Value: "app"}), []Node{
 		NewElement("nav", attrs(Attr{Name: "class", Value: "navbar"}), []Node{
 			NewElement("a", attrs(
 				Attr{Name: "href", Value: "/"},
 				Attr{Name: "class", Value: "brand"},
-			), []Node{Text("My App")}, nil),
-		}, nil),
-		NewElement("h1", attrs(), []Node{Text("Todo List")}, nil),
-		NewElement("ul", attrs(Attr{Name: "class", Value: "list"}), items, nil),
-	}, nil)
+			), []Node{Text("My App")}),
+		}),
+		NewElement("h1", attrs(), []Node{Text("Todo List")}),
+		NewElement("ul", attrs(Attr{Name: "class", Value: "list"}), items),
+	})
 }
 
 func BenchmarkRender(b *testing.B) {

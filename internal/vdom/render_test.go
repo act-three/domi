@@ -8,7 +8,7 @@ import "testing"
 // serialization preference — the boolean-attribute form is the
 // idiomatic one.
 func TestRenderEmptyAttrEmitsNameOnly(t *testing.T) {
-	in := NewElement("input", attrs(Attr{Name: "disabled", Value: ""}), nil, nil)
+	in := NewElement("input", attrs(Attr{Name: "disabled", Value: ""}), nil)
 	got := Render(in)
 	want := `<input disabled>`
 	if got != want {
@@ -24,7 +24,7 @@ func TestRenderMixedAttrs(t *testing.T) {
 		Attr{Name: "type", Value: "checkbox"},
 		Attr{Name: "checked", Value: ""},
 		Attr{Name: "name", Value: "agree"},
-	), nil, nil)
+	), nil)
 	got := Render(in)
 	want := `<input checked name="agree" type="checkbox">`
 	if got != want {
@@ -36,7 +36,7 @@ func TestRenderMixedAttrs(t *testing.T) {
 // the HTML parser does not entity-decode such content, so escaping it
 // would corrupt the script or stylesheet.
 func TestRenderScriptVerbatim(t *testing.T) {
-	in := NewElement("script", attrs(), []Node{Text("a && b < c")}, nil)
+	in := NewElement("script", attrs(), []Node{Text("a && b < c")})
 	got := Render(in)
 	want := "<script>a && b < c</script>"
 	if got != want {
@@ -45,7 +45,7 @@ func TestRenderScriptVerbatim(t *testing.T) {
 }
 
 func TestRenderStyleVerbatim(t *testing.T) {
-	in := NewElement("style", attrs(), []Node{Text(".a > .b { color: red }")}, nil)
+	in := NewElement("style", attrs(), []Node{Text(".a > .b { color: red }")})
 	got := Render(in)
 	want := "<style>.a > .b { color: red }</style>"
 	if got != want {
@@ -56,7 +56,7 @@ func TestRenderStyleVerbatim(t *testing.T) {
 // A raw-text element with no children (e.g. an external script) renders
 // as an empty element.
 func TestRenderEmptyScript(t *testing.T) {
-	in := NewElement("script", attrs(Attr{Name: "src", Value: "/x.js"}), nil, nil)
+	in := NewElement("script", attrs(Attr{Name: "src", Value: "/x.js"}), nil)
 	got := Render(in)
 	want := `<script src="/x.js"></script>`
 	if got != want {
@@ -73,7 +73,7 @@ func TestRenderRawTextRejectsElementChild(t *testing.T) {
 			t.Fatal("expected panic for element child in a raw-text element")
 		}
 	}()
-	in := NewElement("script", attrs(), []Node{NewElement("b", attrs(), nil, nil)}, nil)
+	in := NewElement("script", attrs(), []Node{NewElement("b", attrs(), nil)})
 	Render(in)
 }
 
@@ -87,7 +87,7 @@ func TestRenderTextEscapes(t *testing.T) {
 
 // Ordinary elements still escape their text children.
 func TestRenderNormalElementEscapes(t *testing.T) {
-	in := NewElement("div", attrs(), []Node{Text("a < b & c")}, nil)
+	in := NewElement("div", attrs(), []Node{Text("a < b & c")})
 	got := Render(in)
 	want := "<div>a &lt; b &amp; c</div>"
 	if got != want {
