@@ -74,7 +74,7 @@ func TestTextEscapeRoundTrip(t *testing.T) {
 
 	for i := range iterations {
 		s := randomNastyString(rng)
-		rendered := Render(NewElement("span", attrs(), []Node{Text(s)}, nil))
+		rendered := Render(NewElement("span", attrs(), []Node{Text(s)}))
 		nodes := parseFragment(t, rendered)
 		if len(nodes) != 1 {
 			t.Fatalf("[%d] expected 1 root, got %d for input %q → %q",
@@ -100,7 +100,7 @@ func TestAttrValueEscapeRoundTrip(t *testing.T) {
 
 	for i := range iterations {
 		v := randomNastyString(rng)
-		rendered := Render(NewElement("div", attrs(Attr{Name: "title", Value: v}), nil, nil))
+		rendered := Render(NewElement("div", attrs(Attr{Name: "title", Value: v}), nil))
 		nodes := parseFragment(t, rendered)
 		if len(nodes) != 1 {
 			t.Fatalf("[%d] expected 1 root, got %d for value %q → %q",
@@ -148,7 +148,7 @@ func TestAttrEscapeNeverBreaksOutOfQuotes(t *testing.T) {
 
 	for i := range iterations {
 		v := randomNastyString(rng)
-		rendered := Render(NewElement("div", attrs(Attr{Name: "x", Value: v}), nil, nil))
+		rendered := Render(NewElement("div", attrs(Attr{Name: "x", Value: v}), nil))
 		// Find the attribute value between the quotes.
 		// Rendered form: <div x="...">
 		start := strings.Index(rendered, `x="`)

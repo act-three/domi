@@ -113,11 +113,13 @@ var (
 )
 
 const (
-	genMaxDepth    = 4
-	genMaxChildren = 5
-	genMaxAttrs    = 3
-	genKeyedChance = 50 // percent
-	genTextChance  = 30 // percent
+	genMaxDepth         = 4
+	genMaxChildren      = 5
+	genMaxAttrs         = 3
+	genAllKeyedChance   = 25 // percent of parents with every child keyed
+	genAllUnkeyedChance = 25 // percent of parents with no child keyed
+	genChildKeyChance   = 40 // percent per child, in the remaining mixed parents
+	genTextChance       = 30 // percent
 )
 
 func genElement(seed uint64, depth int) Element {
@@ -129,30 +131,45 @@ func genElement(seed uint64, depth int) Element {
 		n = rng.IntN(genMaxChildren + 1)
 	}
 	if n == 0 {
-		return NewElement(tag, attrs, nil, nil)
+		return NewElement(tag, attrs, nil)
+	}
+	return NewElement(tag, attrs, genKids(rng, n, depth+1))
+}
+
+// genKids generates a child list of n children at the given depth,
+// picking the list's shape first: every child keyed, none, or a
+// per-child mix. The pure shapes are the differ's degenerate cases and
+// the mix exercises the general one; keeping all three common
+// preserves coverage of each. Shared by elements and root lists —
+// roots are the domi-root mount's children and reconcile the same way.
+func genKids(rng *rand.Rand, n, depth int) []Node {
+	var keyChance int
+	switch mode := rng.IntN(100); {
+	case mode < genAllKeyedChance:
+		keyChance = 100
+	case mode < genAllKeyedChance+genAllUnkeyedChance:
+		keyChance = 0
+	default:
+		keyChance = genChildKeyChance
 	}
 
-	// Decide whether this is a keyed parent. Keyed children must all be
-	// elements (no text), so we always generate elements when keyed.
-	keyed := rng.IntN(100) < genKeyedChance && n <= len(genKeys)
-	if keyed {
-		keys := slices.Clone(genKeys)
-		rng.Shuffle(len(keys), func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
-		keys = keys[:n]
-		children := make([]Node, n)
-		for i := range n {
-			// Mirror what domi.Keyed does at construction: append the
-			// data-domi-key attribute so the rendered HTML carries the
-			// identity the diff/apply round-trip needs.
-			children[i] = genElement(rng.Uint64(), depth+1).WithAttr(Attr{Name: "data-domi-key", Value: keys[i]})
+	avail := slices.Clone(genKeys)
+	rng.Shuffle(len(avail), func(i, j int) { avail[i], avail[j] = avail[j], avail[i] })
+	children := make([]Node, n)
+	for i := range n {
+		if rng.IntN(100) < keyChance && len(avail) > 0 {
+			// WithKey mirrors domi's lowering: the key rides the element
+			// and its data-domi-key attribute, so the rendered HTML
+			// carries the identity the diff/apply round-trip needs. (A
+			// keyed child must be an element, so a keyed slot always
+			// generates one.)
+			children[i] = genElement(rng.Uint64(), depth).WithKey(avail[0])
+			avail = avail[1:]
+		} else {
+			children[i] = genNode(rng.Uint64(), depth)
 		}
-		return NewElement(tag, attrs, children, keys)
 	}
-	children := make([]Node, 0, n)
-	for range n {
-		children = append(children, genNode(rng.Uint64(), depth+1))
-	}
-	return NewElement(tag, attrs, children, nil)
+	return children
 }
 
 func genNode(seed uint64, depth int) Node {
@@ -163,17 +180,13 @@ func genNode(seed uint64, depth int) Node {
 	return genElement(rng.Uint64(), depth)
 }
 
-// genChildren generates a random child list — the shape a lowered View
-// takes, and the shape [Diff] diffs. Adjacent text nodes are allowed;
-// Diff coalesces them, like it does for a production view.
+// genChildren generates a random root list — the shape a lowered View
+// takes, and the shape [Diff] diffs — with the same keyed/unkeyed
+// shapes as any child list. Adjacent text nodes are allowed; Diff
+// coalesces them, like it does for a production view.
 func genChildren(seed uint64) []Node {
 	rng := rand.New(rand.NewPCG(seed, 0xC0FFEE))
-	n := rng.IntN(genMaxChildren + 1)
-	children := make([]Node, 0, n)
-	for range n {
-		children = append(children, genNode(rng.Uint64(), 0))
-	}
-	return children
+	return genKids(rng, rng.IntN(genMaxChildren+1), 0)
 }
 
 func genAttrs(seed uint64) iter.Seq[Attr] {
@@ -302,8 +315,8 @@ func renderList(nodes []Node) string {
 func TestSetAttrEmptyValueAppliesAsEmptyString(t *testing.T) {
 	a := startBunApplier(t)
 
-	old := []Node{NewElement("div", attrs(), nil, nil)}
-	new := []Node{NewElement("div", attrs(Attr{Name: "class", Value: ""}), nil, nil)}
+	old := []Node{NewElement("div", attrs(), nil)}
+	new := []Node{NewElement("div", attrs(Attr{Name: "class", Value: ""}), nil)}
 
 	gotHTML, err := a.apply(renderList(old), diffList(old, new))
 	if err != nil {
@@ -339,6 +352,87 @@ func TestTextToEmptyRemovesTextNode(t *testing.T) {
 	got := canonicalize(t, gotHTML)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %s, want %s (raw html: %s)", jsonStr(got), jsonStr(want), gotHTML)
+	}
+}
+
+// roundTrip diffs old against new, applies the patches through the
+// production client applier, and asserts the resulting DOM matches
+// render(new) canonically.
+func roundTrip(t *testing.T, a *bunApplier, old, new []Node) {
+	t.Helper()
+	patches := diffList(old, new)
+	gotHTML, err := a.apply(renderList(old), patches)
+	if err != nil {
+		t.Fatalf("bun apply: %v\npatches: %s", err, patchDebug(patches))
+	}
+	want := canonicalize(t, "<domi-root>"+renderList(new)+"</domi-root>")
+	got := canonicalize(t, gotHTML)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %s, want %s (raw html: %s)\npatches: %s",
+			jsonStr(got), jsonStr(want), gotHTML, patchDebug(patches))
+	}
+}
+
+// TestMixedShuffleRoundTrip drives the motivating counterexample for
+// gap simulation — [K:a, u, K:b] → [K:b, u, K:a] — through the real
+// client applier: the keyed move strands u at the tail, and the gap
+// patches must bring it back to the middle.
+func TestMixedShuffleRoundTrip(t *testing.T) {
+	a := startBunApplier(t)
+	old := []Node{mixed("ul", kid{"a", li("a")}, kid{"", li("u")}, kid{"b", li("b")})}
+	new := []Node{mixed("ul", kid{"b", li("b")}, kid{"", li("u")}, kid{"a", li("a")})}
+	roundTrip(t, a, old, new)
+}
+
+// TestMixedFooterAppendRoundTrip pins the client half of the empty-
+// Before anchor rule: the inserted item must land between the keyed
+// run and the unkeyed footer, not after the footer.
+func TestMixedFooterAppendRoundTrip(t *testing.T) {
+	a := startBunApplier(t)
+	old := []Node{mixed("ul", kid{"", li("header")}, kid{"a", li("a")}, kid{"", li("footer")})}
+	new := []Node{mixed("ul", kid{"", li("header")}, kid{"a", li("a")}, kid{"b", li("b")}, kid{"", li("footer")})}
+	roundTrip(t, a, old, new)
+}
+
+// TestEmptyBeforeMoveAlreadyLastKeyedClientNoOp pins the other client
+// half of the empty-Before rule with a hand-built patch: moving the
+// last keyed child "after the last keyed child" must hold it still
+// rather than hoist it over the unkeyed content behind it.
+func TestEmptyBeforeMoveAlreadyLastKeyedClientNoOp(t *testing.T) {
+	a := startBunApplier(t)
+	initial := `<ul><li data-domi-key="a">a</li><li>u0</li><li data-domi-key="b">b</li><li>u1</li></ul>`
+	gotHTML, err := a.apply(initial, []patch{{Op: "MoveChild", Path: []int{0}, Key: "b"}})
+	if err != nil {
+		t.Fatalf("bun apply: %v", err)
+	}
+	want := canonicalize(t, "<domi-root>"+initial+"</domi-root>")
+	got := canonicalize(t, gotHTML)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("move should be a no-op, got %s, want %s", jsonStr(got), jsonStr(want))
+	}
+}
+
+// TestReplaceKeepsChildMapInStep pins the client's keyed-child map
+// maintenance across a Replace: replacing a keyed child (the patch a
+// key-matched tag or opacity change produces) must update the cached
+// map, or a later keyed op resolves to the detached old node —
+// resurrecting it here, where the final move would otherwise bring
+// back the pre-Replace content.
+func TestReplaceKeepsChildMapInStep(t *testing.T) {
+	a := startBunApplier(t)
+	initial := `<ul><li data-domi-key="a">a</li><li data-domi-key="b">b</li></ul>`
+	gotHTML, err := a.apply(initial, []patch{
+		{Op: "MoveChild", Path: []int{0}, Key: "b", Before: "a"},                  // primes the map; [b, a]
+		{Op: "Replace", Path: []int{0, 1}, HTML: `<li data-domi-key="a">a2</li>`}, // [b, a2]
+		{Op: "MoveChild", Path: []int{0}, Key: "a", Before: "b"},                  // [a2, b]
+	})
+	if err != nil {
+		t.Fatalf("bun apply: %v", err)
+	}
+	want := canonicalize(t, `<domi-root><ul><li data-domi-key="a">a2</li><li data-domi-key="b">b</li></ul></domi-root>`)
+	got := canonicalize(t, gotHTML)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %s, want %s", jsonStr(got), jsonStr(want))
 	}
 }
 

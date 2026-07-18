@@ -8,7 +8,7 @@ import (
 
 // el builds an element with no attrs from a tag and child list.
 func el(tag string, children ...Node) Element {
-	return NewElement(tag, attrs(), children, nil)
+	return NewElement(tag, attrs(), children)
 }
 
 // tx builds a text node.
@@ -20,18 +20,14 @@ func at(name, value string) Attr { return Attr{Name: name, Value: value} }
 // attrs wraps a slice as an iterator for NewElement.
 func attrs(a ...Attr) iter.Seq[Attr] { return slices.Values(a) }
 
-// keyedList builds a keyed <ul> whose children are <li>s named for each key.
-// Each <li> carries a data-domi-key attribute matching its key — what the
-// domi-side Keyed constructor injects at construction time.
+// keyedList builds a keyed <ul> whose children are <li>s named for each
+// key, each keyed via WithKey — what domi's lowering produces.
 func keyedList(keys ...string) Element {
 	children := make([]Node, len(keys))
 	for i, k := range keys {
-		children[i] = NewElement("li",
-			attrs(Attr{Name: "data-domi-key", Value: k}),
-			[]Node{Text(k)},
-			nil)
+		children[i] = NewElement("li", attrs(), []Node{Text(k)}).WithKey(k)
 	}
-	return NewElement("ul", attrs(), children, slices.Clone(keys))
+	return NewElement("ul", attrs(), children)
 }
 
 // diffOne returns the unwrapped patch slice for two single-root trees,
@@ -162,7 +158,7 @@ func TestKeyedRemove(t *testing.T) {
 
 func TestAttrAdded(t *testing.T) {
 	a := el("div")
-	b := NewElement("div", attrs(at("class", "x")), nil, nil)
+	b := NewElement("div", attrs(at("class", "x")), nil)
 	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "SetAttr" || got[0].Name != "class" || got[0].Value != "x" {
 		t.Fatalf("expected single SetAttr, got %+v", got)
@@ -170,8 +166,8 @@ func TestAttrAdded(t *testing.T) {
 }
 
 func TestAttrChanged(t *testing.T) {
-	a := NewElement("div", attrs(at("class", "x")), nil, nil)
-	b := NewElement("div", attrs(at("class", "y")), nil, nil)
+	a := NewElement("div", attrs(at("class", "x")), nil)
+	b := NewElement("div", attrs(at("class", "y")), nil)
 	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "SetAttr" || got[0].Value != "y" {
 		t.Fatalf("expected SetAttr to y, got %+v", got)
@@ -179,7 +175,7 @@ func TestAttrChanged(t *testing.T) {
 }
 
 func TestAttrRemoved(t *testing.T) {
-	a := NewElement("div", attrs(at("class", "x")), nil, nil)
+	a := NewElement("div", attrs(at("class", "x")), nil)
 	b := el("div")
 	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "RemoveAttr" || got[0].Name != "class" {
@@ -193,7 +189,7 @@ func TestPositionalReorderPatchesAttrs(t *testing.T) {
 		if selected {
 			a = append(a, at("data-selected", ""))
 		}
-		return NewElement("a", attrs(a...), []Node{tx(title)}, nil)
+		return NewElement("a", attrs(a...), []Node{tx(title)})
 	}
 	a := el("div",
 		row("/app/movies/mo123", "New Movie", true),
@@ -468,10 +464,10 @@ func TestAdjacentTextCoalescesBeforePositionalDiff(t *testing.T) {
 // overwriting whatever the first sibling's stored patch put there.
 func TestDiffPathNotAliasedAcrossSiblings(t *testing.T) {
 	plain := func(children ...Node) Node {
-		return NewElement("div", attrs(), children, nil)
+		return NewElement("div", attrs(), children)
 	}
 	leaf := func(class string) Node {
-		return NewElement("span", attrs(Attr{Name: "class", Value: class}), nil, nil)
+		return NewElement("span", attrs(Attr{Name: "class", Value: class}), nil)
 	}
 	old := plain(plain(plain(plain(leaf("old"), leaf("a"), leaf("b"), leaf("c")))))
 	next := plain(plain(plain(plain(leaf("new"), leaf("a"), leaf("b"), leaf("c")))))
@@ -484,6 +480,164 @@ func TestDiffPathNotAliasedAcrossSiblings(t *testing.T) {
 	}
 	if !slices.Equal(got[0].Path, []int{0, 0, 0, 0}) {
 		t.Fatalf("SetAttr should target first leaf at [0,0,0,0], got %v", got[0].Path)
+	}
+}
+
+// ---- mixed keyed/unkeyed children tests ----
+
+// kid is one child of a [mixed] test element: its key ("" for an
+// unkeyed child) and the node itself.
+type kid struct {
+	key string
+	n   Node
+}
+
+// mixed builds an element from (key, node) pairs, keying the children
+// with nonempty keys via WithKey.
+func mixed(tag string, kids ...kid) Element {
+	children := make([]Node, len(kids))
+	for i, k := range kids {
+		children[i] = k.n
+		if k.key != "" {
+			children[i] = k.n.(Element).WithKey(k.key)
+		}
+	}
+	return NewElement(tag, attrs(), children)
+}
+
+// li builds a list item wrapping text s.
+func li(s string) Element { return el("li", tx(s)) }
+
+// The headline mixed case: unkeyed header, keyed run, unkeyed footer.
+// Appending an item to the run emits exactly one insert — anchored
+// after the last keyed child via the empty Before — and touches
+// neither header nor footer, so footer DOM state (a text selection,
+// say) survives the append.
+func TestMixedFooterAppendSingleInsert(t *testing.T) {
+	old := mixed("ul", kid{"", li("header")}, kid{"a", li("a")}, kid{"", li("footer")})
+	new := mixed("ul", kid{"", li("header")}, kid{"a", li("a")}, kid{"b", li("b")}, kid{"", li("footer")})
+	got := diffOne(old, new)
+	if len(got) != 1 {
+		t.Fatalf("want exactly 1 patch, got %d: %+v", len(got), got)
+	}
+	if p := got[0]; p.Op != "InsertChild" || p.Key != "b" || p.Before != "" {
+		t.Fatalf(`want InsertChild key=b before="", got %+v`, p)
+	}
+}
+
+// A keyed swap around unkeyed content — the case that forces gap
+// pairing against the simulated post-keyed-phase list rather than the
+// old tree. The move leaves u trailing ([u, b, a]); the gap diffs then
+// rebuild the gaps to reach [b, u, a].
+func TestMixedShuffleAroundUnkeyedRepairsGaps(t *testing.T) {
+	old := mixed("ul", kid{"a", li("a")}, kid{"", li("u")}, kid{"b", li("b")})
+	new := mixed("ul", kid{"b", li("b")}, kid{"", li("u")}, kid{"a", li("a")})
+	got := diffOne(old, new)
+	want := []patch{
+		{Op: "MoveChild", Key: "a", Before: ""},
+		{Op: "RemoveChild", Index: ptr(0)},
+		{Op: "InsertChild", Index: ptr(1)},
+	}
+	if !slices.EqualFunc(got, want, func(a, b patch) bool {
+		return a.Op == b.Op && a.Key == b.Key && a.Before == b.Before &&
+			(a.Index == nil) == (b.Index == nil) &&
+			(a.Index == nil || *a.Index == *b.Index)
+	}) {
+		t.Fatalf("got %+v, want %+v", got, want)
+	}
+}
+
+func ptr(i int) *int { return &i }
+
+// Removing the keyed separator between two text nodes leaves them
+// adjacent in the live DOM while the new tree holds one coalesced
+// Text; the gap diff converges them — surplus node removed, survivor
+// SetText'd — because the simulated gap stays uncoalesced, mirroring
+// real childNodes.
+func TestMixedTextMergesWhenSeparatorRemoved(t *testing.T) {
+	old := mixed("div", kid{"", tx("a")}, kid{"x", el("span")}, kid{"", tx("b")})
+	new := el("div", tx("ab"))
+	got := diffOne(old, new)
+	if len(got) != 3 {
+		t.Fatalf("want 3 patches, got %d: %+v", len(got), got)
+	}
+	if got[0].Op != "RemoveChild" || got[0].Key != "x" {
+		t.Fatalf("want RemoveChild key=x first, got %+v", got[0])
+	}
+	if got[1].Op != "RemoveChild" || got[1].Index == nil || *got[1].Index != 1 {
+		t.Fatalf("want RemoveChild index=1 second, got %+v", got[1])
+	}
+	if got[2].Op != "SetText" || !slices.Equal(got[2].Path, []int{0}) || got[2].Value != "ab" {
+		t.Fatalf("want SetText [0] value=ab last, got %+v", got[2])
+	}
+}
+
+// A key-matched pair's deferred content diff addresses the child by
+// its childNodes index in the whole new list, not its index in the
+// keyed subsequence: here key a is the second child but the first
+// keyed one.
+func TestMixedDeferredContentPathIsGlobal(t *testing.T) {
+	old := mixed("div", kid{"", el("span", tx("hdr"))}, kid{"a", li("x")})
+	new := mixed("div", kid{"", el("span", tx("hdr"))}, kid{"a", li("y")})
+	got := diffOne(old, new)
+	if len(got) != 1 || got[0].Op != "SetText" || !slices.Equal(got[0].Path, []int{1, 0}) || got[0].Value != "y" {
+		t.Fatalf("want single SetText at [1 0], got %+v", got)
+	}
+}
+
+// A child list whose key structure changes between renders reconciles
+// like anything else — no wholesale Replace of the parent in either
+// direction.
+func TestKeyStructureChangeReconciles(t *testing.T) {
+	keyed := mixed("ul", kid{"a", li("a")})
+	plain := el("ul", li("z"))
+	for name, pair := range map[string][2]Node{
+		"keyed to plain": {keyed, plain},
+		"plain to keyed": {plain, keyed},
+	} {
+		got := diffOne(pair[0], pair[1])
+		ins, rm, mv := countOps(got)
+		if ins != 1 || rm != 1 || mv != 0 {
+			t.Fatalf("%s: want 1 insert + 1 remove, got ins=%d rm=%d mv=%d: %+v", name, ins, rm, mv, got)
+		}
+		for _, p := range got {
+			if p.Op == "Replace" {
+				t.Fatalf("%s: key structure change must reconcile, not Replace: %+v", name, got)
+			}
+		}
+	}
+}
+
+// A Before:"" move whose subject is already the last keyed child stays
+// put rather than leapfrogging the unkeyed content behind it. The
+// client's insertAfterLastKeyed mirrors this.
+func TestSimulateEmptyBeforeAlreadyLastKeyedHoldsStill(t *testing.T) {
+	kids := []Node{li("a").WithKey("a"), li("u0"), li("b").WithKey("b"), li("u1")}
+	sim := simulate(kids, []patch{{Op: "MoveChild", Key: "b"}})
+	want := []string{"a", "", "b", ""}
+	got := make([]string, len(sim))
+	for i, n := range sim {
+		got[i] = childKey(n)
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("sim keys = %v, want unchanged %v", got, want)
+	}
+}
+
+// An opaque node keeps its freeze inside a mixed parent: unkeyed
+// siblings around it diff positionally while the opaque child is
+// matched by key and left alone.
+func TestOpaqueSurvivesInMixedParent(t *testing.T) {
+	build := func(body, footer string) Element {
+		return mixed("main",
+			kid{"", el("p", tx("intro"))},
+			kid{"v", NewElement("div", attrs(Opaque), []Node{tx(body)})},
+			kid{"", el("p", tx(footer))},
+		)
+	}
+	got := diffOne(build("first", "foot"), build("second", "toes"))
+	if len(got) != 1 || got[0].Op != "SetText" || !slices.Equal(got[0].Path, []int{2, 0}) {
+		t.Fatalf("want only the footer SetText at [2 0], got %+v", got)
 	}
 }
 
@@ -527,14 +681,10 @@ type okEntry struct{ key, body string }
 // the differ leaves them alone.
 func okeyed(entries ...okEntry) Element {
 	children := make([]Node, len(entries))
-	keys := make([]string, len(entries))
 	for i, e := range entries {
-		keys[i] = e.key
-		children[i] = NewElement("div",
-			attrs(at("data-domi-key", e.key), Opaque),
-			[]Node{tx(e.body)}, nil)
+		children[i] = NewElement("div", attrs(Opaque), []Node{tx(e.body)}).WithKey(e.key)
 	}
-	return NewElement("main", attrs(), children, keys)
+	return NewElement("main", attrs(), children)
 }
 
 // An opaque keyed child is frozen: its body changes but the differ emits
@@ -551,12 +701,10 @@ func TestOpaqueFreezesSubtree(t *testing.T) {
 // descendants.
 func TestOpaqueFreezesOwnAttrs(t *testing.T) {
 	child := func(class string) Node {
-		return NewElement("div",
-			attrs(at("class", class), at("data-domi-key", "v"), Opaque),
-			nil, nil)
+		return NewElement("div", attrs(at("class", class), Opaque), nil).WithKey("v")
 	}
-	a := NewElement("main", attrs(), []Node{child("x")}, []string{"v"})
-	b := NewElement("main", attrs(), []Node{child("y")}, []string{"v"})
+	a := NewElement("main", attrs(), []Node{child("x")})
+	b := NewElement("main", attrs(), []Node{child("y")})
 	if got := diffOne(a, b); len(got) != 0 {
 		t.Fatalf("opaque element's own attrs must be frozen, got %+v", got)
 	}
@@ -626,11 +774,11 @@ func TestOpaqueKeyChangeRemounts(t *testing.T) {
 // framework with a clean Replace.
 func TestOpaqueToggleReplaces(t *testing.T) {
 	opaque := NewElement("main", attrs(), []Node{
-		NewElement("div", attrs(at("data-domi-key", "k"), Opaque), []Node{tx("x")}, nil),
-	}, []string{"k"})
+		NewElement("div", attrs(Opaque), []Node{tx("x")}).WithKey("k"),
+	})
 	plain := NewElement("main", attrs(), []Node{
-		NewElement("div", attrs(at("data-domi-key", "k")), []Node{tx("x")}, nil),
-	}, []string{"k"})
+		NewElement("div", attrs(), []Node{tx("x")}).WithKey("k"),
+	})
 	got := diffOne(opaque, plain)
 	if len(got) != 1 || got[0].Op != "Replace" || !slices.Equal(got[0].Path, []int{0}) {
 		t.Fatalf("opacity toggle should Replace at [0], got %+v", got)
@@ -645,8 +793,8 @@ func TestOpaquePositionalChildPanics(t *testing.T) {
 			t.Fatal("expected panic for opaque positional child")
 		}
 	}()
-	opaque := NewElement("div", attrs(Opaque), nil, nil)
-	_ = NewElement("section", attrs(), []Node{opaque}, nil)
+	opaque := NewElement("div", attrs(Opaque), nil)
+	_ = NewElement("section", attrs(), []Node{opaque})
 }
 
 // A top-level opaque node has no keyed parent to give it identity, so the
@@ -657,6 +805,6 @@ func TestOpaqueRootPanics(t *testing.T) {
 			t.Fatal("expected panic for opaque root node")
 		}
 	}()
-	opaque := NewElement("div", attrs(Opaque), nil, nil)
+	opaque := NewElement("div", attrs(Opaque), nil)
 	_ = Diff(nil, []Node{opaque})
 }

@@ -1614,14 +1614,11 @@ func (a *sortApp) Update(_ context.Context, m moveMsg) Cmd[moveMsg] {
 }
 
 func (a *sortApp) View(context.Context) (string, Node) {
-	return "", Keyed("ul")(On("change", func(jsontext.Value) (moveMsg, error) { return a.move, nil }))(
-		func(yield func(string, Node) bool) {
-			for _, k := range a.order {
-				if !yield(k, Tag("li")()(Text(k))) {
-					return
-				}
-			}
-		})
+	rows := make([]Node, len(a.order))
+	for i, k := range a.order {
+		rows[i] = WithKey(k, Tag("li")()(Text(k)))
+	}
+	return "", Tag("ul")(On("change", func(jsontext.Value) (moveMsg, error) { return a.move, nil }))(rows...)
 }
 
 func (a *sortApp) Subscriptions(context.Context) Sub[moveMsg] { return nil }
@@ -1646,13 +1643,11 @@ func reorder(order []string, key, before string) []string {
 // keyedUL builds the same keyed <ul> a sortApp renders, minus the handler —
 // for constructing expected reconstructions.
 func keyedUL(keys ...string) Node {
-	return Keyed("ul")()(func(yield func(string, Node) bool) {
-		for _, k := range keys {
-			if !yield(k, Tag("li")()(Text(k))) {
-				return
-			}
-		}
-	})
+	rows := make([]Node, len(keys))
+	for i, k := range keys {
+		rows[i] = WithKey(k, Tag("li")()(Text(k)))
+	}
+	return Tag("ul")()(rows...)
 }
 
 func lastFrame[Msg any](s *session[Msg]) frame {

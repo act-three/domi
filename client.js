@@ -52,6 +52,34 @@ function indexOf(nodes, node) {
   return -1;
 }
 
+// isKeyed reports whether node is an element carrying a data-domi-key
+// attribute — the keyedness test that anchor resolution and move
+// vetting share. An empty-valued attribute counts as keyed here,
+// unlike at the sites that read the key's value and treat "" as
+// absent; that asymmetry belongs to the reserved-attribute question
+// and is preserved as is.
+function isKeyed(node) {
+  return !!(node.dataset && node.dataset.domiKey != null);
+}
+
+// insertAfterLastKeyed resolves a keyed op's empty `Before` anchor:
+// node lands immediately after the parent's last keyed child, so any
+// unkeyed content trailing the keyed run (a footer, say) stays after
+// the run instead of being leapfrogged. When node itself is the last
+// keyed child it stays put — hoisting it over the unkeyed content
+// between it and the next keyed child would be gratuitous churn. With
+// no keyed child at all, plain append; the gap patches that follow
+// repair any imprecision. Must mirror the differ's simulation exactly.
+function insertAfterLastKeyed(parent, node) {
+  for (let c = parent.lastElementChild; c; c = c.previousElementSibling) {
+    if (isKeyed(c)) {
+      if (c !== node) parent.insertBefore(node, c.nextSibling);
+      return;
+    }
+  }
+  parent.appendChild(node);
+}
+
 // uniqueKey returns a key derived from key that is not present in map. It
 // scans until it finds an unused one, so uniqueness is guaranteed by the
 // check, not by the derivation; the marker is purely internal and has no
@@ -79,7 +107,7 @@ function applyClientMutations(root, muts) {
       console.warn('domi: unknown mutation op', m.op);
       return null;
     }
-    if (!moveOK(m)) {
+    if (!moveOK(root, m)) {
       console.warn('domi: malformed move, skipping optimistic commit', m);
       return null;
     }
@@ -87,13 +115,20 @@ function applyClientMutations(root, muts) {
   return muts.map((m) => applyMove(root, m.node, m.before ?? null, m.into ?? null));
 }
 
-// moveOK reports whether a move can be applied: its node is connected and
-// keyed, and it has a destination — an anchor's parent, or an explicit
-// container. Mirrors applyMove's preconditions so a set can be vetted
-// before any of it touches the DOM.
-function moveOK(m) {
+// moveOK reports whether a move can be applied: its node is a keyed
+// element inside root, and it has a destination — an anchor's parent,
+// or an explicit container — that is itself an element inside root
+// (an app-supplied text or detached destination would otherwise throw
+// halfway through a vetted set). An anchor, when given, must itself
+// be keyed: the wire op names it by key, so an unkeyed anchor would
+// be reported as a plain append and the server's replay would diverge
+// from the DOM. Mirrors applyMove's preconditions so a set can be
+// vetted before any of it touches the DOM.
+function moveOK(root, m) {
   const dst = m.before ? m.before.parentNode : m.into;
-  return !!(m.node && m.node.parentNode && dst && m.node.dataset && m.node.dataset.domiKey != null);
+  if (!(dst && dst.nodeType === 1 && root.contains(dst))) return false;
+  if (m.before && !isKeyed(m.before)) return false;
+  return !!(m.node && m.node.parentNode && root.contains(m.node) && isKeyed(m.node));
 }
 
 // applyMove relocates the keyed node before `before`, or appends it into
@@ -142,7 +177,20 @@ function applyPatch(root, p) {
   switch (p.Op) {
     case 'Replace': {
       const node = walk(root, p.Path);
-      node.parentNode.replaceChild(fragmentFromHTML(p.HTML).firstChild, node);
+      const parent = node.parentNode;
+      const fresh = fragmentFromHTML(p.HTML).firstChild;
+      parent.replaceChild(fresh, node);
+      // Keep the parent's keyed-child map in step: either node may be
+      // keyed (a Replace is emitted for a key-matched pair whose tag
+      // or opacity changed), and a stale entry would point later keyed
+      // ops at the detached node.
+      const map = parent.__domiChildren;
+      if (map) {
+        const oldKey = node.dataset && node.dataset.domiKey;
+        if (oldKey != null) map.delete(oldKey);
+        const newKey = fresh.dataset && fresh.dataset.domiKey;
+        if (newKey != null) map.set(newKey, fresh);
+      }
       break;
     }
     case 'SetText': {
@@ -172,8 +220,11 @@ function applyPatch(root, p) {
       const newNode = fragmentFromHTML(p.HTML).firstChild;
       if (p.Key != null) {
         const map = childMap(parent);
-        const anchor = p.Before ? map.get(p.Before) : null;
-        parent.insertBefore(newNode, anchor || null);
+        if (p.Before) {
+          parent.insertBefore(newNode, map.get(p.Before) || null);
+        } else {
+          insertAfterLastKeyed(parent, newNode);
+        }
         map.set(p.Key, newNode);
       } else {
         parent.insertBefore(newNode, parent.childNodes[p.Index] || null);
@@ -199,8 +250,13 @@ function applyPatch(root, p) {
       if (p.Key != null) {
         const map = childMap(parent);
         const node = map.get(p.Key);
-        const anchor = p.Before ? map.get(p.Before) : null;
-        if (node) parent.insertBefore(node, anchor || null);
+        if (node) {
+          if (p.Before) {
+            parent.insertBefore(node, map.get(p.Before) || null);
+          } else {
+            insertAfterLastKeyed(parent, node);
+          }
+        }
       } else {
         const node = parent.childNodes[p.From];
         parent.removeChild(node);

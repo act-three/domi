@@ -17,9 +17,8 @@ func Render(n Node) string {
 // RenderTo writes the HTML for a Node tree to w.
 // The only errors returned are from w.
 //
-// Keyed and unkeyed elements render identically — for keyed children,
-// data-domi-key is already in Attrs (injected by domi.Keyed at
-// construction).
+// Keyed and unkeyed children render identically — for keyed children,
+// data-domi-key is already in Attrs (injected by domi's lowering).
 func RenderTo(w io.Writer, n Node) error {
 	switch v := n.(type) {
 	case Text:

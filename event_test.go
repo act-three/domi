@@ -59,18 +59,40 @@ func TestOnAddressDistinguishesPosition(t *testing.T) {
 // children by identity and emits moves rather than rewrites.
 func TestOnKeyedAddressSurvivesReorder(t *testing.T) {
 	build := func(order ...string) ([]vdom.Node, handlers) {
-		return lower(0, Keyed("ul")()(func(yield func(string, Node) bool) {
-			for _, k := range order {
-				if !yield(k, Tag("li")(On("click", msgFn(k)))(Text(k))) {
-					return
-				}
-			}
-		}))
+		rows := make([]Node, len(order))
+		for i, k := range order {
+			rows[i] = WithKey(k, Tag("li")(On("click", msgFn(k)))(Text(k)))
+		}
+		return lower(0, Tag("ul")()(rows...))
 	}
 	_, ha := build("a", "b", "c")
 	_, hb := build("c", "a", "b")
 	if !maps.Equal(keysOf(ha), keysOf(hb)) {
 		t.Fatalf("keyed reorder changed handler keys: %v vs %v", keysOf(ha), keysOf(hb))
+	}
+}
+
+// In a mixed child list, an unkeyed child's address follows its gap —
+// the run of unkeyed children it occupies, numbered by the keyed
+// siblings before it — so reordering the keyed run around unchanged
+// unkeyed content renames nothing: the header's and footer's handler
+// keys survive alongside the keyed children's.
+func TestOnMixedAddressSurvivesKeyedReorder(t *testing.T) {
+	build := func(order ...string) ([]vdom.Node, handlers) {
+		rows := make([]Node, len(order))
+		for i, k := range order {
+			rows[i] = WithKey(k, Tag("li")(On("click", msgFn(k)))(Text(k)))
+		}
+		return lower(0, Tag("ul")()(
+			Tag("li")(On("click", msgFn("header")))(Text("header")),
+			Fragment(rows...),
+			Tag("li")(On("click", msgFn("footer")))(Text("footer")),
+		))
+	}
+	_, ha := build("a", "b", "c")
+	_, hb := build("c", "a", "b")
+	if !maps.Equal(keysOf(ha), keysOf(hb)) {
+		t.Fatalf("mixed reorder changed handler keys: %v vs %v", keysOf(ha), keysOf(hb))
 	}
 }
 
