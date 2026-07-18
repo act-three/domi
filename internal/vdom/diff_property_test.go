@@ -163,7 +163,7 @@ func genKids(rng *rand.Rand, n, depth int) []Node {
 			// carries the identity the diff/apply round-trip needs. (A
 			// keyed child must be an element, so a keyed slot always
 			// generates one.)
-			children[i] = genElement(rng.Uint64(), depth).WithKey(avail[0])
+			children[i] = genElement(rng.Uint64(), depth).WithKey(avail[0], false)
 			avail = avail[1:]
 		} else {
 			children[i] = genNode(rng.Uint64(), depth)

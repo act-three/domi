@@ -650,13 +650,13 @@ func TestRegularBoolStillUsesPresenceAbsence(t *testing.T) {
 
 // ---- Opaque tests ----
 
-// Opaque marks a keyed child client-owned: the framework freezes it and
+// WithKeyOpaque marks a keyed child client-owned: the framework freezes it and
 // its subtree, emitting no patches even as the contents change. This pins
-// the public Opaque attribute to the differ's freeze behavior end to end.
+// the public WithKeyOpaque constructor to the differ's freeze behavior end to end.
 func TestOpaqueKeyedChildFreezes(t *testing.T) {
 	build := func(body string) []vdom.Node {
 		return lowerNodes(Tag("main")()(
-			WithKey("player", Tag("div")(Opaque, Name("data-controller")("player"))(Text(body))),
+			WithKeyOpaque("player", Tag("div")(Name("data-controller")("player"))(Text(body))),
 		))
 	}
 	if got := vdom.Diff(build("first"), build("second")); len(got) != 0 {
@@ -664,12 +664,12 @@ func TestOpaqueKeyedChildFreezes(t *testing.T) {
 	}
 }
 
-// Opaque is an internal construction directive, not an HTML attribute, so
+// Opaqueness is an internal construction directive, not an HTML attribute, so
 // it never reaches the rendered output — unlike data-domi-key, which the
 // client reads and which stays in the markup.
 func TestOpaqueNotRendered(t *testing.T) {
 	html := vdom.Render(lowerOneNode(Tag("ul")()(
-		WithKey("a", Tag("li")(Opaque, Name("class")("widget"))(Text("x"))),
+		WithKeyOpaque("a", Tag("li")(Name("class")("widget"))(Text("x"))),
 	)))
 	if strings.Contains(html, "opaque") {
 		t.Fatalf("internal opaque marker leaked into HTML: %q", html)
@@ -679,34 +679,17 @@ func TestOpaqueNotRendered(t *testing.T) {
 	}
 }
 
-// An opaque node placed positionally rather than as a keyed child panics,
-// so the safety property can't be requested where the differ can't honor
-// it. The panic surfaces here at the Tag construction that introduced
-// the violation.
-func TestOpaquePositionalPanics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for opaque non-keyed node")
-		}
-	}()
-	_ = lowerOneNode(Tag("section")()(Tag("div")(Opaque)(Text("x"))))
-}
-
-// The opaque check runs at construction, not lowering, so the panic's
-// stack trace points at the Tag call holding the misplaced child —
-// whether the child arrives as a finished element, a childless Element
-// builder, inside a Fragment, or with Opaque tucked into a Group.
-func TestOpaquePositionalPanicsAtConstruction(t *testing.T) {
+// WithKeyOpaque shares WithKey's construction rules, including the
+// re-keying panic — in either order of the two constructors.
+func TestWithKeyOpaqueTwicePanics(t *testing.T) {
 	for name, build := range map[string]func(){
-		"element":  func() { Tag("section")()(Tag("div")(Opaque)(Text("x"))) },
-		"builder":  func() { Tag("section")()(Tag("div")(Opaque)) },
-		"fragment": func() { Tag("section")()(Fragment(Tag("div")(Opaque)(Text("x")))) },
-		"grouped":  func() { Tag("section")()(Tag("div")(Group(Opaque))()) },
+		"opaque then keyed": func() { WithKey("b", WithKeyOpaque("a", Tag("li")())) },
+		"keyed then opaque": func() { WithKeyOpaque("b", WithKey("a", Tag("li")())) },
 	} {
 		func() {
 			defer func() {
 				if r := recover(); r == nil {
-					t.Fatalf("%s: expected construction-time panic for opaque positional child", name)
+					t.Fatalf("%s: expected panic for a doubly keyed child", name)
 				}
 			}()
 			build()

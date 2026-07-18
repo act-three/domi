@@ -66,10 +66,6 @@ func Textf(format string, a ...any) Node {
 //
 //	Tag("input")()(Text("not rendered")) // <input>
 //
-// Child nodes must not use the [Opaque] attr
-// unless they are keyed (see [WithKey]).
-// If an unkeyed child node is opaque, Element panics.
-//
 // [void elements]: https://html.spec.whatwg.org/multipage/syntax.html#void-elements
 type Element func(child ...Node) Node
 
@@ -83,9 +79,7 @@ func (Element) isNode() {}
 // key is the element's reconciliation key in its parent's child list,
 // set by [WithKey]; empty means unkeyed, reconciled by position.
 //
-// opaque records whether attrs contains the [Opaque] marker, so a
-// parent can reject a misplaced opaque child at construction, where
-// the panic's stack trace points at the offending call.
+// opaque marks the element as ignored by the differ.
 type element struct {
 	tag      string
 	key      string
@@ -120,23 +114,8 @@ func (e element) lowered(a addr) (vdom.Node, handlers) {
 // Helpers for common tags can be found in [ily.dev/domi/html].
 func Tag(name string) func(attr ...Attr) Element {
 	return func(attrs ...Attr) Element {
-		opaque := hasOpaque(attrs)
 		return func(children ...Node) Node {
-			opaqueMustBeKeyed(children)
-			return element{tag: name, attrs: attrs, children: children, opaque: opaque}
-		}
-	}
-}
-
-// opaqueMustBeKeyed panics if children — with fragments expanded —
-// contain an opaque element that carries no key. The differ needs a
-// stable identity for each opaque node, so it must be keyed;
-// see [WithKey]. Checking at construction keeps the panic's
-// stack trace pointing at the call that introduced the violation.
-func opaqueMustBeKeyed(children []Node) {
-	for c := range Fragment(children...).(fragment) {
-		if e, ok := c.(element); ok && e.opaque && e.key == "" {
-			panic("domi: an opaque node must be keyed")
+			return element{tag: name, attrs: attrs, children: children}
 		}
 	}
 }
@@ -157,9 +136,6 @@ func opaqueMustBeKeyed(children []Node) {
 // stable (any given item should be assigned the same key every time),
 // and unique within the enclosing element.
 //
-// A keyed node can optionally use the [Opaque] attr.
-// See [Opaque] for details on its behavior.
-//
 // Node n must be an element, not Text or a Fragment.
 // If n is not an element, WithKey panics.
 // If n already has a key, WithKey panics.
@@ -178,6 +154,22 @@ func WithKey(key string, n Node) Node {
 		panic(fmt.Sprintf("domi: keyed node %q already has key %q", key, e.key))
 	}
 	e.key = key
+	return e
+}
+
+// WithKeyOpaque assigns key to n,
+// just as [WithKey] does,
+// and additionally marks n as opaque, ignored by the virtual DOM diff.
+// An opaque node is inserted,
+// and then never modified until its eventual removal (if any).
+// Any changes to its contents during its existence are ignored.
+// This allows client-side browser code to take ownership of the node
+// without worrying about patches modifying it underfoot.
+//
+// The key requirements and panics are as for [WithKey].
+func WithKeyOpaque(key string, n Node) Node {
+	e := WithKey(key, n).(element)
+	e.opaque = true
 	return e
 }
 
@@ -243,7 +235,7 @@ func lower(a addr, nodes ...Node) (n []vdom.Node, h handlers) {
 		var hh handlers
 		if e, ok := c.(element); ok && e.key != "" {
 			ve, eh := e.lowered(a.key(e.key))
-			v, hh = ve.(vdom.Element).WithKey(e.key), eh
+			v, hh = ve.(vdom.Element).WithKey(e.key, e.opaque), eh
 			gapOrd++
 			gap, gapIdx = a.gap(gapOrd), 0
 		} else {

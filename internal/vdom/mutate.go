@@ -127,7 +127,7 @@ func applyMove(roots []Node, from, to []Step, before string) ([]Node, error) {
 	if toKey != fromKey {
 		// The client re-keyed the moved node to dodge a collision in the
 		// destination; mirror it, key and attribute both.
-		moved = moved.WithKey(toKey)
+		moved = moved.WithKey(toKey, moved.opaque)
 	}
 
 	return withList(tree, dstPath, func(kids []Node, tag string) ([]Node, error) {

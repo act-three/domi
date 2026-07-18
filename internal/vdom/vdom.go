@@ -10,7 +10,6 @@
 package vdom
 
 import (
-	"cmp"
 	"fmt"
 	"iter"
 	"slices"
@@ -46,36 +45,19 @@ type Element struct {
 
 func (Element) vdomNode() {}
 
-// Opaque marks an element to be skipped by the differ,
-// so client javascript can own its DOM state.
-var Opaque Attr = Attr{Internal: true, Name: "opaque"}
-
 // NewElement constructs an [Element]. Children carry their own
 // reconciliation keys (see [Element.WithKey]); sibling keys must be
-// unique and an opaque child must be keyed — NewElement panics
-// otherwise.
+// unique — NewElement panics otherwise.
 //
 // Attrs are sorted by name and deduplicated according to the combining rules.
 func NewElement(tag string, attrs iter.Seq[Attr], children []Node) Element {
 	a := slices.Collect(attrs)
 	slices.SortStableFunc(a, Attr.cmp)
 
-	e := Element{tag: tag}
-
-	for len(a) > 0 && a[0].Internal {
-		switch a[0].Name {
-		case Opaque.Name:
-			e.opaque = true
-		}
-		a = a[1:]
-	}
-
 	children = coalesceText(children)
 	validateChildren(children)
 
-	e.attrs = combineAttrs(a)
-	e.children = children
-	return e
+	return Element{tag: tag, attrs: combineAttrs(a), children: children}
 }
 
 // childKey returns n's reconciliation key: the key of an [Element], or
@@ -88,22 +70,15 @@ func childKey(n Node) string {
 	return ""
 }
 
-// validateChildren panics if nodes violates a child-list invariant
+// validateChildren panics if nodes violates the child-list invariant
 // the differ depends on: sibling keys must be unique (identity-based
 // reconciliation — server- and client-side both — resolves siblings
-// by key), and an opaque element must be keyed (the differ needs a
-// stable identifier to leave it alone by).
+// by key).
 func validateChildren(nodes []Node) {
 	var seen map[string]struct{}
 	for _, n := range nodes {
 		e, ok := n.(Element)
-		if !ok {
-			continue
-		}
-		if e.opaque && e.key == "" {
-			panic("domi: an opaque node must be a keyed child")
-		}
-		if e.key == "" {
+		if !ok || e.key == "" {
 			continue
 		}
 		if seen == nil {
@@ -116,21 +91,9 @@ func validateChildren(nodes []Node) {
 	}
 }
 
-// cmp orders internal attrs to the head,
-// so NewElement can slice them off easily.
+// cmp orders attrs by name.
 func (a Attr) cmp(b Attr) int {
-	return cmp.Or(
-		cmp.Compare(a.rank(), b.rank()),
-		strings.Compare(a.Name, b.Name),
-	)
-}
-
-// rank places internal attrs (0) ahead of real ones (1).
-func (a Attr) rank() int {
-	if a.Internal {
-		return 0
-	}
-	return 1
+	return strings.Compare(a.Name, b.Name)
 }
 
 // WithKey returns a copy of e keyed by key: the key is recorded for
@@ -139,11 +102,16 @@ func (a Attr) rank() int {
 // previous key. Writing both in one place keeps them from diverging.
 // Used by domi's lowering, and by client-mutation replay when the
 // client re-keys a moved child.
-func (e Element) WithKey(key string) Element {
+//
+// opaque marks the copy as ignored by the differ: it is matched by
+// key but never descended into, so no patches touch the element or
+// its subtree between its insertion and its eventual removal.
+func (e Element) WithKey(key string, opaque bool) Element {
 	if key == "" {
 		panic("domi: a keyed child must have a nonempty key")
 	}
 	e.key = key
+	e.opaque = opaque
 	a := Attr{Name: "data-domi-key", Value: key}
 	i, found := slices.BinarySearchFunc(e.attrs, a, Attr.cmp)
 	attrs := make([]Attr, len(e.attrs), len(e.attrs)+1)
@@ -167,14 +135,10 @@ type Text string
 
 func (Text) vdomNode() {}
 
-// Attr is an HTML attribute or an internal attribute.
-//
-// An internal attribute modifies the vdom behavior in some way,
-// and is not sent over the wire.
+// Attr is an HTML attribute.
 type Attr struct {
-	Name     string
-	Value    string
-	Internal bool
+	Name  string
+	Value string
 }
 
 // combineAttrs resolves duplicate attribute names.
