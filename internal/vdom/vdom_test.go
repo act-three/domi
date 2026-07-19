@@ -71,7 +71,7 @@ func TestCoalesceText(t *testing.T) {
 // A keyed element parts adjacent text like any element — its DOM node
 // sits between them — and keeps its key through the rewrite.
 func TestCoalesceTextAroundKeyedElement(t *testing.T) {
-	in := []Node{tx("a"), tx("b"), el("x").WithKey("kx"), tx("")}
+	in := []Node{tx("a"), tx("b"), el("x").WithKey("kx", false), tx("")}
 	got := coalesceText(in)
 	if want := []string{"t:ab", "e:x"}; !slices.Equal(nodeSummary(got), want) {
 		t.Fatalf("got %v, want %v", nodeSummary(got), want)
@@ -92,9 +92,9 @@ func TestDuplicateSiblingKeysPanic(t *testing.T) {
 		}
 	}()
 	_ = NewElement("ul", attrs(), []Node{
-		el("li").WithKey("a"),
+		el("li").WithKey("a", false),
 		el("li"),
-		el("li").WithKey("a"),
+		el("li").WithKey("a", false),
 	})
 }
 
@@ -105,7 +105,7 @@ func TestDuplicateRootKeysPanic(t *testing.T) {
 			t.Fatal("expected panic for duplicate root keys")
 		}
 	}()
-	_ = Diff(nil, []Node{el("li").WithKey("a"), el("li").WithKey("a")})
+	_ = Diff(nil, []Node{el("li").WithKey("a", false), el("li").WithKey("a", false)})
 }
 
 // coalesceText returns the input slice untouched when nothing needs

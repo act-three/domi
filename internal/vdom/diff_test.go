@@ -25,7 +25,7 @@ func attrs(a ...Attr) iter.Seq[Attr] { return slices.Values(a) }
 func keyedList(keys ...string) Element {
 	children := make([]Node, len(keys))
 	for i, k := range keys {
-		children[i] = NewElement("li", attrs(), []Node{Text(k)}).WithKey(k)
+		children[i] = NewElement("li", attrs(), []Node{Text(k)}).WithKey(k, false)
 	}
 	return NewElement("ul", attrs(), children)
 }
@@ -499,7 +499,7 @@ func mixed(tag string, kids ...kid) Element {
 	for i, k := range kids {
 		children[i] = k.n
 		if k.key != "" {
-			children[i] = k.n.(Element).WithKey(k.key)
+			children[i] = k.n.(Element).WithKey(k.key, false)
 		}
 	}
 	return NewElement(tag, attrs(), children)
@@ -612,7 +612,7 @@ func TestKeyStructureChangeReconciles(t *testing.T) {
 // put rather than leapfrogging the unkeyed content behind it. The
 // client's insertAfterLastKeyed mirrors this.
 func TestSimulateEmptyBeforeAlreadyLastKeyedHoldsStill(t *testing.T) {
-	kids := []Node{li("a").WithKey("a"), li("u0"), li("b").WithKey("b"), li("u1")}
+	kids := []Node{li("a").WithKey("a", false), li("u0"), li("b").WithKey("b", false), li("u1")}
 	sim := simulate(kids, []patch{{Op: "MoveChild", Key: "b"}})
 	want := []string{"a", "", "b", ""}
 	got := make([]string, len(sim))
@@ -629,11 +629,11 @@ func TestSimulateEmptyBeforeAlreadyLastKeyedHoldsStill(t *testing.T) {
 // matched by key and left alone.
 func TestOpaqueSurvivesInMixedParent(t *testing.T) {
 	build := func(body, footer string) Element {
-		return mixed("main",
-			kid{"", el("p", tx("intro"))},
-			kid{"v", NewElement("div", attrs(Opaque), []Node{tx(body)})},
-			kid{"", el("p", tx(footer))},
-		)
+		return NewElement("main", attrs(), []Node{
+			el("p", tx("intro")),
+			NewElement("div", attrs(), []Node{tx(body)}).WithKey("v", true),
+			el("p", tx(footer)),
+		})
 	}
 	got := diffOne(build("first", "foot"), build("second", "toes"))
 	if len(got) != 1 || got[0].Op != "SetText" || !slices.Equal(got[0].Path, []int{2, 0}) {
@@ -682,7 +682,7 @@ type okEntry struct{ key, body string }
 func okeyed(entries ...okEntry) Element {
 	children := make([]Node, len(entries))
 	for i, e := range entries {
-		children[i] = NewElement("div", attrs(Opaque), []Node{tx(e.body)}).WithKey(e.key)
+		children[i] = NewElement("div", attrs(), []Node{tx(e.body)}).WithKey(e.key, true)
 	}
 	return NewElement("main", attrs(), children)
 }
@@ -701,7 +701,7 @@ func TestOpaqueFreezesSubtree(t *testing.T) {
 // descendants.
 func TestOpaqueFreezesOwnAttrs(t *testing.T) {
 	child := func(class string) Node {
-		return NewElement("div", attrs(at("class", class), Opaque), nil).WithKey("v")
+		return NewElement("div", attrs(at("class", class)), nil).WithKey("v", true)
 	}
 	a := NewElement("main", attrs(), []Node{child("x")})
 	b := NewElement("main", attrs(), []Node{child("y")})
@@ -774,37 +774,13 @@ func TestOpaqueKeyChangeRemounts(t *testing.T) {
 // framework with a clean Replace.
 func TestOpaqueToggleReplaces(t *testing.T) {
 	opaque := NewElement("main", attrs(), []Node{
-		NewElement("div", attrs(Opaque), []Node{tx("x")}).WithKey("k"),
+		NewElement("div", attrs(), []Node{tx("x")}).WithKey("k", true),
 	})
 	plain := NewElement("main", attrs(), []Node{
-		NewElement("div", attrs(), []Node{tx("x")}).WithKey("k"),
+		NewElement("div", attrs(), []Node{tx("x")}).WithKey("k", false),
 	})
 	got := diffOne(opaque, plain)
 	if len(got) != 1 || got[0].Op != "Replace" || !slices.Equal(got[0].Path, []int{0}) {
 		t.Fatalf("opacity toggle should Replace at [0], got %+v", got)
 	}
-}
-
-// Opacity is honored only on keyed children: an opaque node in a
-// positional parent panics at construction.
-func TestOpaquePositionalChildPanics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for opaque positional child")
-		}
-	}()
-	opaque := NewElement("div", attrs(Opaque), nil)
-	_ = NewElement("section", attrs(), []Node{opaque})
-}
-
-// A top-level opaque node has no keyed parent to give it identity, so the
-// differ rejects it at the root.
-func TestOpaqueRootPanics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatal("expected panic for opaque root node")
-		}
-	}()
-	opaque := NewElement("div", attrs(Opaque), nil)
-	_ = Diff(nil, []Node{opaque})
 }

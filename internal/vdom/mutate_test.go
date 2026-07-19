@@ -111,8 +111,8 @@ func TestApplyMoveAcrossContainers(t *testing.T) {
 func TestApplyMoveThroughKeyedAncestor(t *testing.T) {
 	main := func() []Node {
 		return []Node{NewElement("main", attrs(), []Node{
-			keyedList("a", "b").WithKey("s1"),
-			keyedList("x", "y").WithKey("s2"),
+			keyedList("a", "b").WithKey("s1", false),
+			keyedList("x", "y").WithKey("s2", false),
 		})}
 	}
 	got, err := Apply(main(), move([]any{0, "s1"}, "a", []any{0, "s2"}, "x"))
@@ -120,8 +120,8 @@ func TestApplyMoveThroughKeyedAncestor(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Node{NewElement("main", attrs(), []Node{
-		keyedList("b").WithKey("s1"),
-		keyedList("a", "x", "y").WithKey("s2"),
+		keyedList("b").WithKey("s1", false),
+		keyedList("a", "x", "y").WithKey("s2", false),
 	})}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
@@ -152,7 +152,7 @@ func TestApplyMoveIntoEmptyContainer(t *testing.T) {
 // names a child of the domi-root mount, and a move with no container
 // steps reorders the root list directly.
 func TestApplyMoveAtRoot(t *testing.T) {
-	li := func(k string) Node { return el("li", tx(k)).WithKey(k) }
+	li := func(k string) Node { return el("li", tx(k)).WithKey(k, false) }
 	roots := []Node{li("a"), li("b")}
 	got, err := Apply(roots, move([]any{}, "a", []any{}, ""))
 	if err != nil {
@@ -168,7 +168,7 @@ func TestApplyMoveAtRoot(t *testing.T) {
 // destination path addresses the tree as it stands after the removal,
 // the way the client reports it.
 func TestApplyMoveFromRootIntoContainer(t *testing.T) {
-	roots := []Node{el("li", tx("a")).WithKey("a"), keyedList("x")}
+	roots := []Node{el("li", tx("a")).WithKey("a", false), keyedList("x")}
 	got, err := Apply(roots, []ClientMutation{{Op: "move", From: steps("a"), To: steps(0, "a"), Before: "x"}})
 	if err != nil {
 		t.Fatal(err)
@@ -306,16 +306,16 @@ func TestApplyJSONPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	roots := []Node{NewElement("main", attrs(), []Node{
-		keyedList("a", "b").WithKey("s1"),
-		keyedList("x", "y").WithKey("s2"),
+		keyedList("a", "b").WithKey("s1", false),
+		keyedList("x", "y").WithKey("s2", false),
 	})}
 	got, err := Apply(roots, muts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []Node{NewElement("main", attrs(), []Node{
-		keyedList("b").WithKey("s1"),
-		keyedList("a", "x", "y").WithKey("s2"),
+		keyedList("b").WithKey("s1", false),
+		keyedList("a", "x", "y").WithKey("s2", false),
 	})}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)

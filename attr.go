@@ -7,28 +7,9 @@ import (
 	"ily.dev/domi/internal/vdom"
 )
 
-var (
-	// Bypass annotates a link to use the browser's built-in navigation,
-	// rather than being intercepted by domi.
-	Bypass Attr = Bool("data-domi-bypass")(true)
-
-	// Opaque marks an element as opaque, ignored by the virtual DOM diff.
-	// Such an element is inserted,
-	// and then never modified until its eventual removal (if any).
-	// Any changes to its contents during its existence are ignored.
-	// This allows client-side browser code to take ownership of the element
-	// without worrying about patches modifying it underfoot.
-	//
-	// An opaque element must be keyed.
-	// See [WithKey].
-	// Inserting an opaque node anywhere else panics.
-	Opaque Attr = internal(vdom.Opaque)
-)
-
-// internal returns vdom "internal" attribute a as an Attr.
-func internal(a vdom.Attr) Attr {
-	return attr{attr: a}
-}
+// Bypass annotates a link to use the browser's built-in navigation,
+// rather than being intercepted by domi.
+var Bypass Attr = Bool("data-domi-bypass")(true)
 
 // An Attr is an HTML attribute.
 //
@@ -187,18 +168,6 @@ func Group(a ...Attr) Attr {
 			}
 		}
 	})
-}
-
-// hasOpaque reports whether attrs contains the [Opaque] marker,
-// looking through nested groups. Unknown Attr implementations panic
-// here, at construction, as they otherwise would when lowered.
-func hasOpaque(attrs []Attr) bool {
-	for a := range Group(attrs...).(group) {
-		if a.attr == vdom.Opaque {
-			return true
-		}
-	}
-	return false
 }
 
 // RegisterCombining registers name as a "combining" attribute.
