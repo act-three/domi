@@ -323,8 +323,8 @@ function postEnvelope(eventURL, h, e, ver, mutations) {
 
 // run wires up the domi session on the <domi-root> mount element just
 // inside document.body and starts the SSE patch stream. Reads the URL
-// prefix from domi-root[data-domi-prefix=…] (which the server emits on
-// initial render) and removes the attribute on its way out.
+// prefix from domi-root[prefix=…] (which the server emits on initial
+// render) and removes the attribute on its way out.
 export function run() {
   if (typeof document === 'undefined') return; // synthetic test env is ok
   // root is the patch root.
@@ -334,9 +334,9 @@ export function run() {
   // delegated event handlers are set on root.
   const root = document.querySelector('body > domi-root');
   if (!root) throw new Error('domi: element domi-root not found');
-  const prefix = root.dataset.domiPrefix;
-  if (!prefix) throw new Error('domi: no session on domi-root, expected data-domi-prefix');
-  delete root.dataset.domiPrefix;
+  const prefix = root.getAttribute('prefix');
+  if (!prefix) throw new Error('domi: attribute domi-root[prefix] not found');
+  root.removeAttribute('prefix');
   const eventURL = `${prefix}/event`;
   const eventsURL = `${prefix}/events`;
 
@@ -345,11 +345,11 @@ export function run() {
     for (const k in obj) pathSets.set(k, obj[k]);
   }
   try {
-    addPathSets(JSON.parse(root.dataset.domiPathSets || '{}'));
+    addPathSets(JSON.parse(root.getAttribute('path-sets') || '{}'));
   } catch (err) {
     console.error('domi: bad path sets', err);
   }
-  delete root.dataset.domiPathSets;
+  root.removeAttribute('path-sets');
 
   // Snapshot cache for instant back/forward. Maps snapshot vers (the
   // tree versions of cached pages, stored in history.state) to

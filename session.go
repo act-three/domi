@@ -184,8 +184,8 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	body := Tag("body")()(
 		Tag("domi-root")(
 			Name("style")("display:contents"),
-			Name("data-domi-prefix")(path.Join("/", s.sv.prefix, s.id)),
-			Name("data-domi-path-sets")(marshalPathSets(s.pathSets)),
+			Name("prefix")(path.Join("/", s.sv.prefix, s.id)),
+			Name("path-sets")(marshalPathSets(s.pathSets)),
 		)(children...),
 	)
 	// The document shell cannot contain event handlers.
