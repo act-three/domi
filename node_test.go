@@ -386,6 +386,26 @@ func TestNameVariadicFirstWins(t *testing.T) {
 	}
 }
 
+// Attribute names beginning with domi-internal- are reserved: the
+// client trusts them as framework state — an app-supplied
+// domi-internal-key, for one, would let an unkeyed element masquerade
+// as keyed. Name panics at construction, where the panic points at
+// the offending call. The data-domi- names, like data-domi-bypass,
+// are domi-defined vocabulary, not reserved.
+func TestNameReservedAttrPanics(t *testing.T) {
+	for _, name := range []string{"domi-internal-key", "domi-internal-anything"} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("expected panic for the reserved attribute %s", name)
+				}
+			}()
+			Name(name)
+		}()
+	}
+	Name("data-domi-bypass") // domi-defined, not reserved; must not panic
+}
+
 // ---- UnsafeParseRaw tests ----
 
 // renderTree lowers a node and renders it (and any fragment siblings)
@@ -493,6 +513,27 @@ func TestUnsafeParseRawSVG(t *testing.T) {
 	}
 }
 
+// A reserved domi-internal- attribute is rejected wherever it appears
+// in the input: parsed markup cannot make an element masquerade as
+// keyed, or carry any other forged framework state. The empty-valued
+// spelling is rejected too — the client tests keyedness by the
+// attribute's presence. The domi-defined data-domi- names, like
+// data-domi-bypass, parse as ordinary attributes.
+func TestUnsafeParseRawRejectsReservedAttr(t *testing.T) {
+	for _, src := range []string{
+		`<li domi-internal-key="a">a</li>`,
+		`<div><span domi-internal-key="">x</span></div>`,
+		`<div domi-internal-anything="x">x</div>`,
+	} {
+		if _, err := UnsafeParseRaw(src); err == nil {
+			t.Fatalf("UnsafeParseRaw(%q): expected error for a reserved attribute", src)
+		}
+	}
+	if got := renderParsed(t, `<a data-domi-bypass href="/x">out</a>`); got != `<a data-domi-bypass href="/x">out</a>` {
+		t.Fatalf("data-domi-bypass should parse: got %q", got)
+	}
+}
+
 // Context-sensitive fragments parse as a browser's <template> would: a
 // bare <tr> keeps its structure instead of being stripped.
 func TestUnsafeParseRawTableFragment(t *testing.T) {
@@ -515,6 +556,17 @@ func TestUnsafeParseRawCanonicalMarkupIsStable(t *testing.T) {
 }
 
 // ---- Bool tests ----
+
+// Bool shares Name's reservation: a name-only domi-internal-key would
+// read as keyed on the client just like a valued one.
+func TestBoolReservedAttrPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for the reserved attribute domi-internal-key")
+		}
+	}()
+	Bool("domi-internal-key")
+}
 
 func TestBoolTrueEmitsNameOnly(t *testing.T) {
 	got := vdom.Render(lowerOneNode(Tag("input")(Bool("disabled")(true))()))

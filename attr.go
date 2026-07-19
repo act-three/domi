@@ -3,6 +3,7 @@ package domi
 import (
 	"fmt"
 	"iter"
+	"strings"
 
 	"ily.dev/domi/internal/vdom"
 )
@@ -39,6 +40,11 @@ type attr struct {
 
 func (attr) isAttr() {}
 
+// isReservedAttr returns whether name is reserved for internal use only.
+func isReservedAttr(name string) bool {
+	return strings.HasPrefix(name, "domi-internal-")
+}
+
 // Name constructs an HTML attribute with the given name and value.
 //
 // Providing the empty string or zero value arguments
@@ -60,7 +66,13 @@ func (attr) isAttr() {}
 //	Name("class")("a", "b") // class="a b"
 //	Name("style")("a")      // style="a"
 //	Name("style")("a", "b") // style="a;b"
+//
+// If name is reserved for internal use, Name panics.
+// Internal names begin with "domi-internal-".
 func Name(name string) func(value ...string) Attr {
+	if isReservedAttr(name) {
+		panic(fmt.Sprintf("domi: attribute %s is reserved", name))
+	}
 	// TODO: panic on boolean attributes.
 	// See https://html.spec.whatwg.org/multipage/indices.html#attributes-3.
 	// Maybe also define RegisterBoolean.
@@ -96,9 +108,15 @@ func Name(name string) func(value ...string) Attr {
 //	Tag("input")(Bool("disabled")(true))  // <input disabled>
 //	Tag("input")(Bool("disabled")(false)) // <input>
 //
+// If name is reserved for internal use, Bool panics.
+// Reserved names begin with "domi-internal-".
+//
 // [enumerated attributes]: https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#keywords-and-enumerated-attributes
 // [boolean attributes]: https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#boolean-attributes
 func Bool(name string) func(bool) Attr {
+	if isReservedAttr(name) {
+		panic(fmt.Sprintf("domi: attribute %s is reserved", name))
+	}
 	// BUG: translate should produce "yes"/"no", NOT "true"/"false".
 	// TODO: handle other enumerated bools ("yes"/"no" and "on"/"off").
 	// See https://html.spec.whatwg.org/multipage/indices.html#attributes-3.

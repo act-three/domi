@@ -33,7 +33,9 @@ func UnsafeParseRaw(s string) (Node, error) {
 	}
 	children := make([]Node, len(nodes))
 	for i, n := range nodes {
-		children[i] = parseNode(n)
+		if children[i], err = parseNode(n); err != nil {
+			return nil, fmt.Errorf("domi: UnsafeParseRaw: %w", err)
+		}
 	}
 	return Fragment(children...), nil
 }
@@ -41,33 +43,40 @@ func UnsafeParseRaw(s string) (Node, error) {
 // parseNode converts a single parsed HTML node into its domi form,
 // returning nil for nodes that carry no rendered content (comments,
 // doctype, and the like).
-func parseNode(n *html.Node) Node {
+func parseNode(n *html.Node) (Node, error) {
 	switch n.Type {
 	case html.TextNode:
-		return Text(n.Data)
+		return Text(n.Data), nil
 	case html.ElementNode:
 		return parseElement(n)
 	default:
-		return nil
+		return nil, nil
 	}
 }
 
 // parseElement converts a parsed HTML element into a domi element,
 // recursing into its children. A namespaced attribute (xlink:href on an
 // SVG <use>, for instance) is rejoined into a single prefixed name so it
-// round-trips through rendering.
-func parseElement(n *html.Node) Node {
+// round-trips through rendering. Reserved attribute names are rejected.
+func parseElement(n *html.Node) (Node, error) {
 	var attrs []Attr
 	for _, a := range n.Attr {
 		name := a.Key
 		if a.Namespace != "" {
 			name = a.Namespace + ":" + a.Key
 		}
+		if isReservedAttr(name) {
+			return nil, fmt.Errorf("reserved attribute %s on <%s>", name, n.Data)
+		}
 		attrs = append(attrs, Name(name)(a.Val))
 	}
 	var children []Node
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
-		children = append(children, parseNode(c))
+		cc, err := parseNode(c)
+		if err != nil {
+			return nil, err
+		}
+		children = append(children, cc)
 	}
-	return Tag(n.Data)(attrs...)(children...)
+	return Tag(n.Data)(attrs...)(children...), nil
 }
