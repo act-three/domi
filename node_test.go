@@ -1,6 +1,7 @@
 package domi
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -395,6 +396,80 @@ func TestNameVariadicFirstWins(t *testing.T) {
 	}
 }
 
+// ---- name validity tests ----
+//
+// A name is valid only as the browser's parser would produce it.
+// See comments in names.go.
+
+func TestTagInvalidNamePanics(t *testing.T) {
+	// "1x" and "-x" have valid characters but the tokenizer only
+	// recognizes a start tag when the character after < is a letter,
+	// so they would render as text, not an element.
+	for _, name := range []string{"DIV", "BR", "", "a b", "a>b", `a"b`, "1x", "-x", "a?b", "a\xff"} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("expected panic for invalid tag name %q", name)
+				}
+			}()
+			Tag(name)
+		}()
+	}
+	for _, name := range []string{"div", "clipPath", "foreignObject", "my-element"} {
+		Tag(name) // valid; must not panic
+	}
+}
+
+func TestNameInvalidNamePanics(t *testing.T) {
+	for _, name := range []string{"CLASS", "DOMI-KEY", "", "a b", "a=b", `a"b`, "a/b", "1x", "-x", "a?b", "a`b", "a\xff"} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("expected panic for invalid attribute name %q", name)
+				}
+			}()
+			Name(name)
+		}()
+	}
+	for _, name := range []string{"class", "viewBox", "xlink:href", "definitionURL", "data-x", "_x"} {
+		Name(name) // valid; must not panic
+	}
+}
+
+func TestBoolInvalidNamePanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for invalid attribute name CONTENTEDITABLE")
+		}
+	}()
+	Bool("CONTENTEDITABLE")
+}
+
+// The vendored foreign-content tables must match the parser: for
+// every canonical spelling domi accepts, parsing its lowercase form
+// in foreign content restores exactly that spelling. This pins
+// domi's copy of the case-adjustment tables to the x/net/html parser
+// UnsafeParseRaw uses — and, both implementing the HTML standard's
+// tables, to the browser's.
+func TestForeignNamesMatchParser(t *testing.T) {
+	for name := range foreignAttrNames {
+		container := "svg"
+		if name == "definitionURL" {
+			container = "math"
+		}
+		src := fmt.Sprintf(`<%s %s="x"></%s>`, container, strings.ToLower(name), container)
+		if got := renderParsed(t, src); !strings.Contains(got, name+`="x"`) {
+			t.Errorf("parser does not restore attribute %s: %q", name, got)
+		}
+	}
+	for name := range foreignTagNames {
+		src := fmt.Sprintf(`<svg><%s></%s></svg>`, strings.ToLower(name), strings.ToLower(name))
+		if got := renderParsed(t, src); !strings.Contains(got, "<"+name) {
+			t.Errorf("parser does not restore tag <%s>: %q", name, got)
+		}
+	}
+}
+
 // The domi- tag namespace is reserved for domi's own elements, like
 // the domi-root mount. Tag panics at construction, where the panic
 // points at the offending call.
@@ -556,6 +631,22 @@ func TestUnsafeParseRawRejectsReservedAttr(t *testing.T) {
 	}
 	if got := renderParsed(t, `<a domi-bypass href="/x">out</a>`); got != `<a domi-bypass href="/x">out</a>` {
 		t.Fatalf("domi-bypass should parse: got %q", got)
+	}
+}
+
+// The HTML parser lowercases and case-adjusts names, so a case slip
+// never reaches parse validation — but it emits attribute and tag
+// names containing quotes and the like verbatim from hostile markup,
+// and those are rejected rather than re-serialized.
+func TestUnsafeParseRawRejectsInvalidNames(t *testing.T) {
+	for _, src := range []string{
+		`<div a"b="x">y</div>`,
+		`<a"b>y</a"b>`,
+		`<div><span c'd="e">y</span></div>`,
+	} {
+		if _, err := UnsafeParseRaw(src); err == nil {
+			t.Fatalf("UnsafeParseRaw(%q): expected error for an invalid name", src)
+		}
 	}
 }
 
