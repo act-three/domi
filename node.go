@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"iter"
 	"slices"
+	"strings"
 
 	"ily.dev/domi/internal/vdom"
 )
@@ -110,9 +111,21 @@ func (e element) lowered(a addr) (vdom.Node, handlers) {
 	return vdom.NewElement(e.tag, slices.Values(attrs), children), h.merge(ch)
 }
 
+// isReservedTag returns whether name is reserved for internal use only.
+func isReservedTag(name string) bool {
+	return strings.HasPrefix(name, "domi-")
+}
+
 // Tag constructs an HTML element with the given name and attributes.
 // Helpers for common tags can be found in [ily.dev/domi/html].
+//
+// Tag names beginning with "domi-"
+// are reserved for use by domi.
+// If name is reserved, Tag panics.
 func Tag(name string) func(attr ...Attr) Element {
+	if isReservedTag(name) {
+		panic(fmt.Sprintf("domi: tag %s is reserved", name))
+	}
 	return func(attrs ...Attr) Element {
 		return func(children ...Node) Node {
 			return element{tag: name, attrs: attrs, children: children}

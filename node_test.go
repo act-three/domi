@@ -386,6 +386,22 @@ func TestNameVariadicFirstWins(t *testing.T) {
 	}
 }
 
+// The domi- tag namespace is reserved for domi's own elements, like
+// the domi-root mount. Tag panics at construction, where the panic
+// points at the offending call.
+func TestTagReservedPanics(t *testing.T) {
+	for _, name := range []string{"domi-root", "domi-anything"} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("expected panic for the reserved tag %s", name)
+				}
+			}()
+			Tag(name)
+		}()
+	}
+}
+
 // The domi- attribute namespace is owned by domi: apart from the
 // attributes domi defines for app use, like domi-bypass, every domi-
 // name is reserved — the client trusts them as framework state, and
@@ -531,6 +547,19 @@ func TestUnsafeParseRawRejectsReservedAttr(t *testing.T) {
 	}
 	if got := renderParsed(t, `<a domi-bypass href="/x">out</a>`); got != `<a domi-bypass href="/x">out</a>` {
 		t.Fatalf("domi-bypass should parse: got %q", got)
+	}
+}
+
+// A reserved domi- tag is rejected wherever it appears in the input,
+// matching Tag's construction-time panic.
+func TestUnsafeParseRawRejectsReservedTag(t *testing.T) {
+	for _, src := range []string{
+		`<domi-root>x</domi-root>`,
+		`<div><domi-anything>x</domi-anything></div>`,
+	} {
+		if _, err := UnsafeParseRaw(src); err == nil {
+			t.Fatalf("UnsafeParseRaw(%q): expected error for a reserved tag", src)
+		}
 	}
 }
 
