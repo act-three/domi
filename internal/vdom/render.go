@@ -32,7 +32,7 @@ func RenderTo(w io.Writer, n Node) error {
 				return err
 			}
 		}
-		if !isVoid(v.tag) {
+		if !IsVoid(v.tag) {
 			w.Write(gt)
 			if err := renderChildren(w, v); err != nil {
 				return err

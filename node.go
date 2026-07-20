@@ -62,12 +62,11 @@ func Textf(format string, a ...any) Node {
 //	Tag("div")(attr.Class("bg"))   // <div class="bg"></div>
 //	Tag("input")(attr.Value("x"))  // <input value="x">
 //
-// Note that [void elements] never render children,
-// even when child values are provided.
+// If a [void element] is called with a nonempty child list, it panics.
 //
-//	Tag("input")()(Text("not rendered")) // <input>
+//	Tag("input")()(Text("not allowed")) // panic
 //
-// [void elements]: https://html.spec.whatwg.org/multipage/syntax.html#void-elements
+// [void element]: https://html.spec.whatwg.org/multipage/syntax.html#void-elements
 type Element func(child ...Node) Node
 
 func (Element) isNode() {}
@@ -132,6 +131,9 @@ func Tag(name string) func(attr ...Attr) Element {
 	}
 	return func(attrs ...Attr) Element {
 		return func(children ...Node) Node {
+			if len(children) > 0 && vdom.IsVoid(name) {
+				panic(fmt.Sprintf("domi: void element <%s> cannot have children", name))
+			}
 			return element{tag: name, attrs: attrs, children: children}
 		}
 	}
