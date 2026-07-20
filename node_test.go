@@ -386,14 +386,14 @@ func TestNameVariadicFirstWins(t *testing.T) {
 	}
 }
 
-// Attribute names beginning with domi-internal- are reserved: the
-// client trusts them as framework state — an app-supplied
-// domi-internal-key, for one, would let an unkeyed element masquerade
-// as keyed. Name panics at construction, where the panic points at
-// the offending call. The other domi- names, like domi-bypass,
-// are domi-defined vocabulary, not reserved.
+// The domi- attribute namespace is owned by domi: apart from the
+// attributes domi defines for app use, like domi-bypass, every domi-
+// name is reserved — the client trusts them as framework state, and
+// an app-supplied domi-internal-key, for one, would let an unkeyed
+// element masquerade as keyed. Name panics at construction, where the
+// panic points at the offending call.
 func TestNameReservedAttrPanics(t *testing.T) {
-	for _, name := range []string{"domi-internal-key", "domi-internal-anything"} {
+	for _, name := range []string{"domi-internal-key", "domi-anything"} {
 		func() {
 			defer func() {
 				if recover() == nil {
@@ -403,7 +403,7 @@ func TestNameReservedAttrPanics(t *testing.T) {
 			Name(name)
 		}()
 	}
-	Name("domi-bypass") // domi-defined, not reserved; must not panic
+	Name("domi-bypass") // defined for app use, not reserved; must not panic
 }
 
 // ---- UnsafeParseRaw tests ----
@@ -513,17 +513,17 @@ func TestUnsafeParseRawSVG(t *testing.T) {
 	}
 }
 
-// A reserved domi-internal- attribute is rejected wherever it appears
-// in the input: parsed markup cannot make an element masquerade as
-// keyed, or carry any other forged framework state. The empty-valued
-// spelling is rejected too — the client tests keyedness by the
-// attribute's presence. The other domi-defined names, like
+// A reserved domi- attribute is rejected wherever it appears in the
+// input: parsed markup cannot make an element masquerade as keyed, or
+// carry any other forged framework state. The empty-valued spelling
+// is rejected too — the client tests keyedness by the attribute's
+// presence. The attributes domi defines for app use, like
 // domi-bypass, parse as ordinary attributes.
 func TestUnsafeParseRawRejectsReservedAttr(t *testing.T) {
 	for _, src := range []string{
 		`<li domi-internal-key="a">a</li>`,
 		`<div><span domi-internal-key="">x</span></div>`,
-		`<div domi-internal-anything="x">x</div>`,
+		`<div domi-anything="x">x</div>`,
 	} {
 		if _, err := UnsafeParseRaw(src); err == nil {
 			t.Fatalf("UnsafeParseRaw(%q): expected error for a reserved attribute", src)

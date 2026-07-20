@@ -25,6 +25,10 @@ var Bypass Attr = Bool("domi-bypass")(true)
 //  3. For all other attributes,
 //     only the first occurrence appears.
 //
+// Package domi defines custom attributes for use by applications,
+// all with names that begin with "domi-".
+// Other attribute names with that prefix are reserved.
+//
 // A nil Attr is a valid Attr that emits nothing.
 type Attr interface {
 	isAttr()
@@ -42,7 +46,7 @@ func (attr) isAttr() {}
 
 // isReservedAttr returns whether name is reserved for internal use only.
 func isReservedAttr(name string) bool {
-	return strings.HasPrefix(name, "domi-internal-")
+	return strings.HasPrefix(name, "domi-") && name != "domi-bypass"
 }
 
 // Name constructs an HTML attribute with the given name and value.
@@ -67,8 +71,8 @@ func isReservedAttr(name string) bool {
 //	Name("style")("a")      // style="a"
 //	Name("style")("a", "b") // style="a;b"
 //
-// If name is reserved for internal use, Name panics.
-// Internal names begin with "domi-internal-".
+// If name is reserved, Name panics.
+// See [Attr].
 func Name(name string) func(value ...string) Attr {
 	if isReservedAttr(name) {
 		panic(fmt.Sprintf("domi: attribute %s is reserved", name))
@@ -108,8 +112,8 @@ func Name(name string) func(value ...string) Attr {
 //	Tag("input")(Bool("disabled")(true))  // <input disabled>
 //	Tag("input")(Bool("disabled")(false)) // <input>
 //
-// If name is reserved for internal use, Bool panics.
-// Reserved names begin with "domi-internal-".
+// If name is reserved, Bool panics.
+// See [Attr].
 //
 // [enumerated attributes]: https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#keywords-and-enumerated-attributes
 // [boolean attributes]: https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#boolean-attributes
