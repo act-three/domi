@@ -390,7 +390,7 @@ func TestNameVariadicFirstWins(t *testing.T) {
 // client trusts them as framework state — an app-supplied
 // domi-internal-key, for one, would let an unkeyed element masquerade
 // as keyed. Name panics at construction, where the panic points at
-// the offending call. The data-domi- names, like data-domi-bypass,
+// the offending call. The other domi- names, like domi-bypass,
 // are domi-defined vocabulary, not reserved.
 func TestNameReservedAttrPanics(t *testing.T) {
 	for _, name := range []string{"domi-internal-key", "domi-internal-anything"} {
@@ -403,7 +403,7 @@ func TestNameReservedAttrPanics(t *testing.T) {
 			Name(name)
 		}()
 	}
-	Name("data-domi-bypass") // domi-defined, not reserved; must not panic
+	Name("domi-bypass") // domi-defined, not reserved; must not panic
 }
 
 // ---- UnsafeParseRaw tests ----
@@ -517,8 +517,8 @@ func TestUnsafeParseRawSVG(t *testing.T) {
 // in the input: parsed markup cannot make an element masquerade as
 // keyed, or carry any other forged framework state. The empty-valued
 // spelling is rejected too — the client tests keyedness by the
-// attribute's presence. The domi-defined data-domi- names, like
-// data-domi-bypass, parse as ordinary attributes.
+// attribute's presence. The other domi-defined names, like
+// domi-bypass, parse as ordinary attributes.
 func TestUnsafeParseRawRejectsReservedAttr(t *testing.T) {
 	for _, src := range []string{
 		`<li domi-internal-key="a">a</li>`,
@@ -529,8 +529,8 @@ func TestUnsafeParseRawRejectsReservedAttr(t *testing.T) {
 			t.Fatalf("UnsafeParseRaw(%q): expected error for a reserved attribute", src)
 		}
 	}
-	if got := renderParsed(t, `<a data-domi-bypass href="/x">out</a>`); got != `<a data-domi-bypass href="/x">out</a>` {
-		t.Fatalf("data-domi-bypass should parse: got %q", got)
+	if got := renderParsed(t, `<a domi-bypass href="/x">out</a>`); got != `<a domi-bypass href="/x">out</a>` {
+		t.Fatalf("domi-bypass should parse: got %q", got)
 	}
 }
 
