@@ -95,7 +95,7 @@ func TestWithKeyMixesWithUnkeyedSiblings(t *testing.T) {
 		keyedLis("a", "b"),
 		Tag("li")()(Text("footer")),
 	)))
-	want := `<ul><li>header</li><li domi-internal-key="a">a</li><li domi-internal-key="b">b</li><li>footer</li></ul>`
+	want := `<ul><li>header</li><li domi-key="a">a</li><li domi-key="b">b</li><li>footer</li></ul>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -134,7 +134,7 @@ func TestWithKeyAtRoot(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected 2 lowered roots, got %d", len(got))
 	}
-	if html := vdom.Render(got[0]); html != `<li domi-internal-key="a">a</li>` {
+	if html := vdom.Render(got[0]); html != `<li domi-key="a">a</li>` {
 		t.Fatalf("keyed root should carry its key: %q", html)
 	}
 	ps := vdom.Diff(lowerNodes(keyedLis("a", "b")), lowerNodes(keyedLis("b", "a")))
@@ -405,11 +405,11 @@ func TestTagReservedPanics(t *testing.T) {
 // The domi- attribute namespace is owned by domi: apart from the
 // attributes domi defines for app use, like domi-bypass, every domi-
 // name is reserved — the client trusts them as framework state, and
-// an app-supplied domi-internal-key, for one, would let an unkeyed
+// an app-supplied domi-key, for one, would let an unkeyed
 // element masquerade as keyed. Name panics at construction, where the
 // panic points at the offending call.
 func TestNameReservedAttrPanics(t *testing.T) {
-	for _, name := range []string{"domi-internal-key", "domi-anything"} {
+	for _, name := range []string{"domi-key", "domi-anything"} {
 		func() {
 			defer func() {
 				if recover() == nil {
@@ -537,8 +537,8 @@ func TestUnsafeParseRawSVG(t *testing.T) {
 // domi-bypass, parse as ordinary attributes.
 func TestUnsafeParseRawRejectsReservedAttr(t *testing.T) {
 	for _, src := range []string{
-		`<li domi-internal-key="a">a</li>`,
-		`<div><span domi-internal-key="">x</span></div>`,
+		`<li domi-key="a">a</li>`,
+		`<div><span domi-key="">x</span></div>`,
 		`<div domi-anything="x">x</div>`,
 	} {
 		if _, err := UnsafeParseRaw(src); err == nil {
@@ -586,15 +586,15 @@ func TestUnsafeParseRawCanonicalMarkupIsStable(t *testing.T) {
 
 // ---- Bool tests ----
 
-// Bool shares Name's reservation: a name-only domi-internal-key would
+// Bool shares Name's reservation: a name-only domi-key would
 // read as keyed on the client just like a valued one.
 func TestBoolReservedAttrPanics(t *testing.T) {
 	defer func() {
 		if recover() == nil {
-			t.Fatal("expected panic for the reserved attribute domi-internal-key")
+			t.Fatal("expected panic for the reserved attribute domi-key")
 		}
 	}()
-	Bool("domi-internal-key")
+	Bool("domi-key")
 }
 
 func TestBoolTrueEmitsNameOnly(t *testing.T) {
@@ -746,7 +746,7 @@ func TestOpaqueKeyedChildFreezes(t *testing.T) {
 }
 
 // Opaqueness is an internal construction directive, not an HTML attribute, so
-// it never reaches the rendered output — unlike domi-internal-key, which the
+// it never reaches the rendered output — unlike domi-key, which the
 // client reads and which stays in the markup.
 func TestOpaqueNotRendered(t *testing.T) {
 	html := vdom.Render(lowerOneNode(Tag("ul")()(
@@ -755,7 +755,7 @@ func TestOpaqueNotRendered(t *testing.T) {
 	if strings.Contains(html, "opaque") {
 		t.Fatalf("internal opaque marker leaked into HTML: %q", html)
 	}
-	if !strings.Contains(html, `domi-internal-key="a"`) {
+	if !strings.Contains(html, `domi-key="a"`) {
 		t.Fatalf("keyed child should still render its key: %q", html)
 	}
 }

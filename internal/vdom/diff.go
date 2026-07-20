@@ -32,7 +32,7 @@ import (
 //     the encoder distinguish "no index" (omitted) from "index 0"
 //     (emitted as 0).
 //   - Identity-based (for keyed children): use Key / Before to address
-//     siblings by their domi-internal-key. The client keeps a per-parent
+//     siblings by their domi-key. The client keeps a per-parent
 //     Map<key, ChildNode> to resolve them in O(1). An empty Before
 //     means "after the parent's last keyed child" — the end, in a
 //     fully keyed parent — or plain append when it has no keyed child;

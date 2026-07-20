@@ -159,7 +159,7 @@ func genKids(rng *rand.Rand, n, depth int) []Node {
 	for i := range n {
 		if rng.IntN(100) < keyChance && len(avail) > 0 {
 			// WithKey mirrors domi's lowering: the key rides the element
-			// and its domi-internal-key attribute, so the rendered HTML
+			// and its domi-key attribute, so the rendered HTML
 			// carries the identity the diff/apply round-trip needs. (A
 			// keyed child must be an element, so a keyed slot always
 			// generates one.)
@@ -400,7 +400,7 @@ func TestMixedFooterAppendRoundTrip(t *testing.T) {
 // rather than hoist it over the unkeyed content behind it.
 func TestEmptyBeforeMoveAlreadyLastKeyedClientNoOp(t *testing.T) {
 	a := startBunApplier(t)
-	initial := `<ul><li domi-internal-key="a">a</li><li>u0</li><li domi-internal-key="b">b</li><li>u1</li></ul>`
+	initial := `<ul><li domi-key="a">a</li><li>u0</li><li domi-key="b">b</li><li>u1</li></ul>`
 	gotHTML, err := a.apply(initial, []patch{{Op: "MoveChild", Path: []int{0}, Key: "b"}})
 	if err != nil {
 		t.Fatalf("bun apply: %v", err)
@@ -420,16 +420,16 @@ func TestEmptyBeforeMoveAlreadyLastKeyedClientNoOp(t *testing.T) {
 // back the pre-Replace content.
 func TestReplaceKeepsChildMapInStep(t *testing.T) {
 	a := startBunApplier(t)
-	initial := `<ul><li domi-internal-key="a">a</li><li domi-internal-key="b">b</li></ul>`
+	initial := `<ul><li domi-key="a">a</li><li domi-key="b">b</li></ul>`
 	gotHTML, err := a.apply(initial, []patch{
-		{Op: "MoveChild", Path: []int{0}, Key: "b", Before: "a"},                      // primes the map; [b, a]
-		{Op: "Replace", Path: []int{0, 1}, HTML: `<li domi-internal-key="a">a2</li>`}, // [b, a2]
-		{Op: "MoveChild", Path: []int{0}, Key: "a", Before: "b"},                      // [a2, b]
+		{Op: "MoveChild", Path: []int{0}, Key: "b", Before: "a"},             // primes the map; [b, a]
+		{Op: "Replace", Path: []int{0, 1}, HTML: `<li domi-key="a">a2</li>`}, // [b, a2]
+		{Op: "MoveChild", Path: []int{0}, Key: "a", Before: "b"},             // [a2, b]
 	})
 	if err != nil {
 		t.Fatalf("bun apply: %v", err)
 	}
-	want := canonicalize(t, `<domi-root><ul><li domi-internal-key="a">a2</li><li domi-internal-key="b">b</li></ul></domi-root>`)
+	want := canonicalize(t, `<domi-root><ul><li domi-key="a">a2</li><li domi-key="b">b</li></ul></domi-root>`)
 	got := canonicalize(t, gotHTML)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %s, want %s", jsonStr(got), jsonStr(want))
