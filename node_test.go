@@ -95,7 +95,7 @@ func TestWithKeyMixesWithUnkeyedSiblings(t *testing.T) {
 		keyedLis("a", "b"),
 		Tag("li")()(Text("footer")),
 	)))
-	want := `<ul><li>header</li><li data-domi-key="a">a</li><li data-domi-key="b">b</li><li>footer</li></ul>`
+	want := `<ul><li>header</li><li domi-internal-key="a">a</li><li domi-internal-key="b">b</li><li>footer</li></ul>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -134,7 +134,7 @@ func TestWithKeyAtRoot(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("expected 2 lowered roots, got %d", len(got))
 	}
-	if html := vdom.Render(got[0]); html != `<li data-domi-key="a">a</li>` {
+	if html := vdom.Render(got[0]); html != `<li domi-internal-key="a">a</li>` {
 		t.Fatalf("keyed root should carry its key: %q", html)
 	}
 	ps := vdom.Diff(lowerNodes(keyedLis("a", "b")), lowerNodes(keyedLis("b", "a")))
@@ -665,7 +665,7 @@ func TestOpaqueKeyedChildFreezes(t *testing.T) {
 }
 
 // Opaqueness is an internal construction directive, not an HTML attribute, so
-// it never reaches the rendered output — unlike data-domi-key, which the
+// it never reaches the rendered output — unlike domi-internal-key, which the
 // client reads and which stays in the markup.
 func TestOpaqueNotRendered(t *testing.T) {
 	html := vdom.Render(lowerOneNode(Tag("ul")()(
@@ -674,7 +674,7 @@ func TestOpaqueNotRendered(t *testing.T) {
 	if strings.Contains(html, "opaque") {
 		t.Fatalf("internal opaque marker leaked into HTML: %q", html)
 	}
-	if !strings.Contains(html, `data-domi-key="a"`) {
+	if !strings.Contains(html, `domi-internal-key="a"`) {
 		t.Fatalf("keyed child should still render its key: %q", html)
 	}
 }

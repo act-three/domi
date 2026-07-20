@@ -17,7 +17,7 @@
 // # Rendered Output
 //
 // Element names beginning with "domi-"
-// and attribute names beginning with "data-domi-"
+// and attribute names beginning with "domi-internal-"
 // are reserved for use by domi.
 //
 // Domi renders the view inside a domi-root element just inside body,

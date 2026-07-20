@@ -13,13 +13,13 @@ function fragmentFromHTML(html) {
 
 // childMap(parent) returns a Map<key, Element> for the parent's keyed
 // children, lazily building it on first access by scanning for
-// data-domi-key attributes on element children.
+// domi-internal-key attributes on element children.
 function childMap(parent) {
   let map = parent.__domiChildren;
   if (!map) {
     map = new Map();
     for (const child of parent.children) {
-      const k = child.dataset && child.dataset.domiKey;
+      const k = child.getAttribute('domi-internal-key');
       if (k != null) map.set(k, child);
     }
     parent.__domiChildren = map;
@@ -41,7 +41,7 @@ function nodePath(root, node) {
   for (let n = node; n !== root; n = n.parentNode) {
     const parent = n.parentNode;
     if (!parent) throw new Error('domi: mutate target is not inside domi-root');
-    const key = n.dataset && n.dataset.domiKey;
+    const key = n.getAttribute('domi-internal-key');
     path.unshift(key != null ? key : indexOf(parent.childNodes, n));
   }
   return path;
@@ -52,14 +52,14 @@ function indexOf(nodes, node) {
   return -1;
 }
 
-// isKeyed reports whether node is an element carrying a data-domi-key
+// isKeyed reports whether node is an element carrying a domi-internal-key
 // attribute — the keyedness test that anchor resolution and move
 // vetting share. An empty-valued attribute counts as keyed here,
 // unlike at the sites that read the key's value and treat "" as
 // absent; that asymmetry belongs to the reserved-attribute question
 // and is preserved as is.
 function isKeyed(node) {
-  return !!(node.dataset && node.dataset.domiKey != null);
+  return !!(node.hasAttribute && node.hasAttribute('domi-internal-key'));
 }
 
 // insertAfterLastKeyed resolves a keyed op's empty `Before` anchor:
@@ -143,10 +143,10 @@ function applyMove(root, node, before, into) {
   const src = node.parentNode;
   const dst = before ? before.parentNode : into;
   if (!src || !dst) throw new Error('domi: move needs a connected node and a destination');
-  const key = node.dataset && node.dataset.domiKey;
-  if (key == null) throw new Error('domi: move node has no data-domi-key');
+  const key = node.getAttribute('domi-internal-key');
+  if (key == null) throw new Error('domi: move node has no domi-internal-key');
   const from = nodePath(root, node);
-  const beforeKey = before ? (before.dataset && before.dataset.domiKey) || '' : '';
+  const beforeKey = before ? before.getAttribute('domi-internal-key') || '' : '';
 
   const dstMap = childMap(dst);
   let newKey = key;
@@ -157,7 +157,7 @@ function applyMove(root, node, before, into) {
   }
 
   childMap(src).delete(key);
-  node.dataset.domiKey = newKey;
+  node.setAttribute('domi-internal-key', newKey);
   dst.insertBefore(node, before || null);
   dstMap.set(newKey, node);
 
@@ -186,9 +186,9 @@ function applyPatch(root, p) {
       // ops at the detached node.
       const map = parent.__domiChildren;
       if (map) {
-        const oldKey = node.dataset && node.dataset.domiKey;
+        const oldKey = node.getAttribute && node.getAttribute('domi-internal-key');
         if (oldKey != null) map.delete(oldKey);
-        const newKey = fresh.dataset && fresh.dataset.domiKey;
+        const newKey = fresh.getAttribute && fresh.getAttribute('domi-internal-key');
         if (newKey != null) map.set(newKey, fresh);
       }
       break;
