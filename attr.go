@@ -82,9 +82,6 @@ func Name(name string) func(value ...string) Attr {
 	if isReservedAttr(name) {
 		panic(fmt.Sprintf("domi: attribute %s is reserved", name))
 	}
-	// TODO: panic on boolean attributes.
-	// See https://html.spec.whatwg.org/multipage/indices.html#attributes-3.
-	// Maybe also define RegisterBoolean.
 	return func(value ...string) Attr {
 		switch len(value) {
 		case 0:
@@ -102,6 +99,13 @@ func Name(name string) func(value ...string) Attr {
 
 // Bool constructs a boolean HTML attribute.
 //
+// For [boolean attributes] as defined in the HTML spec,
+// such as disabled and checked,
+// true emits a name-only attribute and false emits nothing:
+//
+//	Tag("input")(Bool("disabled")(true))  // <input disabled>
+//	Tag("input")(Bool("disabled")(false)) // <input>
+//
 // For [enumerated attributes]
 // with exactly two permitted values that mean true and false
 // (such as autocorrect, draggable, spellcheck, and translate),
@@ -111,15 +115,7 @@ func Name(name string) func(value ...string) Attr {
 //	Bool("translate")(true)    // translate="yes"
 //	Bool("autocorrect")(false) // autocorrect="off"
 //
-// For all other names, including standard [boolean attributes]
-// like disabled and checked,
-// true emits a name-only attribute and false emits nothing:
-//
-//	Tag("input")(Bool("disabled")(true))  // <input disabled>
-//	Tag("input")(Bool("disabled")(false)) // <input>
-//
-// If name is invalid or reserved, Bool panics.
-// See [Attr].
+// For all other names, Bool panics.
 //
 // [enumerated attributes]: https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#keywords-and-enumerated-attributes
 // [boolean attributes]: https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#boolean-attributes
@@ -128,7 +124,15 @@ func Bool(name string) func(bool) Attr {
 	if isReservedAttr(name) {
 		panic(fmt.Sprintf("domi: attribute %s is reserved", name))
 	}
-	// TODO: maybe define RegisterEnumerated for custom attributes.
+	// TODO: maybe define RegisterBoolean and RegisterEnumerated.
+	if booleanAttr[name] {
+		return func(v bool) Attr {
+			if v {
+				return attr{vdom.Attr{Name: name}, nil}
+			}
+			return Group()
+		}
+	}
 	if kw, ok := enumeratedBool[name]; ok {
 		return func(v bool) Attr {
 			if v {
@@ -137,12 +141,7 @@ func Bool(name string) func(bool) Attr {
 			return attr{vdom.Attr{Name: name, Value: kw[1]}, nil}
 		}
 	}
-	return func(v bool) Attr {
-		if v {
-			return attr{vdom.Attr{Name: name}, nil}
-		}
-		return Group()
-	}
+	panic(fmt.Sprintf("domi: attribute %s is not boolean", name))
 }
 
 // enumeratedBool is the set of HTML attributes
@@ -158,6 +157,48 @@ var enumeratedBool = map[string][2]string{
 	"spellcheck":         {"true", "false"},
 	"translate":          {"yes", "no"},
 	"writingsuggestions": {"true", "false"},
+}
+
+// booleanAttr is the set of boolean attributes,
+// which represent true by presence and false by absence.
+var booleanAttr = map[string]bool{
+	// custom attrs
+	"domi-bypass": true,
+
+	// defined in the spec
+	// (note that "hidden" is not listed.
+	// it is an enumerated attribute with a third state, "until-found".)
+	// see https://html.spec.whatwg.org/multipage/indices.html#attributes-3
+	"allowfullscreen":                 true,
+	"alpha":                           true,
+	"async":                           true,
+	"autofocus":                       true,
+	"autoplay":                        true,
+	"checked":                         true,
+	"controls":                        true,
+	"default":                         true,
+	"defer":                           true,
+	"disabled":                        true,
+	"formnovalidate":                  true,
+	"headingreset":                    true,
+	"inert":                           true,
+	"ismap":                           true,
+	"itemscope":                       true,
+	"loop":                            true,
+	"multiple":                        true,
+	"muted":                           true,
+	"nomodule":                        true,
+	"novalidate":                      true,
+	"open":                            true,
+	"playsinline":                     true,
+	"readonly":                        true,
+	"required":                        true,
+	"reversed":                        true,
+	"selected":                        true,
+	"shadowrootclonable":              true,
+	"shadowrootcustomelementregistry": true,
+	"shadowrootdelegatesfocus":        true,
+	"shadowrootserializable":          true,
 }
 
 // group is the lowered form of a [Group]: a sequence of attrs that

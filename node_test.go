@@ -394,6 +394,8 @@ func TestNameVariadicStyle(t *testing.T) {
 	}
 }
 
+// Name is fully general.
+// It can represent a boolean attribute in its name-only form.
 func TestNameZeroArgBare(t *testing.T) {
 	got := vdom.Render(lowerOneNode(Tag("div")(Name("disabled")())()))
 	want := `<div disabled></div>`
@@ -930,6 +932,39 @@ func TestRegularBoolStillUsesPresenceAbsence(t *testing.T) {
 	got := vdom.Render(lowerOneNode(Tag("input")(Bool("disabled")(true))()))
 	if strings.Contains(got, `="true"`) {
 		t.Fatalf("regular bool should use presence, not value: %q", got)
+	}
+}
+
+func TestBoolSpecBooleanNames(t *testing.T) {
+	for name := range booleanAttr {
+		got := vdom.Render(lowerOneNode(Tag("div")(Bool(name)(true))()))
+		want := `<div ` + name + `></div>`
+		if got != want {
+			t.Fatalf("Bool(%q)(true): got %q, want %q", name, got, want)
+		}
+	}
+}
+
+// Bool panics on names outside the spec's boolean and enumerated
+// boolean attributes:
+// presence/absence semantics would be an invention for them.
+// Name spells every other attribute, name-only forms included.
+func TestBoolNonBooleanNamePanics(t *testing.T) {
+	for _, name := range []string{
+		"id",              // string-valued
+		"hidden",          // enumerated: has a third state, "until-found"
+		"contenteditable", // enumerated: has a third state, "plaintext-only"
+		"autocomplete",    // two-valued on form elements only
+		"data-flag",       // custom
+	} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("Bool(%q): expected panic for non-boolean attribute", name)
+				}
+			}()
+			Bool(name)
+		}()
 	}
 }
 
