@@ -115,7 +115,6 @@ var (
 	Disabled       = domi.Bool("disabled")
 	Draggable      = domi.Bool("draggable")
 	FormNoValidate = domi.Bool("formnovalidate")
-	Hidden         = domi.Bool("hidden")
 	Inert          = domi.Bool("inert")
 	Loop           = domi.Bool("loop")
 	Multiple       = domi.Bool("multiple")
