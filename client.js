@@ -473,7 +473,7 @@ export function run() {
   // server's onURLRequest callback instead of navigating. Skips
   // modified clicks (ctrl/shift/alt/meta), non-left-button clicks,
   // links with target attributes, download links, links carrying the
-  // data-domi-bypass attribute (the app opted out of interception so
+  // domi-bypass attribute (the app opted out of interception so
   // the browser navigates normally), and links where an ancestor
   // already has a data-msg-click handler (the app opted into explicit
   // handling).
@@ -500,7 +500,7 @@ export function run() {
     const target = a.getAttribute('target');
     if (target && target !== '_self') return;
     if (a.hasAttribute('download')) return;
-    if (a.hasAttribute('data-domi-bypass')) return;
+    if (a.hasAttribute('domi-bypass')) return;
 
     let url;
     try { url = new URL(href, location.href); } catch { return; }
@@ -540,7 +540,7 @@ export function run() {
     const target = a.getAttribute('target');
     if (target && target !== '_self') return;
     if (a.hasAttribute('download')) return;
-    if (a.hasAttribute('data-domi-bypass')) return;
+    if (a.hasAttribute('domi-bypass')) return;
     let url;
     try { url = new URL(href, location.href); } catch { return; }
     if (url.origin !== location.origin) return;

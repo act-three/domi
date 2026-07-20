@@ -10,7 +10,7 @@ import (
 
 // Bypass annotates a link to use the browser's built-in navigation,
 // rather than being intercepted by domi.
-var Bypass Attr = Bool("data-domi-bypass")(true)
+var Bypass Attr = Bool("domi-bypass")(true)
 
 // An Attr is an HTML attribute.
 //

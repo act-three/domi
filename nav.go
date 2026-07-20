@@ -56,7 +56,7 @@ func ReplaceURL[Msg any](url string) Cmd[Msg] {
 // same-origin link served outside the domi app. The app returns it
 // from Update in response to a [URLRequest] it decides not to handle
 // internally. To opt a link out of interception ahead of time, without
-// a server round trip, give the anchor the data-domi-bypass attribute
+// a server round trip, give the anchor the domi-bypass attribute
 // instead.
 func Load[Msg any](url string) Cmd[Msg] {
 	mustParseURL("domi.Load", url)
