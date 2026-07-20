@@ -199,7 +199,7 @@ func TestHandlerDocumentOption(t *testing.T) {
 	if !strings.Contains(body, `<meta content="hello" name="test">`) {
 		t.Fatalf("custom head content missing; body: %s", body)
 	}
-	if !strings.Contains(body, `data-domi-prefix=`) {
+	if !strings.Contains(body, ` prefix="`) {
 		t.Fatalf("session marker not attached to domi-root; got: %s", body)
 	}
 	// The default bootstrap script must not appear when Document is set —
@@ -231,7 +231,7 @@ func TestHandlerInternalURLPrefix(t *testing.T) {
 
 	// The session's internal-URL base is the prefix joined with the id,
 	// joined cleanly (no doubled slash from the option's trailing one).
-	m := regexp.MustCompile(`data-domi-prefix="([^"]*)"`).FindStringSubmatch(body)
+	m := regexp.MustCompile(` prefix="([^"]*)"`).FindStringSubmatch(body)
 	if m == nil {
 		t.Fatalf("session marker missing; body: %s", body)
 	}
@@ -1549,7 +1549,7 @@ func TestHandleRootSeedsPathSets(t *testing.T) {
 	// only in the data-msg-input attribute that references it.
 	psKey := pathSet{{"target", "value"}}.key()
 
-	const marker = `data-domi-path-sets="`
+	const marker = `path-sets="`
 	i := strings.Index(html, marker)
 	if i < 0 {
 		t.Fatalf("no %s attribute in render:\n%s", marker, html)
@@ -1583,7 +1583,7 @@ func TestHandleRootMountsWrapperInsideBody(t *testing.T) {
 	if !regexp.MustCompile(`<domi-root [^>]*style="display:contents"`).MatchString(html) {
 		t.Fatalf("mount lacks display:contents:\n%s", html)
 	}
-	if !regexp.MustCompile(`<domi-root [^>]*data-domi-prefix="`).MatchString(html) {
+	if !regexp.MustCompile(`<domi-root [^>]* prefix="`).MatchString(html) {
 		t.Fatalf("session marker not on the mount:\n%s", html)
 	}
 	if !strings.Contains(html, "<div>0</div></domi-root></body>") {
