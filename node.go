@@ -47,24 +47,23 @@ func Textf(format string, a ...any) Node {
 }
 
 // An Element is an HTML element containing a tag name and attributes.
-// See [Tag].
 //
 // An Element is a function.
 // Calling it with child values produces a Node
 // that renders the HTML element including its children.
 //
-//	Tag("div")(attr.Class("a"))(Text("hello")) // <div class="a">hello</div>
+//	Tag("div")(Text("hello")) // <div>hello</div>
 //
 // Element itself also satisfies [Node],
 // and renders without children.
 //
-//	Tag("div")(attr.Class("bg"))() // <div class="bg"></div>
-//	Tag("div")(attr.Class("bg"))   // <div class="bg"></div>
-//	Tag("input")(attr.Value("x"))  // <input value="x">
+//	Tag("div")()                  // <div></div>
+//	Tag("div")                    // <div></div>
+//	Tag("input", attr.Value("x")) // <input value="x">
 //
 // If a [void element] is called with a nonempty child list, it panics.
 //
-//	Tag("input")()(Text("not allowed")) // panic
+//	Tag("input")(Text("not allowed")) // panic
 //
 // [void element]: https://html.spec.whatwg.org/multipage/syntax.html#void-elements
 type Element func(child ...Node) Node
@@ -115,7 +114,7 @@ func isReservedTag(name string) bool {
 	return strings.HasPrefix(name, "domi-")
 }
 
-// Tag constructs an HTML element with the given name and attributes.
+// Tag returns an HTML element with the given name and attributes.
 // Helpers for common tags can be found in [ily.dev/domi/html].
 //
 // Tag names must be lowercase,
@@ -124,18 +123,16 @@ func isReservedTag(name string) bool {
 // Tag names beginning with "domi-"
 // are reserved for use by domi.
 // If name is invalid or reserved, Tag panics.
-func Tag(name string) func(attr ...Attr) Element {
+func Tag(name string, attr ...Attr) Element {
 	mustValidTagName(name)
 	if isReservedTag(name) {
 		panic(fmt.Sprintf("domi: tag %s is reserved", name))
 	}
-	return func(attrs ...Attr) Element {
-		return func(children ...Node) Node {
-			if len(children) > 0 && vdom.IsVoid(name) {
-				panic(fmt.Sprintf("domi: void element <%s> cannot have children", name))
-			}
-			return element{tag: name, attrs: attrs, children: children}
+	return func(children ...Node) Node {
+		if len(children) > 0 && vdom.IsVoid(name) {
+			panic(fmt.Sprintf("domi: void element <%s> cannot have children", name))
 		}
+		return element{tag: name, attrs: attr, children: children}
 	}
 }
 
@@ -149,7 +146,7 @@ func Tag(name string) func(attr ...Attr) Element {
 //	for _, it := range items {
 //	    rows = append(rows, WithKey(itemKey(it), itemRow(it)))
 //	}
-//	list := Tag("ul")()(header, Fragment(rows...), footer)
+//	list := Tag("ul")(header, Fragment(rows...), footer)
 //
 // Keys must be nonempty,
 // stable (any given item should be assigned the same key every time),

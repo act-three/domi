@@ -16,14 +16,14 @@ func renderToString(t *testing.T, n Node) string {
 }
 
 func TestRenderToElement(t *testing.T) {
-	got := renderToString(t, Tag("p")(Name("class")("x"))(Text("hi")))
+	got := renderToString(t, Tag("p", Name("class")("x"))(Text("hi")))
 	if want := `<p class="x">hi</p>`; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
 func TestRenderToFragmentRendersEachInOrder(t *testing.T) {
-	got := renderToString(t, Fragment(Text("a"), Tag("br")(), Text("b")))
+	got := renderToString(t, Fragment(Text("a"), Tag("br"), Text("b")))
 	if want := "a<br>b"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -41,7 +41,7 @@ func TestRenderToEmptyFragmentWritesNothing(t *testing.T) {
 // Handlers have no session to dispatch to in a static render, so their
 // domi-msg-* attributes appear but do nothing.
 func TestRenderToHandlerAttrIsInert(t *testing.T) {
-	got := renderToString(t, Tag("button")(On("click", msgFn("m")))(Text("ok")))
+	got := renderToString(t, Tag("button", On("click", msgFn("m")))(Text("ok")))
 	if !strings.Contains(got, "domi-msg-click=") {
 		t.Errorf("handler attr missing from %q", got)
 	}
@@ -69,7 +69,7 @@ func (w *errWriter) Write(p []byte) (int, error) {
 
 func TestRenderToReturnsWriterError(t *testing.T) {
 	want := errors.New("boom")
-	err := RenderTo(&errWriter{n: 3, err: want}, Tag("p")()(Text("hello")))
+	err := RenderTo(&errWriter{n: 3, err: want}, Tag("p")(Text("hello")))
 	if !errors.Is(err, want) {
 		t.Errorf("got %v, want %v", err, want)
 	}

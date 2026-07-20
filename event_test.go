@@ -21,9 +21,9 @@ func msgFn(tag string) func(jsontext.Value) (string, error) {
 // attrs while the server rebinds the keys to the new functions.
 func TestOnAddressStableAcrossRenders(t *testing.T) {
 	build := func(tag string) ([]vdom.Node, handlers) {
-		return lower(0, Tag("div")()(
+		return lower(0, Tag("div")(
 			Text("greetings"),
-			Tag("button")(On("click", msgFn(tag)))(Text("x")),
+			Tag("button", On("click", msgFn(tag)))(Text("x")),
 		))
 	}
 	a, ha := build("first render")
@@ -47,8 +47,8 @@ func keysOf(h handlers) map[string]bool {
 // Identical elements at different positions get different keys — even
 // when they are literally the same Node value placed twice.
 func TestOnAddressDistinguishesPosition(t *testing.T) {
-	btn := Tag("button")(On("click", msgFn("x")))(Text("x"))
-	_, h := lower(0, Tag("div")()(btn, btn))
+	btn := Tag("button", On("click", msgFn("x")))(Text("x"))
+	_, h := lower(0, Tag("div")(btn, btn))
 	if len(h) != 2 {
 		t.Fatalf("expected 2 handler keys for 2 positions, got %d: %v", len(h), keysOf(h))
 	}
@@ -61,9 +61,9 @@ func TestOnKeyedAddressSurvivesReorder(t *testing.T) {
 	build := func(order ...string) ([]vdom.Node, handlers) {
 		rows := make([]Node, len(order))
 		for i, k := range order {
-			rows[i] = WithKey(k, Tag("li")(On("click", msgFn(k)))(Text(k)))
+			rows[i] = WithKey(k, Tag("li", On("click", msgFn(k)))(Text(k)))
 		}
-		return lower(0, Tag("ul")()(rows...))
+		return lower(0, Tag("ul")(rows...))
 	}
 	_, ha := build("a", "b", "c")
 	_, hb := build("c", "a", "b")
@@ -81,12 +81,12 @@ func TestOnMixedAddressSurvivesKeyedReorder(t *testing.T) {
 	build := func(order ...string) ([]vdom.Node, handlers) {
 		rows := make([]Node, len(order))
 		for i, k := range order {
-			rows[i] = WithKey(k, Tag("li")(On("click", msgFn(k)))(Text(k)))
+			rows[i] = WithKey(k, Tag("li", On("click", msgFn(k)))(Text(k)))
 		}
-		return lower(0, Tag("ul")()(
-			Tag("li")(On("click", msgFn("header")))(Text("header")),
+		return lower(0, Tag("ul")(
+			Tag("li", On("click", msgFn("header")))(Text("header")),
 			Fragment(rows...),
-			Tag("li")(On("click", msgFn("footer")))(Text("footer")),
+			Tag("li", On("click", msgFn("footer")))(Text("footer")),
 		))
 	}
 	_, ha := build("a", "b", "c")
@@ -99,10 +99,9 @@ func TestOnMixedAddressSurvivesKeyedReorder(t *testing.T) {
 // Multiple handlers for the same event on one element get distinct
 // slots, and their keys combine comma-separated in the rendered attr.
 func TestOnSlotsDistinguishHandlers(t *testing.T) {
-	n, h := lower(0, Tag("button")(
+	n, h := lower(0, Tag("button",
 		On("click", msgFn("a")),
-		On("click", msgFn("b")),
-	)(Text("x")))
+		On("click", msgFn("b")))(Text("x")))
 	if len(h) != 2 {
 		t.Fatalf("expected 2 handler keys for 2 slots, got %d", len(h))
 	}
@@ -120,10 +119,9 @@ func TestOnSlotsDistinguishHandlers(t *testing.T) {
 // Different events on one element get distinct keys: the event name
 // participates in the key, not just the element address and slot.
 func TestOnEventDistinguishesHandlers(t *testing.T) {
-	_, h := lower(0, Tag("form")(
+	_, h := lower(0, Tag("form",
 		On("click", msgFn("a")),
-		On("submit", msgFn("b")),
-	)(Text("x")))
+		On("submit", msgFn("b")))(Text("x")))
 	if len(h) != 2 {
 		t.Fatalf("expected distinct keys for distinct events, got %d", len(h))
 	}
@@ -133,7 +131,7 @@ func TestOnEventDistinguishesHandlers(t *testing.T) {
 // key to the attribute value, after the handler key, so the client can
 // look up the path set. The handler stays keyed by the handler part.
 func TestOnPathSet(t *testing.T) {
-	n, h := lower(0, Tag("input")(On("input", msgFn("x"), []string{"target", "value"}))())
+	n, h := lower(0, Tag("input", On("input", msgFn("x"), []string{"target", "value"}))())
 	html := vdom.Render(n[0])
 	const marker = `domi-msg-input="`
 	i := strings.Index(html, marker)
@@ -168,7 +166,7 @@ func TestPathSetCanonical(t *testing.T) {
 // A handler with no field paths still carries a valid (empty) path set,
 // content-addressed and referenced like any other.
 func TestOnEmptyPathSet(t *testing.T) {
-	n, _ := lower(0, Tag("button")(On("click", msgFn("x")))())
+	n, _ := lower(0, Tag("button", On("click", msgFn("x")))())
 	html := vdom.Render(n[0])
 	if !strings.Contains(html, ":"+pathSet(nil).key()) {
 		t.Fatalf("bare handler should reference the empty path set: %q", html)

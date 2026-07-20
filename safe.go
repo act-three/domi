@@ -68,7 +68,7 @@ func safeElement(n *html.Node) Node {
 		}
 		attrs = append(attrs, Name(a.Key)(a.Val))
 	}
-	return Tag(tag)(attrs...)(children...)
+	return Tag(tag, attrs...)(children...)
 }
 
 func safeChildren(n *html.Node) []Node {

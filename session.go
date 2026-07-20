@@ -181,7 +181,7 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	for i, n := range nodes {
 		children[i] = prelowered{n}
 	}
-	body := Tag("body")()(
+	body := Tag("body")(
 		element{ // Can't use Tag here because domi-root is reserved.
 			tag: "domi-root",
 			attrs: []Attr{

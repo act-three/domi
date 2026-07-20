@@ -119,5 +119,5 @@ func parseElement(n *html.Node) (Node, error) {
 			return nil, err
 		}
 	}
-	return Tag(n.Data)(attrs...)(children...), nil
+	return Tag(n.Data, attrs...)(children...), nil
 }
