@@ -25,6 +25,10 @@ var Bypass Attr = Bool("domi-bypass")(true)
 //  3. For all other attributes,
 //     only the first occurrence appears.
 //
+// Attribute names must be lowercase,
+// except for foreign-content (SVG and MathML) mixed-case names
+// like viewBox.
+//
 // Package domi defines custom attributes for use by applications,
 // all with names that begin with "domi-".
 // Other attribute names with that prefix are reserved.
@@ -71,9 +75,10 @@ func isReservedAttr(name string) bool {
 //	Name("style")("a")      // style="a"
 //	Name("style")("a", "b") // style="a;b"
 //
-// If name is reserved, Name panics.
+// If name is invalid or reserved, Name panics.
 // See [Attr].
 func Name(name string) func(value ...string) Attr {
+	mustValidAttrName(name)
 	if isReservedAttr(name) {
 		panic(fmt.Sprintf("domi: attribute %s is reserved", name))
 	}
@@ -112,12 +117,13 @@ func Name(name string) func(value ...string) Attr {
 //	Tag("input")(Bool("disabled")(true))  // <input disabled>
 //	Tag("input")(Bool("disabled")(false)) // <input>
 //
-// If name is reserved, Bool panics.
+// If name is invalid or reserved, Bool panics.
 // See [Attr].
 //
 // [enumerated attributes]: https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#keywords-and-enumerated-attributes
 // [boolean attributes]: https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#boolean-attributes
 func Bool(name string) func(bool) Attr {
+	mustValidAttrName(name)
 	if isReservedAttr(name) {
 		panic(fmt.Sprintf("domi: attribute %s is reserved", name))
 	}

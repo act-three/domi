@@ -185,3 +185,21 @@ func TestOnNilUnmarshalPanics(t *testing.T) {
 	}()
 	_ = On[string]("click", nil)
 }
+
+// The event name becomes part of a rendered attribute name, so On
+// vets it as Name vets an attribute: an uppercase or
+// character-invalid event panics rather than opening an
+// attribute-injection route (a crafted event name once rendered a
+// forged domi-key through domi-msg-<event>).
+func TestOnInvalidEventPanics(t *testing.T) {
+	for _, event := range []string{"Click", `click=x domi-key=forged x`, ""} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("expected panic for invalid event name %q", event)
+				}
+			}()
+			On(event, msgFn("m"))
+		}()
+	}
+}

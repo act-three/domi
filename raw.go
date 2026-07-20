@@ -57,9 +57,12 @@ func parseNode(n *html.Node) (Node, error) {
 // parseElement converts a parsed HTML element into a domi element,
 // recursing into its children. A namespaced attribute (xlink:href on an
 // SVG <use>, for instance) is rejoined into a single prefixed name so it
-// round-trips through rendering. Reserved tag and attribute names are
-// rejected.
+// round-trips through rendering. Reserved and invalid tag and attribute
+// names are rejected.
 func parseElement(n *html.Node) (Node, error) {
+	if !isValidTagName(n.Data) {
+		return nil, fmt.Errorf("invalid tag name %q", n.Data)
+	}
 	if isReservedTag(n.Data) {
 		return nil, fmt.Errorf("reserved tag <%s>", n.Data)
 	}
@@ -68,6 +71,9 @@ func parseElement(n *html.Node) (Node, error) {
 		name := a.Key
 		if a.Namespace != "" {
 			name = a.Namespace + ":" + a.Key
+		}
+		if !isValidName(name, foreignAttrNames) {
+			return nil, fmt.Errorf("invalid attribute name %q on <%s>", name, n.Data)
 		}
 		if isReservedAttr(name) {
 			return nil, fmt.Errorf("reserved attribute %s on <%s>", name, n.Data)

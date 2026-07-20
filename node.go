@@ -119,10 +119,14 @@ func isReservedTag(name string) bool {
 // Tag constructs an HTML element with the given name and attributes.
 // Helpers for common tags can be found in [ily.dev/domi/html].
 //
+// Tag names must be lowercase,
+// except for foreign-content (SVG and MathML) mixed-case names
+// like clipPath.
 // Tag names beginning with "domi-"
 // are reserved for use by domi.
-// If name is reserved, Tag panics.
+// If name is invalid or reserved, Tag panics.
 func Tag(name string) func(attr ...Attr) Element {
+	mustValidTagName(name)
 	if isReservedTag(name) {
 		panic(fmt.Sprintf("domi: tag %s is reserved", name))
 	}

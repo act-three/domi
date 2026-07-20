@@ -3,6 +3,7 @@ package domi
 import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
+	"fmt"
 	"hash/fnv"
 	"maps"
 	"slices"
@@ -76,8 +77,13 @@ func (dst handlers) merge(src handlers) handlers {
 // Multiple handlers for the same event on the same element
 // all fire when their event occurs.
 // If f returns an error, the event is discarded.
-// If f is nil, On panics.
+//
+// The event name must be lowercase.
+// If event is invalid or f is nil, On panics.
 func On[Msg any](event string, f func(jsontext.Value) (Msg, error), field ...[]string) Attr {
+	if !isValidName(event, nil) {
+		panic(fmt.Sprintf("domi: invalid event name %q", event))
+	}
 	if f == nil {
 		panic("domi: On called with a nil unmarshal function")
 	}
