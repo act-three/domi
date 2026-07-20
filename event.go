@@ -84,7 +84,7 @@ func On[Msg any](event string, f func(jsontext.Value) (Msg, error), field ...[]s
 	ps := pathSet(field)
 	slices.SortFunc(ps, slices.Compare)
 	return attr{
-		attr:    vdom.Attr{Name: "data-msg-" + event},
+		attr:    vdom.Attr{Name: "domi-msg-" + event},
 		handler: &handler{fn: f, ps: ps, event: event},
 	}
 }

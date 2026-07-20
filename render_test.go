@@ -39,10 +39,10 @@ func TestRenderToEmptyFragmentWritesNothing(t *testing.T) {
 }
 
 // Handlers have no session to dispatch to in a static render, so their
-// data-msg-* attributes appear but do nothing.
+// domi-msg-* attributes appear but do nothing.
 func TestRenderToHandlerAttrIsInert(t *testing.T) {
 	got := renderToString(t, Tag("button")(On("click", msgFn("m")))(Text("ok")))
-	if !strings.Contains(got, "data-msg-click=") {
+	if !strings.Contains(got, "domi-msg-click=") {
 		t.Errorf("handler attr missing from %q", got)
 	}
 }

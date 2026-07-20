@@ -1546,7 +1546,7 @@ func TestHandleRootSeedsPathSets(t *testing.T) {
 	html := rec.Body.String()
 
 	// The input handler's path-set key must appear in the seed blob, not
-	// only in the data-msg-input attribute that references it.
+	// only in the domi-msg-input attribute that references it.
 	psKey := pathSet{{"target", "value"}}.key()
 
 	const marker = `path-sets="`

@@ -306,11 +306,6 @@ function getFields(e, el, paths) {
 
 const EVENTS = ['click', 'submit', 'input', 'change', 'keydown', 'keyup'];
 
-function datasetKeyFor(event) {
-  // data-msg-click → dataset.msgClick
-  return 'msg' + event.charAt(0).toUpperCase() + event.slice(1);
-}
-
 function postEnvelope(eventURL, h, e, ver, mutations) {
   const body = { Type: 'Dispatch', Handler: h, Event: e, Ver: ver };
   if (mutations && mutations.length) body.Mutations = mutations;
@@ -431,8 +426,7 @@ export function run() {
       let el = e.target;
       while (el && el !== root.parentNode) {
         if (el.nodeType === 1) {
-          const key = datasetKeyFor(ev);
-          const raw = el.dataset && el.dataset[key];
+          const raw = el.getAttribute('domi-msg-' + ev);
           if (raw) {
             if (ev === 'submit') e.preventDefault();
             const keys = [];
@@ -475,7 +469,7 @@ export function run() {
   // links with target attributes, download links, links carrying the
   // domi-bypass attribute (the app opted out of interception so
   // the browser navigates normally), and links where an ancestor
-  // already has a data-msg-click handler (the app opted into explicit
+  // already has a domi-msg-click handler (the app opted into explicit
   // handling).
   root.addEventListener('click', (e) => {
     checkPreviewTTL();
@@ -487,11 +481,11 @@ export function run() {
     }
     if (!a || a.tagName !== 'A') return;
 
-    // If a data-msg-click handler exists between the target and the
+    // If a domi-msg-click handler exists between the target and the
     // <a>, the app explicitly handles this click — skip interception.
     let el = e.target;
     while (el && el !== a.parentNode) {
-      if (el.nodeType === 1 && el.dataset && el.dataset.msgClick) return;
+      if (el.nodeType === 1 && el.getAttribute('domi-msg-click')) return;
       el = el.parentNode;
     }
 
