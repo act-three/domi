@@ -864,20 +864,23 @@ func TestBoolInGroup(t *testing.T) {
 
 // ---- Enumerated boolean tests ----
 //
-// contenteditable, draggable, spellcheck, and translate take the
-// string values "true" and "false" rather than using presence/absence.
+// Some attributes look boolean
+// but take exactly two keyword values
+// ("true"/"false", "yes"/"no", or "on"/"off")
+// rather than using presence/absence.
+// See enumeratedBool in attr.go.
 
 func TestEnumBoolTrueEmitsValueTrue(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(Bool("contenteditable")(true))()))
-	want := `<div contenteditable="true"></div>`
+	got := vdom.Render(lowerOneNode(Tag("div")(Bool("spellcheck")(true))()))
+	want := `<div spellcheck="true"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 }
 
 func TestEnumBoolFalseEmitsValueFalse(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(Bool("contenteditable")(false))()))
-	want := `<div contenteditable="false"></div>`
+	got := vdom.Render(lowerOneNode(Tag("div")(Bool("spellcheck")(false))()))
+	want := `<div spellcheck="false"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
@@ -900,12 +903,25 @@ func TestEnumBoolSameValueNoDiff(t *testing.T) {
 	}
 }
 
-func TestEnumBoolAllFour(t *testing.T) {
-	for _, name := range []string{"contenteditable", "draggable", "spellcheck", "translate"} {
-		got := vdom.Render(lowerOneNode(Tag("div")(Bool(name)(true))()))
-		want := `<div ` + name + `="true"></div>`
+func TestEnumBoolKeywords(t *testing.T) {
+	for _, tt := range []struct {
+		name, wantTrue, wantFalse string
+	}{
+		{"autocorrect", "on", "off"},
+		{"draggable", "true", "false"},
+		{"spellcheck", "true", "false"},
+		{"translate", "yes", "no"},
+		{"writingsuggestions", "true", "false"},
+	} {
+		got := vdom.Render(lowerOneNode(Tag("div")(Bool(tt.name)(true))()))
+		want := `<div ` + tt.name + `="` + tt.wantTrue + `"></div>`
 		if got != want {
-			t.Fatalf("Bool(%q)(true): got %q, want %q", name, got, want)
+			t.Fatalf("Bool(%q)(true): got %q, want %q", tt.name, got, want)
+		}
+		got = vdom.Render(lowerOneNode(Tag("div")(Bool(tt.name)(false))()))
+		want = `<div ` + tt.name + `="` + tt.wantFalse + `"></div>`
+		if got != want {
+			t.Fatalf("Bool(%q)(false): got %q, want %q", tt.name, got, want)
 		}
 	}
 }
