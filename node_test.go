@@ -28,36 +28,36 @@ func lowerNodes(nodes ...Node) []vdom.Node {
 // inline-equivalent tree.
 
 func TestFragmentNestedFlattens(t *testing.T) {
-	a := lowerOneNode(Tag("div")()(Fragment(Fragment(Text("a"), Text("b")), Text("c"))))
-	b := lowerOneNode(Tag("div")()(Text("a"), Text("b"), Text("c")))
+	a := lowerOneNode(Tag("div")(Fragment(Fragment(Text("a"), Text("b")), Text("c"))))
+	b := lowerOneNode(Tag("div")(Text("a"), Text("b"), Text("c")))
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("nested Fragment should flatten: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
 }
 
 func TestFragmentEmptyContributesNothing(t *testing.T) {
-	a := lowerOneNode(Tag("div")()(Fragment(), Text("x")))
-	b := lowerOneNode(Tag("div")()(Text("x")))
+	a := lowerOneNode(Tag("div")(Fragment(), Text("x")))
+	b := lowerOneNode(Tag("div")(Text("x")))
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("empty Fragment should contribute nothing: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
 }
 
 func TestFragmentPreservesSiblingOrder(t *testing.T) {
-	a := lowerOneNode(Tag("div")()(
+	a := lowerOneNode(Tag("div")(
 		Text("a"),
 		Fragment(Text("b"), Text("c")),
 		Text("d"),
 	))
-	b := lowerOneNode(Tag("div")()(Text("a"), Text("b"), Text("c"), Text("d")))
+	b := lowerOneNode(Tag("div")(Text("a"), Text("b"), Text("c"), Text("d")))
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("Fragment children should appear in position: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
 }
 
 func TestFragmentIsTransparentToDiff(t *testing.T) {
-	a := lowerNodes(Tag("div")()(Fragment(Text("a"), Text("b"))))
-	b := lowerNodes(Tag("div")()(Text("a"), Text("b")))
+	a := lowerNodes(Tag("div")(Fragment(Text("a"), Text("b"))))
+	b := lowerNodes(Tag("div")(Text("a"), Text("b")))
 	if got := vdom.Diff(a, b); len(got) != 0 {
 		t.Fatalf("Fragment-wrapped should diff identically: got %+v", got)
 	}
@@ -65,7 +65,7 @@ func TestFragmentIsTransparentToDiff(t *testing.T) {
 
 func TestFragmentAtRootLowers(t *testing.T) {
 	// A Fragment returned from App.View becomes the mount's children.
-	got := lowerNodes(Fragment(Tag("div")()(Text("a")), Tag("span")()(Text("b"))))
+	got := lowerNodes(Fragment(Tag("div")(Text("a")), Tag("span")(Text("b"))))
 	if len(got) != 2 {
 		t.Fatalf("expected 2 lowered nodes from Fragment root, got %d: %+v", len(got), got)
 	}
@@ -82,7 +82,7 @@ func TestFragmentAtRootLowers(t *testing.T) {
 func keyedLis(keys ...string) Node {
 	rows := make([]Node, len(keys))
 	for i, k := range keys {
-		rows[i] = WithKey(k, Tag("li")()(Text(k)))
+		rows[i] = WithKey(k, Tag("li")(Text(k)))
 	}
 	return Fragment(rows...)
 }
@@ -91,10 +91,10 @@ func keyedLis(keys ...string) Node {
 // render in place, carrying their keys, between the unkeyed header
 // and footer.
 func TestWithKeyMixesWithUnkeyedSiblings(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("ul")()(
-		Tag("li")()(Text("header")),
+	got := vdom.Render(lowerOneNode(Tag("ul")(
+		Tag("li")(Text("header")),
 		keyedLis("a", "b"),
-		Tag("li")()(Text("footer")),
+		Tag("li")(Text("footer")),
 	)))
 	want := `<ul><li>header</li><li domi-key="a">a</li><li domi-key="b">b</li><li>footer</li></ul>`
 	if got != want {
@@ -105,8 +105,8 @@ func TestWithKeyMixesWithUnkeyedSiblings(t *testing.T) {
 // WithKey accepts a childless [Element] builder just as a child list
 // does, applying it to a finished element.
 func TestWithKeyAppliesElementBuilder(t *testing.T) {
-	a := vdom.Render(lowerOneNode(Tag("ul")()(WithKey("a", Tag("li")(Name("class")("x"))))))
-	b := vdom.Render(lowerOneNode(Tag("ul")()(WithKey("a", Tag("li")(Name("class")("x"))()))))
+	a := vdom.Render(lowerOneNode(Tag("ul")(WithKey("a", Tag("li", Name("class")("x"))))))
+	b := vdom.Render(lowerOneNode(Tag("ul")(WithKey("a", Tag("li", Name("class")("x"))()))))
 	if a != b {
 		t.Fatalf("builder and element should key identically: %q vs %q", a, b)
 	}
@@ -116,10 +116,10 @@ func TestWithKeyAppliesElementBuilder(t *testing.T) {
 // unkeyed header and footer are matched in place, not rebuilt.
 func TestWithKeyAppendIsSinglePatch(t *testing.T) {
 	view := func(keys ...string) []vdom.Node {
-		return lowerNodes(Tag("ul")()(
-			Tag("li")()(Text("header")),
+		return lowerNodes(Tag("ul")(
+			Tag("li")(Text("header")),
 			keyedLis(keys...),
-			Tag("li")()(Text("footer")),
+			Tag("li")(Text("footer")),
 		))
 	}
 	if ps := vdom.Diff(view("a"), view("a", "b")); len(ps) != 1 {
@@ -163,7 +163,7 @@ func TestWithKeyFragmentPanics(t *testing.T) {
 			t.Fatal("expected panic for a keyed Fragment")
 		}
 	}()
-	_ = WithKey("a", Fragment(Tag("li")()(Text("x"))))
+	_ = WithKey("a", Fragment(Tag("li")(Text("x"))))
 }
 
 // Re-keying a keyed node is a construction error, not a silent
@@ -174,7 +174,7 @@ func TestWithKeyTwicePanics(t *testing.T) {
 			t.Fatal("expected panic for a doubly keyed child")
 		}
 	}()
-	_ = WithKey("b", WithKey("a", Tag("li")()))
+	_ = WithKey("b", WithKey("a", Tag("li")))
 }
 
 // A void element serializes without children, so children provided to
@@ -188,7 +188,7 @@ func TestVoidElementWithChildrenPanics(t *testing.T) {
 			t.Fatal("expected panic for children of a void element")
 		}
 	}()
-	_ = Tag("input")()(Text("boom"))
+	_ = Tag("input")(Text("boom"))
 }
 
 // ---- nil Node tests ----
@@ -198,8 +198,8 @@ func TestVoidElementWithChildrenPanics(t *testing.T) {
 // node-or-nil with no guard at the use site.
 
 func TestNilNodeContributesNothing(t *testing.T) {
-	a := lowerOneNode(Tag("div")()(Text("a"), nil, Text("b")))
-	b := lowerOneNode(Tag("div")()(Text("a"), Text("b")))
+	a := lowerOneNode(Tag("div")(Text("a"), nil, Text("b")))
+	b := lowerOneNode(Tag("div")(Text("a"), Text("b")))
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("nil child should contribute nothing: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
@@ -240,16 +240,16 @@ func TestLowerOneNilPanics(t *testing.T) {
 // indistinguishable from writing its attrs inline at the use site.
 
 func TestGroupNestedFlattens(t *testing.T) {
-	a := lowerOneNode(Tag("div")(Group(Group(Name("class")("a"), Name("id")("x")), Name("data-x")("1")))())
-	b := lowerOneNode(Tag("div")(Name("class")("a"), Name("id")("x"), Name("data-x")("1"))())
+	a := lowerOneNode(Tag("div", Group(Group(Name("class")("a"), Name("id")("x")), Name("data-x")("1")))())
+	b := lowerOneNode(Tag("div", Name("class")("a"), Name("id")("x"), Name("data-x")("1"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("nested Group should flatten: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
 }
 
 func TestGroupEmptyContributesNothing(t *testing.T) {
-	a := lowerOneNode(Tag("div")(Group(), Name("id")("x"))())
-	b := lowerOneNode(Tag("div")(Name("id")("x"))())
+	a := lowerOneNode(Tag("div", Group(), Name("id")("x"))())
+	b := lowerOneNode(Tag("div", Name("id")("x"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("empty Group should contribute nothing: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
@@ -259,25 +259,23 @@ func TestGroupEmptyContributesNothing(t *testing.T) {
 // wherever an Attr is accepted, so conditional attributes can be an
 // attr-or-nil with no guard at the use site.
 func TestNilAttrContributesNothing(t *testing.T) {
-	a := lowerOneNode(Tag("div")(Name("class")("a"), nil, Name("id")("x"))())
-	b := lowerOneNode(Tag("div")(Name("class")("a"), Name("id")("x"))())
+	a := lowerOneNode(Tag("div", Name("class")("a"), nil, Name("id")("x"))())
+	b := lowerOneNode(Tag("div", Name("class")("a"), Name("id")("x"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("nil attr should contribute nothing: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
 }
 
 func TestGroupPreservesAttrOrder(t *testing.T) {
-	a := lowerOneNode(Tag("div")(
+	a := lowerOneNode(Tag("div",
 		Name("id")("x"),
 		Group(Name("class")("a"), Name("data-y")("1")),
-		Name("data-z")("2"),
-	)())
-	b := lowerOneNode(Tag("div")(
+		Name("data-z")("2"))())
+	b := lowerOneNode(Tag("div",
 		Name("id")("x"),
 		Name("class")("a"),
 		Name("data-y")("1"),
-		Name("data-z")("2"),
-	)())
+		Name("data-z")("2"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("Group attrs should appear in position: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
@@ -287,8 +285,8 @@ func TestGroupPreservesAttrOrder(t *testing.T) {
 // a Group of duplicate classes should combine with a sibling Class just
 // like inline duplicates do.
 func TestGroupClassCombinesAcrossBoundary(t *testing.T) {
-	a := lowerOneNode(Tag("div")(Group(Name("class")("a"), Name("class")("b")), Name("class")("c"))())
-	b := lowerOneNode(Tag("div")(Name("class")("a"), Name("class")("b"), Name("class")("c"))())
+	a := lowerOneNode(Tag("div", Group(Name("class")("a"), Name("class")("b")), Name("class")("c"))())
+	b := lowerOneNode(Tag("div", Name("class")("a"), Name("class")("b"), Name("class")("c"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("Group-of-classes should combine like inline: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
@@ -301,7 +299,7 @@ func TestGroupClassCombinesAcrossBoundary(t *testing.T) {
 // exercise the observable contract through Tag → Render.
 
 func TestCombineClassWithSpace(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(Name("class")("a"), Name("class")("b"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("class")("a"), Name("class")("b"))()))
 	want := `<div class="a b"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -309,7 +307,7 @@ func TestCombineClassWithSpace(t *testing.T) {
 }
 
 func TestCombineStyleWithSemicolon(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(Name("style")("color:red"), Name("style")("font-weight:bold"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("style")("color:red"), Name("style")("font-weight:bold"))()))
 	want := `<div style="color:red;font-weight:bold"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -320,7 +318,7 @@ func TestCombineStyleWithSemicolon(t *testing.T) {
 // one element join into a single domi-msg attribute. The attrs come
 // from On — domi-msg names are reserved, so apps cannot spell them.
 func TestCombineMsgWithComma(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(On("click", msgFn("h1")), On("click", msgFn("h2")))()))
+	got := vdom.Render(lowerOneNode(Tag("div", On("click", msgFn("h1")), On("click", msgFn("h2")))()))
 	const marker = `domi-msg-click="`
 	i := strings.Index(got, marker)
 	if i < 0 {
@@ -334,21 +332,21 @@ func TestCombineMsgWithComma(t *testing.T) {
 }
 
 func TestCombineDistinctEventsKeepBoth(t *testing.T) {
-	rendered := vdom.Render(lowerOneNode(Tag("div")(On("click", msgFn("h1")), On("submit", msgFn("h2")))()))
+	rendered := vdom.Render(lowerOneNode(Tag("div", On("click", msgFn("h1")), On("submit", msgFn("h2")))()))
 	if !strings.Contains(rendered, "domi-msg-click") || !strings.Contains(rendered, "domi-msg-submit") {
 		t.Fatalf("distinct event attrs should both appear: %q", rendered)
 	}
 }
 
 func TestCombineSingleMsgNoComma(t *testing.T) {
-	rendered := vdom.Render(lowerOneNode(Tag("div")(On("click", msgFn("h1")))()))
+	rendered := vdom.Render(lowerOneNode(Tag("div", On("click", msgFn("h1")))()))
 	if strings.Contains(rendered, ",") {
 		t.Fatalf("single handler should have no comma: %q", rendered)
 	}
 }
 
 func TestCombineOtherAttrFirstWins(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(Name("id")("first"), Name("id")("second"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("id")("first"), Name("id")("second"))()))
 	want := `<div id="first"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -356,7 +354,7 @@ func TestCombineOtherAttrFirstWins(t *testing.T) {
 }
 
 func TestCombineClassEmptyGuard(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(Name("class")(""), Name("class")("b"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("class")(""), Name("class")("b"))()))
 	want := `<div class="b"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -365,7 +363,7 @@ func TestCombineClassEmptyGuard(t *testing.T) {
 
 func TestRegisterCombining(t *testing.T) {
 	RegisterCombining("data-x", ":")
-	got := vdom.Render(lowerOneNode(Tag("div")(Name("data-x")("a"), Name("data-x")("b"), Name("data-x")("c"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("data-x")("a"), Name("data-x")("b"), Name("data-x")("c"))()))
 	want := `<div data-x="a:b:c"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -379,7 +377,7 @@ func TestRegisterCombining(t *testing.T) {
 // calls. These pin that equivalence at the builder's own signature.
 
 func TestNameVariadicClass(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(Name("class")("a", "b"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("class")("a", "b"))()))
 	want := `<div class="a b"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -387,7 +385,7 @@ func TestNameVariadicClass(t *testing.T) {
 }
 
 func TestNameVariadicStyle(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(Name("style")("color:red", "font-weight:bold"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("style")("color:red", "font-weight:bold"))()))
 	want := `<div style="color:red;font-weight:bold"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -397,7 +395,7 @@ func TestNameVariadicStyle(t *testing.T) {
 // Name is fully general.
 // It can represent a boolean attribute in its name-only form.
 func TestNameZeroArgBare(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(Name("disabled")())()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("disabled")())()))
 	want := `<div disabled></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -405,7 +403,7 @@ func TestNameZeroArgBare(t *testing.T) {
 }
 
 func TestNameVariadicFirstWins(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(Name("id")("first", "second"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("id")("first", "second"))()))
 	want := `<div id="first"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -628,7 +626,7 @@ func TestScriptTextBreakoutPanics(t *testing.T) {
 			t.Fatal("expected panic for an end-tag sequence in script text")
 		}
 	}()
-	_ = lowerOneNode(Tag("script")()(Text(`</script><img src=x onerror=alert(1)>`)))
+	_ = lowerOneNode(Tag("script")(Text(`</script><img src=x onerror=alert(1)>`)))
 }
 
 // Splitting the payload across text children doesn't dodge the check:
@@ -640,7 +638,7 @@ func TestScriptSplitTextBreakoutPanics(t *testing.T) {
 			t.Fatal("expected panic for a split end-tag sequence in script text")
 		}
 	}()
-	_ = lowerOneNode(Tag("script")()(Text("var x=1;"), Text("</script><img src=x onerror=alert(1)>")))
+	_ = lowerOneNode(Tag("script")(Text("var x=1;"), Text("</script><img src=x onerror=alert(1)>")))
 }
 
 // Script text that opens a comment around "<script" can parse to
@@ -788,7 +786,7 @@ func TestBoolReservedAttrPanics(t *testing.T) {
 }
 
 func TestBoolTrueEmitsNameOnly(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("input")(Bool("disabled")(true))()))
+	got := vdom.Render(lowerOneNode(Tag("input", Bool("disabled")(true))()))
 	want := `<input disabled>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -796,7 +794,7 @@ func TestBoolTrueEmitsNameOnly(t *testing.T) {
 }
 
 func TestBoolFalseEmitsNothing(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("input")(Bool("disabled")(false))()))
+	got := vdom.Render(lowerOneNode(Tag("input", Bool("disabled")(false))()))
 	want := `<input>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -804,10 +802,9 @@ func TestBoolFalseEmitsNothing(t *testing.T) {
 }
 
 func TestBoolTrueWithOtherAttrs(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("input")(
+	got := vdom.Render(lowerOneNode(Tag("input",
 		Name("type")("checkbox"),
-		Bool("checked")(true),
-	)()))
+		Bool("checked")(true))()))
 	want := `<input checked type="checkbox">`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -815,10 +812,9 @@ func TestBoolTrueWithOtherAttrs(t *testing.T) {
 }
 
 func TestBoolFalseWithOtherAttrs(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("input")(
+	got := vdom.Render(lowerOneNode(Tag("input",
 		Name("type")("checkbox"),
-		Bool("checked")(false),
-	)()))
+		Bool("checked")(false))()))
 	want := `<input type="checkbox">`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -826,8 +822,8 @@ func TestBoolFalseWithOtherAttrs(t *testing.T) {
 }
 
 func TestBoolToggleDiffProducesSetAndRemove(t *testing.T) {
-	a := lowerNodes(Tag("input")(Bool("disabled")(false))())
-	b := lowerNodes(Tag("input")(Bool("disabled")(true))())
+	a := lowerNodes(Tag("input", Bool("disabled")(false))())
+	b := lowerNodes(Tag("input", Bool("disabled")(true))())
 
 	// false → true should produce a set_attr
 	ps := vdom.Diff(a, b)
@@ -843,22 +839,21 @@ func TestBoolToggleDiffProducesSetAndRemove(t *testing.T) {
 }
 
 func TestBoolSameValueNoDiff(t *testing.T) {
-	a := lowerNodes(Tag("input")(Bool("disabled")(true))())
-	b := lowerNodes(Tag("input")(Bool("disabled")(true))())
+	a := lowerNodes(Tag("input", Bool("disabled")(true))())
+	b := lowerNodes(Tag("input", Bool("disabled")(true))())
 	if ps := vdom.Diff(a, b); len(ps) != 0 {
 		t.Fatalf("same value should produce no patches, got %d", len(ps))
 	}
 }
 
 func TestBoolInGroup(t *testing.T) {
-	a := lowerOneNode(Tag("input")(Group(
+	a := lowerOneNode(Tag("input", Group(
 		Name("type")("text"),
 		Bool("readonly")(true),
 	))())
-	b := lowerOneNode(Tag("input")(
+	b := lowerOneNode(Tag("input",
 		Name("type")("text"),
-		Bool("readonly")(true),
-	)())
+		Bool("readonly")(true))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("Bool in Group should flatten: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
@@ -873,7 +868,7 @@ func TestBoolInGroup(t *testing.T) {
 // See enumeratedBool in attr.go.
 
 func TestEnumBoolTrueEmitsValueTrue(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(Bool("spellcheck")(true))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Bool("spellcheck")(true))()))
 	want := `<div spellcheck="true"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -881,7 +876,7 @@ func TestEnumBoolTrueEmitsValueTrue(t *testing.T) {
 }
 
 func TestEnumBoolFalseEmitsValueFalse(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(Bool("spellcheck")(false))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Bool("spellcheck")(false))()))
 	want := `<div spellcheck="false"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -889,8 +884,8 @@ func TestEnumBoolFalseEmitsValueFalse(t *testing.T) {
 }
 
 func TestEnumBoolDiffProducesSetAttr(t *testing.T) {
-	a := lowerNodes(Tag("div")(Bool("spellcheck")(true))())
-	b := lowerNodes(Tag("div")(Bool("spellcheck")(false))())
+	a := lowerNodes(Tag("div", Bool("spellcheck")(true))())
+	b := lowerNodes(Tag("div", Bool("spellcheck")(false))())
 	ps := vdom.Diff(a, b)
 	if len(ps) != 1 {
 		t.Fatalf("true→false: expected 1 patch, got %d", len(ps))
@@ -898,8 +893,8 @@ func TestEnumBoolDiffProducesSetAttr(t *testing.T) {
 }
 
 func TestEnumBoolSameValueNoDiff(t *testing.T) {
-	a := lowerNodes(Tag("div")(Bool("draggable")(true))())
-	b := lowerNodes(Tag("div")(Bool("draggable")(true))())
+	a := lowerNodes(Tag("div", Bool("draggable")(true))())
+	b := lowerNodes(Tag("div", Bool("draggable")(true))())
 	if ps := vdom.Diff(a, b); len(ps) != 0 {
 		t.Fatalf("same value should produce no patches, got %d", len(ps))
 	}
@@ -915,12 +910,12 @@ func TestEnumBoolKeywords(t *testing.T) {
 		{"translate", "yes", "no"},
 		{"writingsuggestions", "true", "false"},
 	} {
-		got := vdom.Render(lowerOneNode(Tag("div")(Bool(tt.name)(true))()))
+		got := vdom.Render(lowerOneNode(Tag("div", Bool(tt.name)(true))()))
 		want := `<div ` + tt.name + `="` + tt.wantTrue + `"></div>`
 		if got != want {
 			t.Fatalf("Bool(%q)(true): got %q, want %q", tt.name, got, want)
 		}
-		got = vdom.Render(lowerOneNode(Tag("div")(Bool(tt.name)(false))()))
+		got = vdom.Render(lowerOneNode(Tag("div", Bool(tt.name)(false))()))
 		want = `<div ` + tt.name + `="` + tt.wantFalse + `"></div>`
 		if got != want {
 			t.Fatalf("Bool(%q)(false): got %q, want %q", tt.name, got, want)
@@ -929,7 +924,7 @@ func TestEnumBoolKeywords(t *testing.T) {
 }
 
 func TestRegularBoolStillUsesPresenceAbsence(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("input")(Bool("disabled")(true))()))
+	got := vdom.Render(lowerOneNode(Tag("input", Bool("disabled")(true))()))
 	if strings.Contains(got, `="true"`) {
 		t.Fatalf("regular bool should use presence, not value: %q", got)
 	}
@@ -937,7 +932,7 @@ func TestRegularBoolStillUsesPresenceAbsence(t *testing.T) {
 
 func TestBoolSpecBooleanNames(t *testing.T) {
 	for name := range booleanAttr {
-		got := vdom.Render(lowerOneNode(Tag("div")(Bool(name)(true))()))
+		got := vdom.Render(lowerOneNode(Tag("div", Bool(name)(true))()))
 		want := `<div ` + name + `></div>`
 		if got != want {
 			t.Fatalf("Bool(%q)(true): got %q, want %q", name, got, want)
@@ -975,8 +970,8 @@ func TestBoolNonBooleanNamePanics(t *testing.T) {
 // the public WithKeyOpaque constructor to the differ's freeze behavior end to end.
 func TestOpaqueKeyedChildFreezes(t *testing.T) {
 	build := func(body string) []vdom.Node {
-		return lowerNodes(Tag("main")()(
-			WithKeyOpaque("player", Tag("div")(Name("data-controller")("player"))(Text(body))),
+		return lowerNodes(Tag("main")(
+			WithKeyOpaque("player", Tag("div", Name("data-controller")("player"))(Text(body))),
 		))
 	}
 	if got := vdom.Diff(build("first"), build("second")); len(got) != 0 {
@@ -988,8 +983,8 @@ func TestOpaqueKeyedChildFreezes(t *testing.T) {
 // it never reaches the rendered output — unlike domi-key, which the
 // client reads and which stays in the markup.
 func TestOpaqueNotRendered(t *testing.T) {
-	html := vdom.Render(lowerOneNode(Tag("ul")()(
-		WithKeyOpaque("a", Tag("li")(Name("class")("widget"))(Text("x"))),
+	html := vdom.Render(lowerOneNode(Tag("ul")(
+		WithKeyOpaque("a", Tag("li", Name("class")("widget"))(Text("x"))),
 	)))
 	if strings.Contains(html, "opaque") {
 		t.Fatalf("internal opaque marker leaked into HTML: %q", html)
@@ -1003,8 +998,8 @@ func TestOpaqueNotRendered(t *testing.T) {
 // re-keying panic — in either order of the two constructors.
 func TestWithKeyOpaqueTwicePanics(t *testing.T) {
 	for name, build := range map[string]func(){
-		"opaque then keyed": func() { WithKey("b", WithKeyOpaque("a", Tag("li")())) },
-		"keyed then opaque": func() { WithKeyOpaque("b", WithKey("a", Tag("li")())) },
+		"opaque then keyed": func() { WithKey("b", WithKeyOpaque("a", Tag("li"))) },
+		"keyed then opaque": func() { WithKeyOpaque("b", WithKey("a", Tag("li"))) },
 	} {
 		func() {
 			defer func() {

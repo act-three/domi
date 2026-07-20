@@ -103,8 +103,8 @@ func Name(name string) func(value ...string) Attr {
 // such as disabled and checked,
 // true emits a name-only attribute and false emits nothing:
 //
-//	Tag("input")(Bool("disabled")(true))  // <input disabled>
-//	Tag("input")(Bool("disabled")(false)) // <input>
+//	Tag("input", Bool("disabled")(true))  // <input disabled>
+//	Tag("input", Bool("disabled")(false)) // <input>
 //
 // For [enumerated attributes]
 // with exactly two permitted values that mean true and false

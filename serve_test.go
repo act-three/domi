@@ -26,7 +26,7 @@ type counterApp struct{ n int }
 
 func (a *counterApp) Update(context.Context, int) Cmd[int] { a.n++; return Batch[int]() }
 func (a *counterApp) View(context.Context) (string, Node) {
-	return "", Tag("div")()(Text(fmt.Sprintf("%d", a.n)))
+	return "", Tag("div")(Text(fmt.Sprintf("%d", a.n)))
 }
 func (a *counterApp) Subscriptions(context.Context) Sub[int] { return nil }
 func (a *counterApp) Preview(ctx context.Context, u *url.URL) (string, string, Node) {
@@ -39,7 +39,7 @@ type staticApp struct{}
 
 func (a *staticApp) Update(context.Context, int) Cmd[int] { return Batch[int]() }
 func (a *staticApp) View(context.Context) (string, Node) {
-	return "", Tag("div")()(Text("static"))
+	return "", Tag("div")(Text("static"))
 }
 func (a *staticApp) Subscriptions(context.Context) Sub[int] { return nil }
 func (a *staticApp) Preview(ctx context.Context, u *url.URL) (string, string, Node) {
@@ -54,8 +54,8 @@ type fragmentApp struct{ n int }
 func (a *fragmentApp) Update(context.Context, int) Cmd[int] { a.n++; return Batch[int]() }
 func (a *fragmentApp) View(context.Context) (string, Node) {
 	return "", Fragment(
-		Tag("div")()(Text(fmt.Sprintf("a%d", a.n))),
-		Tag("div")()(Text(fmt.Sprintf("b%d", a.n))),
+		Tag("div")(Text(fmt.Sprintf("a%d", a.n))),
+		Tag("div")(Text(fmt.Sprintf("b%d", a.n))),
 	)
 }
 func (a *fragmentApp) Subscriptions(context.Context) Sub[int] { return nil }
@@ -70,7 +70,7 @@ type titledApp struct{ n int }
 
 func (a *titledApp) Update(context.Context, int) Cmd[int] { a.n++; return Batch[int]() }
 func (a *titledApp) View(context.Context) (string, Node) {
-	return fmt.Sprintf("title-%d", a.n), Tag("div")()(Text(fmt.Sprintf("%d", a.n)))
+	return fmt.Sprintf("title-%d", a.n), Tag("div")(Text(fmt.Sprintf("%d", a.n)))
 }
 func (a *titledApp) Subscriptions(context.Context) Sub[int] { return nil }
 func (a *titledApp) Preview(ctx context.Context, u *url.URL) (string, string, Node) {
@@ -92,7 +92,7 @@ type previewApp struct {
 
 func (a *previewApp) Update(context.Context, int) Cmd[int] { a.n++; return Batch[int]() }
 func (a *previewApp) body() Node {
-	return Tag("div")()(Text(fmt.Sprintf("%s-%d", a.route, a.n)))
+	return Tag("div")(Text(fmt.Sprintf("%s-%d", a.route, a.n)))
 }
 func (a *previewApp) View(context.Context) (string, Node)    { return a.route, a.body() }
 func (a *previewApp) Subscriptions(context.Context) Sub[int] { return nil }
@@ -172,10 +172,10 @@ func TestSessionApplyFragmentAtRoot(t *testing.T) {
 // to domi-root.
 func TestHandlerDocumentOption(t *testing.T) {
 	custom := func(title string, body Node) Node {
-		return Tag("html")()(
-			Tag("head")()(
-				Tag("title")()(Text("custom:"+title)),
-				Tag("meta")(Name("name")("test"), Name("content")("hello")),
+		return Tag("html")(
+			Tag("head")(
+				Tag("title")(Text("custom:"+title)),
+				Tag("meta", Name("name")("test"), Name("content")("hello")),
 			),
 			body,
 		)
@@ -668,7 +668,7 @@ type subApp struct {
 }
 
 func (a *subApp) Update(context.Context, int) Cmd[int]   { return Batch[int]() }
-func (a *subApp) View(context.Context) (string, Node)    { return "", Tag("div")()() }
+func (a *subApp) View(context.Context) (string, Node)    { return "", Tag("div") }
 func (a *subApp) Subscriptions(context.Context) Sub[int] { return a.sub }
 func (a *subApp) Preview(ctx context.Context, u *url.URL) (string, string, Node) {
 	t, v := a.View(ctx)
@@ -1084,7 +1084,7 @@ func TestSessionCommitPreviewInstallsView(t *testing.T) {
 	if s.title != "/next" {
 		t.Fatalf("title = %q, want %q", s.title, "/next")
 	}
-	want, _ := lower(0, Tag("div")()(Text("/next-0")))
+	want, _ := lower(0, Tag("div")(Text("/next-0")))
 	if !reflect.DeepEqual(s.view, want) {
 		t.Fatalf("committed view = %+v, want the previewed page", s.view)
 	}
@@ -1094,7 +1094,7 @@ func TestSessionCommitPreviewInstallsView(t *testing.T) {
 	if !ok {
 		t.Fatal("committed outgoing view should move into the snapshot history")
 	}
-	if outgoing, _ := lower(0, Tag("div")()(Text("/-0"))); !reflect.DeepEqual(sn.view, outgoing) {
+	if outgoing, _ := lower(0, Tag("div")(Text("/-0"))); !reflect.DeepEqual(sn.view, outgoing) {
 		t.Fatalf("promoted snapshot view = %+v, want the outgoing page", sn.view)
 	}
 }
@@ -1196,7 +1196,7 @@ func TestSessionSnapshotRestore(t *testing.T) {
 	origTitle := s.title
 
 	// Store a different view under its ver.
-	otherView, _ := lower(0, Tag("div")()(Text("other")))
+	otherView, _ := lower(0, Tag("div")(Text("other")))
 	s.snapshots.put("ver1", tree{view: otherView, title: "other title"})
 
 	s.restoreSnapshot("ver1")
@@ -1297,7 +1297,7 @@ func TestSessionCommitPreviewResetsPathSets(t *testing.T) {
 func TestSessionSnapshotEviction(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	view, _ := lower(0, Tag("div")()(Text("x")))
+	view, _ := lower(0, Tag("div")(Text("x")))
 	for i := range snapshotRingSize + 5 {
 		s.snapshots.put(fmt.Sprintf("s%d", i), tree{view: view, title: "t"})
 	}
@@ -1325,7 +1325,7 @@ func TestSessionSnapshotEviction(t *testing.T) {
 func TestSessionSnapshotRePutRefreshesAge(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	view, _ := lower(0, Tag("div")()(Text("x")))
+	view, _ := lower(0, Tag("div")(Text("x")))
 	s.snapshots.put("a", tree{view: view, title: "t"})
 	for i := range snapshotRingSize - 2 {
 		s.snapshots.put(fmt.Sprintf("s%d", i), tree{view: view, title: "t"})
@@ -1392,7 +1392,7 @@ func (a *captureApp) Update(_ context.Context, m int) Cmd[int] {
 
 func (a *captureApp) View(context.Context) (string, Node) {
 	n := a.n
-	return "", Tag("button")(On("click", msgInt(n)))(a.body(a.n))
+	return "", Tag("button", On("click", msgInt(n)))(a.body(a.n))
 }
 func (a *captureApp) Subscriptions(context.Context) Sub[int] { return nil }
 func (a *captureApp) Preview(ctx context.Context, u *url.URL) (string, string, Node) {
@@ -1525,7 +1525,7 @@ type pathSetApp struct{}
 
 func (pathSetApp) Update(context.Context, int) Cmd[int] { return Batch[int]() }
 func (pathSetApp) View(context.Context) (string, Node) {
-	return "", Tag("input")(On("input", msgInt(1), []string{"target", "value"}))()
+	return "", Tag("input", On("input", msgInt(1), []string{"target", "value"}))()
 }
 func (pathSetApp) Subscriptions(context.Context) Sub[int]                   { return nil }
 func (pathSetApp) Preview(context.Context, *url.URL) (string, string, Node) { return "", "", nil }
@@ -1616,9 +1616,9 @@ func (a *sortApp) Update(_ context.Context, m moveMsg) Cmd[moveMsg] {
 func (a *sortApp) View(context.Context) (string, Node) {
 	rows := make([]Node, len(a.order))
 	for i, k := range a.order {
-		rows[i] = WithKey(k, Tag("li")()(Text(k)))
+		rows[i] = WithKey(k, Tag("li")(Text(k)))
 	}
-	return "", Tag("ul")(On("change", func(jsontext.Value) (moveMsg, error) { return a.move, nil }))(rows...)
+	return "", Tag("ul", On("change", func(jsontext.Value) (moveMsg, error) { return a.move, nil }))(rows...)
 }
 
 func (a *sortApp) Subscriptions(context.Context) Sub[moveMsg] { return nil }
@@ -1645,9 +1645,9 @@ func reorder(order []string, key, before string) []string {
 func keyedUL(keys ...string) Node {
 	rows := make([]Node, len(keys))
 	for i, k := range keys {
-		rows[i] = WithKey(k, Tag("li")()(Text(k)))
+		rows[i] = WithKey(k, Tag("li")(Text(k)))
 	}
-	return Tag("ul")()(rows...)
+	return Tag("ul")(rows...)
 }
 
 func lastFrame[Msg any](s *session[Msg]) frame {
