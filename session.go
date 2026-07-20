@@ -182,11 +182,15 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 		children[i] = prelowered{n}
 	}
 	body := Tag("body")()(
-		Tag("domi-root")(
-			Name("style")("display:contents"),
-			Name("prefix")(path.Join("/", s.sv.prefix, s.id)),
-			Name("path-sets")(marshalPathSets(s.pathSets)),
-		)(children...),
+		element{ // Can't use Tag here because domi-root is reserved.
+			tag: "domi-root",
+			attrs: []Attr{
+				Name("style")("display:contents"),
+				Name("prefix")(path.Join("/", s.sv.prefix, s.id)),
+				Name("path-sets")(marshalPathSets(s.pathSets)),
+			},
+			children: children,
+		},
 	)
 	// The document shell cannot contain event handlers.
 	root, _ := lowerOne(0, s.sv.document(s.sv.clientPath, title, body))

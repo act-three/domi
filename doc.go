@@ -16,9 +16,6 @@
 //
 // # Rendered Output
 //
-// Element names beginning with "domi-"
-// are reserved for use by domi.
-//
 // Domi renders the view inside a domi-root element just inside body,
 // so that browser extensions placing their own elements inside body
 // don't interfere with the app.
