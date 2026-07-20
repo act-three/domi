@@ -269,89 +269,104 @@ func Wrap(value string) Attr { return domi.Name("wrap")(value) }
 
 // Autofocus returns an "autofocus" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Autofocus(b bool) Attr { return domi.Bool("autofocus")(b) }
+func Autofocus(b bool) Attr { return boolAttr("autofocus", b) }
 
 // Autoplay returns an "autoplay" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Autoplay(b bool) Attr { return domi.Bool("autoplay")(b) }
+func Autoplay(b bool) Attr { return boolAttr("autoplay", b) }
 
 // Checked returns a "checked" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Checked(b bool) Attr { return domi.Bool("checked")(b) }
+func Checked(b bool) Attr { return boolAttr("checked", b) }
 
 // Controls returns a "controls" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Controls(b bool) Attr { return domi.Bool("controls")(b) }
+func Controls(b bool) Attr { return boolAttr("controls", b) }
 
 // Default returns a "default" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Default(b bool) Attr { return domi.Bool("default")(b) }
+func Default(b bool) Attr { return boolAttr("default", b) }
 
 // Disabled returns a "disabled" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Disabled(b bool) Attr { return domi.Bool("disabled")(b) }
+func Disabled(b bool) Attr { return boolAttr("disabled", b) }
 
 // Draggable returns a "draggable" attribute.
 // It has the value "true" when b is true and "false" otherwise.
-func Draggable(b bool) Attr { return domi.Bool("draggable")(b) }
+func Draggable(b bool) Attr { return domi.Name("draggable")(boolTrueFalse[b]) }
 
 // FormNoValidate returns a "formnovalidate" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func FormNoValidate(b bool) Attr { return domi.Bool("formnovalidate")(b) }
+func FormNoValidate(b bool) Attr { return boolAttr("formnovalidate", b) }
 
 // Inert returns an "inert" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Inert(b bool) Attr { return domi.Bool("inert")(b) }
+func Inert(b bool) Attr { return boolAttr("inert", b) }
 
 // Loop returns a "loop" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Loop(b bool) Attr { return domi.Bool("loop")(b) }
+func Loop(b bool) Attr { return boolAttr("loop", b) }
 
 // Multiple returns a "multiple" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Multiple(b bool) Attr { return domi.Bool("multiple")(b) }
+func Multiple(b bool) Attr { return boolAttr("multiple", b) }
 
 // Muted returns a "muted" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Muted(b bool) Attr { return domi.Bool("muted")(b) }
+func Muted(b bool) Attr { return boolAttr("muted", b) }
 
 // NoValidate returns a "novalidate" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func NoValidate(b bool) Attr { return domi.Bool("novalidate")(b) }
+func NoValidate(b bool) Attr { return boolAttr("novalidate", b) }
 
 // Open returns an "open" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Open(b bool) Attr { return domi.Bool("open")(b) }
+func Open(b bool) Attr { return boolAttr("open", b) }
 
 // PlaysInline returns a "playsinline" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func PlaysInline(b bool) Attr { return domi.Bool("playsinline")(b) }
+func PlaysInline(b bool) Attr { return boolAttr("playsinline", b) }
 
 // ReadOnly returns a "readonly" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func ReadOnly(b bool) Attr { return domi.Bool("readonly")(b) }
+func ReadOnly(b bool) Attr { return boolAttr("readonly", b) }
 
 // Required returns a "required" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Required(b bool) Attr { return domi.Bool("required")(b) }
+func Required(b bool) Attr { return boolAttr("required", b) }
 
 // Reversed returns a "reversed" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Reversed(b bool) Attr { return domi.Bool("reversed")(b) }
+func Reversed(b bool) Attr { return boolAttr("reversed", b) }
 
 // Selected returns a "selected" attribute.
 // It is present as a name-only attribute when b is true and absent otherwise.
-func Selected(b bool) Attr { return domi.Bool("selected")(b) }
+func Selected(b bool) Attr { return boolAttr("selected", b) }
 
 // Spellcheck returns a "spellcheck" attribute.
 // It has the value "true" when b is true and "false" otherwise.
-func Spellcheck(b bool) Attr { return domi.Bool("spellcheck")(b) }
+func Spellcheck(b bool) Attr { return domi.Name("spellcheck")(boolTrueFalse[b]) }
 
 // Translate returns a "translate" attribute.
 // It has the value "yes" when b is true and "no" otherwise.
-func Translate(b bool) Attr { return domi.Bool("translate")(b) }
+func Translate(b bool) Attr { return domi.Name("translate")(boolYesNo[b]) }
 
 // Stylef returns a style attribute formatted with [fmt.Sprintf].
 func Stylef(format string, a ...any) Attr {
 	return Style(fmt.Sprintf(format, a...))
 }
+
+// boolAttr returns a name-only attribute when b is true and nil otherwise.
+func boolAttr(name string, b bool) Attr {
+	if b {
+		return domi.Name(name)()
+	}
+	return nil
+}
+
+// boolTrueFalse and boolYesNo map a bool
+// to the keyword pair of an enumerated attribute.
+var (
+	boolTrueFalse = map[bool]string{true: "true", false: "false"}
+	boolYesNo     = map[bool]string{true: "yes", false: "no"}
+)
