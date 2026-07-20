@@ -301,25 +301,34 @@ func TestCombineStyleWithSemicolon(t *testing.T) {
 	}
 }
 
-func TestCombineDataMsgWithComma(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div")(Name("data-msg-click")("h1"), Name("data-msg-click")("h2"))()))
-	want := `<div data-msg-click="h1,h2"></div>`
-	if got != want {
-		t.Fatalf("got %q, want %q", got, want)
+// Handler attrs combine with a comma: two handlers for one event on
+// one element join into a single domi-msg attribute. The attrs come
+// from On — domi-msg names are reserved, so apps cannot spell them.
+func TestCombineMsgWithComma(t *testing.T) {
+	got := vdom.Render(lowerOneNode(Tag("div")(On("click", msgFn("h1")), On("click", msgFn("h2")))()))
+	const marker = `domi-msg-click="`
+	i := strings.Index(got, marker)
+	if i < 0 {
+		t.Fatalf("no handler attr in render %q", got)
+	}
+	value := got[i+len(marker):]
+	value = value[:strings.IndexByte(value, '"')]
+	if strings.Count(value, ",") != 1 {
+		t.Fatalf("two handlers should join with one comma: %q", value)
 	}
 }
 
 func TestCombineDistinctEventsKeepBoth(t *testing.T) {
-	rendered := vdom.Render(lowerOneNode(Tag("div")(Name("data-msg-click")("h1"), Name("data-msg-submit")("h2"))()))
-	if !strings.Contains(rendered, "data-msg-click") || !strings.Contains(rendered, "data-msg-submit") {
+	rendered := vdom.Render(lowerOneNode(Tag("div")(On("click", msgFn("h1")), On("submit", msgFn("h2")))()))
+	if !strings.Contains(rendered, "domi-msg-click") || !strings.Contains(rendered, "domi-msg-submit") {
 		t.Fatalf("distinct event attrs should both appear: %q", rendered)
 	}
 }
 
-func TestCombineSingleDataMsgNoComma(t *testing.T) {
-	rendered := vdom.Render(lowerOneNode(Tag("div")(Name("data-msg-click")("h1"))()))
+func TestCombineSingleMsgNoComma(t *testing.T) {
+	rendered := vdom.Render(lowerOneNode(Tag("div")(On("click", msgFn("h1")))()))
 	if strings.Contains(rendered, ",") {
-		t.Fatalf("single data-msg should have no comma: %q", rendered)
+		t.Fatalf("single handler should have no comma: %q", rendered)
 	}
 }
 

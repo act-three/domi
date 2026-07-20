@@ -17,7 +17,7 @@ func benchTree() Node {
 				[]Node{Text("Item " + strconv.Itoa(i))}),
 			NewElement("button", attrs(
 				Attr{Name: "class", Value: "btn delete"},
-				Attr{Name: "data-msg-click", Value: "abc123"},
+				Attr{Name: "domi-msg-click", Value: "abc123"},
 			), []Node{Text("×")}),
 		})
 	}

@@ -201,7 +201,7 @@ func RegisterCombining(name, sep string) {
 // combineSep returns the separator for attributes whose duplicate
 // occurrences should be combined.
 func combineSep(name string) (string, bool) {
-	if strings.HasPrefix(name, "data-msg-") {
+	if strings.HasPrefix(name, "domi-msg-") {
 		return ",", true
 	}
 	sep, ok := combining[name]
