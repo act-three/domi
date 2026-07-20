@@ -29,8 +29,8 @@ function check(cond, msg) {
   }
 }
 
-// keys returns the domi-internal-key of each element child of parent.
-const keys = (parent) => [...parent.children].map((c) => c.getAttribute('domi-internal-key'));
+// keys returns the domi-key of each element child of parent.
+const keys = (parent) => [...parent.children].map((c) => c.getAttribute('domi-key'));
 // mapKeys returns the keys domi tracks for parent, sorted for comparison.
 const mapKeys = (parent) => [...childMap(parent).keys()].sort();
 
@@ -40,7 +40,7 @@ function freshList(root, parentKeys) {
   const ul = document.createElement('ul');
   for (const k of parentKeys) {
     const li = document.createElement('li');
-    li.setAttribute('domi-internal-key', k);
+    li.setAttribute('domi-key', k);
     li.textContent = k;
     ul.appendChild(li);
   }
@@ -80,7 +80,7 @@ document.body.appendChild(root);
     const ul = document.createElement('ul');
     for (const k of parentKeys) {
       const li = document.createElement('li');
-      li.setAttribute('domi-internal-key', k);
+      li.setAttribute('domi-key', k);
       ul.appendChild(li);
     }
     return ul;
@@ -110,7 +110,7 @@ document.body.appendChild(root);
     const ul = document.createElement('ul');
     for (const k of parentKeys) {
       const li = document.createElement('li');
-      li.setAttribute('domi-internal-key', k);
+      li.setAttribute('domi-key', k);
       ul.appendChild(li);
     }
     return ul;
@@ -125,7 +125,7 @@ document.body.appendChild(root);
   const op = applyMove(root, a, c, null);
   const nk = op.To[op.To.length - 1];
   check(op.From[op.From.length - 1] === 'a' && nk !== '' && nk !== 'a', `collision op = ${JSON.stringify(op)}`);
-  check(a.getAttribute('domi-internal-key') === nk, 'collision: moved node not re-keyed in DOM');
+  check(a.getAttribute('domi-key') === nk, 'collision: moved node not re-keyed in DOM');
   check(childMap(ul2).get(nk) === a, 'collision: destination map missing the re-keyed node');
   check(childMap(ul2).get('a') !== a, 'collision: re-keyed node clobbered the existing key');
 }
@@ -138,11 +138,11 @@ document.body.appendChild(root);
   const seasons = document.createElement('ul'); // keyed seasons
   const mkSeason = (skey, items) => {
     const li = document.createElement('li');
-    li.setAttribute('domi-internal-key', skey);
+    li.setAttribute('domi-key', skey);
     const eps = document.createElement('ul'); // positional child of the season
     for (const k of items) {
       const e = document.createElement('li');
-      e.setAttribute('domi-internal-key', k);
+      e.setAttribute('domi-key', k);
       eps.appendChild(e);
     }
     li.appendChild(eps);
@@ -168,7 +168,7 @@ document.body.appendChild(root);
   const ul = freshList(root, ['a', 'b', 'c']);
   const a = ul.children[0];
   const detached = document.createElement('li'); // never inserted: no parent
-  detached.setAttribute('domi-internal-key', 'z');
+  detached.setAttribute('domi-key', 'z');
   const out = applyClientMutations(root, [
     { op: 'move', node: a, before: ul.children[2] }, // applicable on its own
     { op: 'move', node: detached, into: ul }, // malformed: node not connected

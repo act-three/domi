@@ -97,7 +97,7 @@ func (a Attr) cmp(b Attr) int {
 }
 
 // WithKey returns a copy of e keyed by key: the key is recorded for
-// identity-based reconciliation and mirrored into the domi-internal-key
+// identity-based reconciliation and mirrored into the domi-key
 // attribute the client resolves keyed ops against, replacing any
 // previous key. Writing both in one place keeps them from diverging.
 // Used by domi's lowering, and by client-mutation replay when the
@@ -112,7 +112,7 @@ func (e Element) WithKey(key string, opaque bool) Element {
 	}
 	e.key = key
 	e.opaque = opaque
-	a := Attr{Name: "domi-internal-key", Value: key}
+	a := Attr{Name: "domi-key", Value: key}
 	i, found := slices.BinarySearchFunc(e.attrs, a, Attr.cmp)
 	attrs := make([]Attr, len(e.attrs), len(e.attrs)+1)
 	copy(attrs, e.attrs)

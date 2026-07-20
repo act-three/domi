@@ -18,7 +18,7 @@ func Render(n Node) string {
 // The only errors returned are from w.
 //
 // Keyed and unkeyed children render identically — for keyed children,
-// domi-internal-key is already in Attrs (injected by domi's lowering).
+// domi-key is already in Attrs (injected by domi's lowering).
 func RenderTo(w io.Writer, n Node) error {
 	switch v := n.(type) {
 	case Text:
