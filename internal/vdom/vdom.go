@@ -47,13 +47,17 @@ func (Element) vdomNode() {}
 
 // NewElement constructs an [Element]. Children carry their own
 // reconciliation keys (see [Element.WithKey]); sibling keys must be
-// unique — NewElement panics otherwise.
+// unique. A void element must have no children. NewElement
+// panics if any of these conditions aren't met.
 //
 // Attrs are sorted by name and deduplicated according to the combining rules.
 func NewElement(tag string, attrs iter.Seq[Attr], children []Node) Element {
 	a := slices.Collect(attrs)
 	slices.SortStableFunc(a, Attr.cmp)
 
+	if IsVoid(tag) && len(children) > 0 {
+		panic(fmt.Sprintf("domi: void element <%s> cannot have children", tag))
+	}
 	children = coalesceText(children)
 	validateChildren(children)
 
@@ -265,9 +269,9 @@ func isText(n Node) bool {
 	return ok
 }
 
-// isVoid reports whether tag is a void HTML element (one that must not
+// IsVoid returns whether tag is a void HTML element (one that must not
 // have a closing tag, per the HTML spec).
-func isVoid(tag string) bool {
+func IsVoid(tag string) bool {
 	switch tag {
 	case "area", "base", "br", "col", "embed", "hr", "img", "input",
 		"link", "meta", "source", "track", "wbr":

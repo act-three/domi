@@ -177,6 +177,20 @@ func TestWithKeyTwicePanics(t *testing.T) {
 	_ = WithKey("b", WithKey("a", Tag("li")()))
 }
 
+// A void element serializes without children, so children provided to
+// one would live only in the server's shadow tree and desync the
+// session once they change. The Element panics at construction, where
+// the stack points at the offending call site, rather than letting
+// the divergence go latent until a render.
+func TestVoidElementWithChildrenPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for children of a void element")
+		}
+	}()
+	_ = Tag("input")()(Text("boom"))
+}
+
 // ---- nil Node tests ----
 //
 // A nil Node is the empty Fragment's degenerate twin: it lowers to
