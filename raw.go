@@ -6,6 +6,8 @@ import (
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
+
+	"ily.dev/domi/internal/vdom"
 )
 
 // UnsafeParseRaw parses s as HTML and returns the result as a [Fragment].
@@ -59,6 +61,8 @@ func parseNode(n *html.Node) (Node, error) {
 // SVG <use>, for instance) is rejoined into a single prefixed name so it
 // round-trips through rendering. Reserved and invalid tag and attribute
 // names are rejected.
+// A raw-text element must contain only text,
+// which must satisfy [vdom.CheckRawText].
 func parseElement(n *html.Node) (Node, error) {
 	if !isValidTagName(n.Data) {
 		return nil, fmt.Errorf("invalid tag name %q", n.Data)
@@ -87,6 +91,33 @@ func parseElement(n *html.Node) (Node, error) {
 			return nil, err
 		}
 		children = append(children, cc)
+	}
+	// A raw-text element must end up with text that CheckRawText
+	// accepts and no element children. Validate the text NewElement
+	// will see once the tree lowers. Comments parse to nil and
+	// contribute nothing, and the text around them coalesces.
+	//
+	// The parser guarantees text-only content but not safe text:
+	// a script containing an open comment ("<!--<script" ...) parses
+	// to a single text node we must reject. In foreign content,
+	// where script is an ordinary element, the parser doesn't even
+	// guarantee text: <svg><script> can come back with element
+	// children, or with "&lt;/script&gt;" entity-decoded into text
+	// that would end the element when written verbatim.
+	if vdom.IsRawTextElement(n.Data) {
+		var sb strings.Builder
+		for _, c := range children {
+			switch c := c.(type) {
+			case nil:
+			case text:
+				sb.WriteString(string(c))
+			default:
+				return nil, fmt.Errorf("<%s> must contain only text", n.Data)
+			}
+		}
+		if err := vdom.CheckRawText(n.Data, sb.String()); err != nil {
+			return nil, err
+		}
 	}
 	return Tag(n.Data)(attrs...)(children...), nil
 }

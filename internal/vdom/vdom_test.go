@@ -123,6 +123,80 @@ func TestVoidElementEmptyTextPanic(t *testing.T) {
 	_ = NewElement("input", attrs(), []Node{tx("")})
 }
 
+// Raw text renders verbatim, so text the parser reads as the
+// element's end tag would terminate the element mid-parse and let the
+// remainder of the string parse as markup — elements in the browser's
+// DOM that the vdom does not have, desyncing every patch addressed
+// past them. NewElement rejects it at construction, at the render
+// that introduces it, even when the tree would only be diffed: a
+// later Replace of an ancestor must not be the first place the text
+// is caught.
+func TestRawTextBreakoutPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for an end-tag sequence in script text")
+		}
+	}()
+	_ = NewElement("script", attrs(), []Node{tx(`</script><img src=x onerror=alert(1)>`)})
+}
+
+// The check runs on the coalesced child list, so an end-tag sequence
+// assembled from adjacent text children is caught all the same.
+func TestRawTextBreakoutAcrossCoalescedTextPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for a coalesced end-tag sequence in script text")
+		}
+	}()
+	_ = NewElement("script", attrs(), []Node{tx("</scr"), tx("ipt>")})
+}
+
+// A raw-text element must contain only text: an element child has no
+// faithful serialization inside script or style. NewElement rejects
+// the shape at construction rather than leaving it for the renderer.
+func TestRawTextElementChildPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for an element child of a script element")
+		}
+	}()
+	_ = NewElement("script", attrs(), []Node{el("b")})
+}
+
+// Mixed children are the same error: text does not coalesce across an
+// element child, so the single-text shape is unattainable.
+func TestRawTextMixedChildrenPanic(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for mixed children of a script element")
+		}
+	}()
+	_ = NewElement("script", attrs(), []Node{tx("var x = 1;"), el("b")})
+}
+
+// Script text combining "<!--" with "<script" is the other unfaithful
+// serialization: the element's own closing tag could go unrecognized
+// (the tokenizer's double-escaped state), and the element would
+// swallow whatever markup follows.
+func TestRawTextHiddenEndTagPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for script text hiding the end tag in a comment")
+		}
+	}()
+	_ = NewElement("script", attrs(), []Node{tx("<!--<script>")})
+}
+
+// Style is raw text too; only the tag name differs.
+func TestRawTextStyleBreakoutPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for an end-tag sequence in style text")
+		}
+	}()
+	_ = NewElement("style", attrs(), []Node{tx("</STYLE ><img src=x onerror=alert(1)>")})
+}
+
 // The same holds for the root list, validated by Diff.
 func TestDuplicateRootKeysPanic(t *testing.T) {
 	defer func() {
