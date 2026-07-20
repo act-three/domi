@@ -103,12 +103,13 @@ func Name(name string) func(value ...string) Attr {
 // Bool constructs a boolean HTML attribute.
 //
 // For [enumerated attributes]
-// with exactly two permitted values "true" and "false",
-// (contenteditable, draggable, spellcheck, and translate),
-// Bool emits a string value.
+// with exactly two permitted values that mean true and false
+// (such as autocorrect, draggable, spellcheck, and translate),
+// Bool emits the keyword for the given state:
 //
-//	Bool("contenteditable")(true)  // contenteditable="true"
-//	Bool("contenteditable")(false) // contenteditable="false"
+//	Bool("spellcheck")(true)   // spellcheck="true"
+//	Bool("translate")(true)    // translate="yes"
+//	Bool("autocorrect")(false) // autocorrect="off"
 //
 // For all other names, including standard [boolean attributes]
 // like disabled and checked,
@@ -127,23 +128,13 @@ func Bool(name string) func(bool) Attr {
 	if isReservedAttr(name) {
 		panic(fmt.Sprintf("domi: attribute %s is reserved", name))
 	}
-	// BUG: translate should produce "yes"/"no", NOT "true"/"false".
-	// TODO: handle other enumerated bools ("yes"/"no" and "on"/"off").
-	// See https://html.spec.whatwg.org/multipage/indices.html#attributes-3.
-	// Maybe also define RegisterEnumerated.
-	//
-	// Future godoc:
-	// For [enumerated attributes]
-	// with exactly two permitted values that map to true and false
-	// ("on"/"off", "yes"/"no", and "true"/"false"),
-	// Bool emits a string value.
-	// See [RegisterEnumerated].
-	if enumeratedBool[name] {
+	// TODO: maybe define RegisterEnumerated for custom attributes.
+	if kw, ok := enumeratedBool[name]; ok {
 		return func(v bool) Attr {
 			if v {
-				return attr{vdom.Attr{Name: name, Value: "true"}, nil}
+				return attr{vdom.Attr{Name: name, Value: kw[0]}, nil}
 			}
-			return attr{vdom.Attr{Name: name, Value: "false"}, nil}
+			return attr{vdom.Attr{Name: name, Value: kw[1]}, nil}
 		}
 	}
 	return func(v bool) Attr {
@@ -154,15 +145,19 @@ func Bool(name string) func(bool) Attr {
 	}
 }
 
-// enumeratedBool is the set of HTML attributes that take the string
-// values "true" and "false" rather than using presence/absence
-// semantics. These look boolean but are technically enumerated
-// attributes in the HTML spec.
-var enumeratedBool = map[string]bool{
-	"contenteditable": true,
-	"draggable":       true,
-	"spellcheck":      true,
-	"translate":       true,
+// enumeratedBool is the set of HTML attributes
+// that take exactly two keyword values meaning true and false,
+// rather than using presence/absence semantics,
+// mapped to those keywords in {true, false} order.
+// These look boolean,
+// but are technically enumerated attributes in the HTML spec.
+// See https://html.spec.whatwg.org/multipage/indices.html#attributes-3.
+var enumeratedBool = map[string][2]string{
+	"autocorrect":        {"on", "off"},
+	"draggable":          {"true", "false"},
+	"spellcheck":         {"true", "false"},
+	"translate":          {"yes", "no"},
+	"writingsuggestions": {"true", "false"},
 }
 
 // group is the lowered form of a [Group]: a sequence of attrs that

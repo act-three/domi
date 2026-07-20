@@ -104,32 +104,31 @@ var (
 
 // Boolean attributes. For standard boolean attributes, present means
 // true, absent means false. For enumerated boolean attributes
-// (ContentEditable, Draggable, Spellcheck, Translate), [domi.Bool]
-// emits the string values "true" and "false" instead.
+// (Draggable, Spellcheck, Translate),
+// [domi.Bool] emits a keyword value instead.
 var (
-	Autofocus       = domi.Bool("autofocus")
-	Autoplay        = domi.Bool("autoplay")
-	Checked         = domi.Bool("checked")
-	ContentEditable = domi.Bool("contenteditable")
-	Controls        = domi.Bool("controls")
-	Default         = domi.Bool("default")
-	Disabled        = domi.Bool("disabled")
-	Draggable       = domi.Bool("draggable")
-	FormNoValidate  = domi.Bool("formnovalidate")
-	Hidden          = domi.Bool("hidden")
-	Inert           = domi.Bool("inert")
-	Loop            = domi.Bool("loop")
-	Multiple        = domi.Bool("multiple")
-	Muted           = domi.Bool("muted")
-	NoValidate      = domi.Bool("novalidate")
-	Open            = domi.Bool("open")
-	PlaysInline     = domi.Bool("playsinline")
-	Readonly        = domi.Bool("readonly")
-	Required        = domi.Bool("required")
-	Reversed        = domi.Bool("reversed")
-	Selected        = domi.Bool("selected")
-	Spellcheck      = domi.Bool("spellcheck")
-	Translate       = domi.Bool("translate")
+	Autofocus      = domi.Bool("autofocus")
+	Autoplay       = domi.Bool("autoplay")
+	Checked        = domi.Bool("checked")
+	Controls       = domi.Bool("controls")
+	Default        = domi.Bool("default")
+	Disabled       = domi.Bool("disabled")
+	Draggable      = domi.Bool("draggable")
+	FormNoValidate = domi.Bool("formnovalidate")
+	Hidden         = domi.Bool("hidden")
+	Inert          = domi.Bool("inert")
+	Loop           = domi.Bool("loop")
+	Multiple       = domi.Bool("multiple")
+	Muted          = domi.Bool("muted")
+	NoValidate     = domi.Bool("novalidate")
+	Open           = domi.Bool("open")
+	PlaysInline    = domi.Bool("playsinline")
+	Readonly       = domi.Bool("readonly")
+	Required       = domi.Bool("required")
+	Reversed       = domi.Bool("reversed")
+	Selected       = domi.Bool("selected")
+	Spellcheck     = domi.Bool("spellcheck")
+	Translate      = domi.Bool("translate")
 )
 
 // Stylef returns a style attribute formatted with [fmt.Sprintf].
