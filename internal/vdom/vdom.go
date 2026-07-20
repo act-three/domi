@@ -47,8 +47,10 @@ func (Element) vdomNode() {}
 
 // NewElement constructs an [Element]. Children carry their own
 // reconciliation keys (see [Element.WithKey]); sibling keys must be
-// unique. A void element must have no children. NewElement
-// panics if any of these conditions aren't met.
+// unique. A void element must have no children.
+// A raw-text element's children (if any) must be text
+// that satisfies [CheckRawText] after coalescing.
+// NewElement panics if any of these conditions aren't met.
 //
 // Attrs are sorted by name and deduplicated according to the combining rules.
 func NewElement(tag string, attrs iter.Seq[Attr], children []Node) Element {
@@ -60,6 +62,15 @@ func NewElement(tag string, attrs iter.Seq[Attr], children []Node) Element {
 	}
 	children = coalesceText(children)
 	validateChildren(children)
+	if IsRawTextElement(tag) && len(children) > 0 {
+		t, ok := children[0].(Text)
+		if len(children) != 1 || !ok {
+			panic(fmt.Sprintf("domi: <%s> must contain only text", tag))
+		}
+		if err := CheckRawText(tag, string(t)); err != nil {
+			panic("domi: " + err.Error())
+		}
+	}
 
 	return Element{tag: tag, attrs: combineAttrs(a), children: children}
 }

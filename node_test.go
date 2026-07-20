@@ -615,6 +615,80 @@ func TestUnsafeParseRawScriptVerbatim(t *testing.T) {
 	}
 }
 
+// Raw text under script renders verbatim, so an end-tag sequence in
+// it would terminate the element during HTML parsing and let the rest
+// of the string parse as markup the virtual DOM does not contain.
+// Lowering panics rather than building a tree that cannot serialize
+// faithfully.
+func TestScriptTextBreakoutPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for an end-tag sequence in script text")
+		}
+	}()
+	_ = lowerOneNode(Tag("script")()(Text(`</script><img src=x onerror=alert(1)>`)))
+}
+
+// Splitting the payload across text children doesn't dodge the check:
+// adjacent text coalesces before validation, exactly as the browser's
+// parser would merge it.
+func TestScriptSplitTextBreakoutPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for a split end-tag sequence in script text")
+		}
+	}()
+	_ = lowerOneNode(Tag("script")()(Text("var x=1;"), Text("</script><img src=x onerror=alert(1)>")))
+}
+
+// Script text that opens a comment around "<script" can parse to
+// text containing an end-tag sequence, or — truncated — to text
+// whose serialized closing tag would not end the element.
+// CheckRawText rejects both conservatively, so UnsafeParseRaw returns
+// an error rather than panicking at lowering.
+func TestUnsafeParseRawRejectsCommentedScript(t *testing.T) {
+	for _, src := range []string{
+		"<script><!--<script>var a = '</script>';//--></script>",
+		"<script><!--<script>",
+	} {
+		if _, err := UnsafeParseRaw(src); err == nil {
+			t.Fatalf("UnsafeParseRaw(%q): expected error for commented script text", src)
+		}
+	}
+}
+
+// In foreign content script is an ordinary element, so the parser can
+// hand back shapes HTML content never produces: element children, or
+// "&lt;/script&gt;" entity-decoded into text that would end the
+// element when written back verbatim. Both are rejected — including
+// an end-tag sequence assembled across a comment, which contributes
+// nothing to the rendered output and so no longer separates the text
+// around it.
+func TestUnsafeParseRawRejectsForeignScriptShapes(t *testing.T) {
+	for _, src := range []string{
+		`<svg><script>a<rect></rect>b</script></svg>`,
+		`<svg><script>&lt;/script&gt;</script></svg>`,
+		`<svg><script>&lt;/scr<!--c-->ipt&gt;</script></svg>`,
+	} {
+		if _, err := UnsafeParseRaw(src); err == nil {
+			t.Fatalf("UnsafeParseRaw(%q): expected error for foreign-content script", src)
+		}
+	}
+}
+
+// A comment inside foreign-content script is dropped like comments
+// everywhere else, and the raw-text validation sees the text as
+// lowering will: nils gone and the surrounding text joined — the
+// same coalescing NewElement applies.
+func TestUnsafeParseRawForeignScriptDropsComments(t *testing.T) {
+	if got := renderParsed(t, `<svg><script>a<!--c-->b</script></svg>`); got != `<svg><script>ab</script></svg>` {
+		t.Fatalf("got %q", got)
+	}
+	if got := renderParsed(t, `<svg><script><!--c--></script></svg>`); got != `<svg><script></script></svg>` {
+		t.Fatalf("got %q", got)
+	}
+}
+
 // SVG survives the round-trip: camelCase tag and attribute names are
 // preserved, and a namespaced attribute keeps its prefix.
 func TestUnsafeParseRawSVG(t *testing.T) {

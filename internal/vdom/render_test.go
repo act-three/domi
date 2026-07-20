@@ -65,7 +65,8 @@ func TestRenderEmptyScript(t *testing.T) {
 }
 
 // A raw-text element can't hold an element child — there's no faithful
-// way to serialize one inside script or style — so rendering panics
+// way to serialize one inside script or style. NewElement rejects the
+// shape at construction; the write site panics on a hand-built tree
 // rather than emitting escaped or malformed output.
 func TestRenderRawTextRejectsElementChild(t *testing.T) {
 	defer func() {
@@ -73,7 +74,7 @@ func TestRenderRawTextRejectsElementChild(t *testing.T) {
 			t.Fatal("expected panic for element child in a raw-text element")
 		}
 	}()
-	in := NewElement("script", attrs(), []Node{NewElement("b", attrs(), nil)})
+	in := Element{tag: "script", children: []Node{Element{tag: "b"}}}
 	Render(in)
 }
 

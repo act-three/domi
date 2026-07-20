@@ -131,7 +131,7 @@ func applyMove(roots []Node, from, to []Step, before string) ([]Node, error) {
 	}
 
 	return withList(tree, dstPath, func(kids []Node, tag string) ([]Node, error) {
-		if isRawTextElement(tag) || IsVoid(tag) {
+		if IsRawTextElement(tag) || IsVoid(tag) {
 			return nil, fmt.Errorf("vdom: move destination <%s> cannot hold element children", tag)
 		}
 		if keyIndex(kids, toKey) >= 0 {

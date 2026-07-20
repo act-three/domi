@@ -57,13 +57,13 @@ func RenderTo(w io.Writer, n Node) error {
 // serialization here — it panics rather than emit escaped or malformed
 // output.
 func renderChildren(w io.Writer, e Element) error {
-	if isRawTextElement(e.tag) {
+	if IsRawTextElement(e.tag) {
 		if len(e.children) == 0 {
 			return nil
 		}
 		t, ok := e.children[0].(Text)
 		if len(e.children) != 1 || !ok {
-			panic(fmt.Sprintf("domi: <%s> must hold a single text child", e.tag))
+			panic(fmt.Sprintf("domi: <%s> must contain only text", e.tag))
 		}
 		_, err := io.WriteString(w, string(t))
 		return err
@@ -74,14 +74,6 @@ func renderChildren(w io.Writer, e Element) error {
 		}
 	}
 	return nil
-}
-
-// isRawTextElement reports whether tag holds CDATA-style raw text whose
-// content an HTML parser does not entity-decode. Only script and style
-// qualify; textarea and title are escapable raw text, so ordinary text
-// escaping already renders them correctly.
-func isRawTextElement(tag string) bool {
-	return tag == "script" || tag == "style"
 }
 
 // writeAttr writes a single attribute. An empty value renders as
