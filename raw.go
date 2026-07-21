@@ -82,7 +82,7 @@ func parseElement(n *html.Node) (Node, error) {
 		if isReservedAttr(name) {
 			return nil, fmt.Errorf("reserved attribute %s on <%s>", name, n.Data)
 		}
-		attrs = append(attrs, Name(name)(a.Val))
+		attrs = append(attrs, Name(name, a.Val))
 	}
 	var children []Node
 	for c := n.FirstChild; c != nil; c = c.NextSibling {

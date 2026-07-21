@@ -185,9 +185,9 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 		element{ // Can't use Tag here because domi-root is reserved.
 			tag: "domi-root",
 			attrs: []Attr{
-				Name("style")("display:contents"),
-				Name("prefix")(path.Join("/", s.sv.prefix, s.id)),
-				Name("path-sets")(marshalPathSets(s.pathSets)),
+				Name("style", "display:contents"),
+				Name("prefix", path.Join("/", s.sv.prefix, s.id)),
+				Name("path-sets", marshalPathSets(s.pathSets)),
 			},
 			children: children,
 		},

@@ -16,7 +16,7 @@ func renderToString(t *testing.T, n Node) string {
 }
 
 func TestRenderToElement(t *testing.T) {
-	got := renderToString(t, Tag("p", Name("class")("x"))(Text("hi")))
+	got := renderToString(t, Tag("p", Name("class", "x"))(Text("hi")))
 	if want := `<p class="x">hi</p>`; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}

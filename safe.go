@@ -66,7 +66,7 @@ func safeElement(n *html.Node) Node {
 		if urlAttr[a.Key] && !isSafeURL(a.Val) {
 			continue
 		}
-		attrs = append(attrs, Name(a.Key)(a.Val))
+		attrs = append(attrs, Name(a.Key, a.Val))
 	}
 	return Tag(tag, attrs...)(children...)
 }
