@@ -25,14 +25,6 @@ var Bypass Attr = Name("domi-bypass")
 //  3. For all other attributes,
 //     only the first occurrence appears.
 //
-// Attribute names must be lowercase,
-// except for foreign-content (SVG and MathML) mixed-case names
-// like viewBox.
-//
-// Package domi defines custom attributes for use by applications,
-// all with names that begin with "domi-".
-// Other attribute names with that prefix are reserved.
-//
 // A nil Attr is a valid Attr that emits nothing.
 type Attr interface {
 	isAttr()
@@ -74,6 +66,14 @@ func isReservedAttr(name string) bool {
 //	Name("class", "a", "b") // class="a b"
 //	Name("style", "a")      // style="a"
 //	Name("style", "a", "b") // style="a;b"
+//
+// The given name must be lowercase,
+// except for foreign-content (SVG and MathML) mixed-case names
+// like viewBox.
+//
+// This package defines custom attributes for use by applications,
+// all having names that begin with "domi-".
+// Other attribute names with that prefix are reserved.
 //
 // If name is invalid or reserved, Name panics.
 func Name(name string, value ...string) Attr {
