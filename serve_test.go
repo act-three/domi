@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"ily.dev/domi/internal/vdom"
@@ -268,35 +269,31 @@ func TestHandlerInternalURLPrefix(t *testing.T) {
 // A Dispatch message routes to the handler named by its key, rebuilds
 // that handler's Msg, and applies it — landing as a frame.
 func TestHandleEventDispatch(t *testing.T) {
-	s := newTestSession(&counterApp{})
-	defer s.cancel()
+	synctest.Test(t, func(t *testing.T) {
+		s := newTestSession(&counterApp{})
+		defer s.cancel()
 
-	// Register an unmarshal function the way lowering would, under the
-	// session's current tree version, then dispatch its key. The client
-	// sends the bare handler key, stripping the pathSet key, plus the
-	// version id of the tree its DOM displays.
-	s.tables[s.ver] = table[int]{"k1": msgInt(1)}
-	body := fmt.Sprintf(`{"Type":"Dispatch","Handler":"k1","Ver":%q}`, s.ver)
-	rec := httptest.NewRecorder()
-	s.handleEvent(rec, httptest.NewRequest("POST", "/x/event", strings.NewReader(body)))
+		// Register an unmarshal function the way lowering would, under the
+		// session's current tree version, then dispatch its key. The client
+		// sends the bare handler key, stripping the pathSet key, plus the
+		// version id of the tree its DOM displays.
+		s.tables[s.ver] = table[int]{"k1": msgInt(1)}
+		body := fmt.Sprintf(`{"Type":"Dispatch","Handler":"k1","Ver":%q}`, s.ver)
+		rec := httptest.NewRecorder()
+		s.handleEvent(rec, httptest.NewRequest("POST", "/x/event", strings.NewReader(body)))
 
-	if rec.Code != http.StatusNoContent {
-		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
-	}
-	// apply runs in a goroutine; wait for the dispatched Msg to land.
-	deadline := time.Now().Add(time.Second)
-	for {
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+		}
+		// apply runs in a goroutine; the settled bubble has run it.
+		synctest.Wait()
 		s.mu.Lock()
 		head := s.head
 		s.mu.Unlock()
-		if head == 1 {
-			break
-		}
-		if time.Now().After(deadline) {
+		if head != 1 {
 			t.Fatal("Dispatch did not apply a Msg (no frame produced)")
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	})
 }
 
 // A frame that changes the tree carries a fresh version id naming the
@@ -340,40 +337,44 @@ func TestApplyKeepsVerWithoutPatches(t *testing.T) {
 
 // idleWatch cancels the session once activity falls behind by d.
 func TestSessionIdleWatchFires(t *testing.T) {
-	const d = 50 * time.Millisecond
-	s := newTestSession(&counterApp{})
-	defer s.cancel()
-	go s.idleWatch(d)
-	select {
-	case <-s.ctx.Done():
-	case <-time.After(d * 10):
-		t.Fatal("idleWatch did not cancel an idle session")
-	}
+	synctest.Test(t, func(t *testing.T) {
+		const d = 50 * time.Millisecond
+		s := newTestSession(&counterApp{})
+		defer s.cancel()
+		go s.idleWatch(d)
+		select {
+		case <-s.ctx.Done():
+		case <-time.After(d * 10):
+			t.Fatal("idleWatch did not cancel an idle session")
+		}
+	})
 }
 
 // touch defers the idle deadline. Repeated touches keep the session
 // alive past d; once they stop, idleWatch fires.
 func TestSessionIdleWatchTouchDefers(t *testing.T) {
-	const d = 50 * time.Millisecond
-	s := newTestSession(&counterApp{})
-	defer s.cancel()
-	go s.idleWatch(d)
+	synctest.Test(t, func(t *testing.T) {
+		const d = 50 * time.Millisecond
+		s := newTestSession(&counterApp{})
+		defer s.cancel()
+		go s.idleWatch(d)
 
-	// Touch four times across ~2d to verify the deadline keeps sliding.
-	for range 4 {
-		time.Sleep(d / 2)
-		s.touch()
-	}
-	if s.ctx.Err() != nil {
-		t.Fatalf("session cancelled despite recent touches: %v", s.ctx.Err())
-	}
+		// Touch four times across ~2d to verify the deadline keeps sliding.
+		for range 4 {
+			time.Sleep(d / 2)
+			s.touch()
+		}
+		if s.ctx.Err() != nil {
+			t.Fatalf("session cancelled despite recent touches: %v", s.ctx.Err())
+		}
 
-	// Stop touching; cancellation should follow within roughly d.
-	select {
-	case <-s.ctx.Done():
-	case <-time.After(d * 10):
-		t.Fatal("idleWatch did not cancel after touches stopped")
-	}
+		// Stop touching; cancellation should follow within roughly d.
+		select {
+		case <-s.ctx.Done():
+		case <-time.After(d * 10):
+			t.Fatal("idleWatch did not cancel after touches stopped")
+		}
+	})
 }
 
 // A session whose client never attaches SSE expires after
@@ -680,27 +681,29 @@ type tickKey struct{ id string }
 // A subscription's event stream runs in its own goroutine and
 // dispatches Msgs through apply.
 func TestSessionSubStartsAndDispatches(t *testing.T) {
-	ready := make(chan struct{})
-	app := &subApp{sub: Subscription(tickKey{"a"}, func(ctx context.Context) iter.Seq[int] {
-		return func(yield func(int) bool) {
-			close(ready)
-			yield(42)
-		}
-	})}
-	s := newTestSession[int](app)
-	defer s.cancel()
-	// Initial diffSubs to wire up the subscription.
-	s.mu.Lock()
-	s.updateSubs(app.Subscriptions(s.ctx))
-	s.mu.Unlock()
+	synctest.Test(t, func(t *testing.T) {
+		ready := make(chan struct{})
+		app := &subApp{sub: Subscription(tickKey{"a"}, func(ctx context.Context) iter.Seq[int] {
+			return func(yield func(int) bool) {
+				close(ready)
+				yield(42)
+			}
+		})}
+		s := newTestSession[int](app)
+		defer s.cancel()
+		// Initial diffSubs to wire up the subscription.
+		s.mu.Lock()
+		s.updateSubs(app.Subscriptions(s.ctx))
+		s.mu.Unlock()
 
-	select {
-	case <-ready:
-	case <-time.After(time.Second):
-		t.Fatal("subscription goroutine never started")
-	}
-	// Give apply time to process.
-	time.Sleep(20 * time.Millisecond)
+		select {
+		case <-ready:
+		case <-time.After(time.Second):
+			t.Fatal("subscription goroutine never started")
+		}
+		// Settle the bubble so the yielded value's apply finishes.
+		synctest.Wait()
+	})
 }
 
 // A subscription removed from the set has its context cancelled.
@@ -1415,21 +1418,18 @@ func soleKey[Msg any](t *testing.T, s *session[Msg], ver string) string {
 	panic("unreachable")
 }
 
-// waitGot polls until the app's recorded Msgs equal want.
+// waitGot settles the bubble and compares the app's recorded Msgs.
+// Must run inside a synctest bubble: Wait returns once every goroutine
+// is durably blocked, so a dispatched Msg has either landed or provably
+// never will — which lets the negative tests assert inaction outright.
 func waitGot(t *testing.T, s *session[int], a *captureApp, want []int) {
 	t.Helper()
-	deadline := time.Now().Add(time.Second)
-	for {
-		s.mu.Lock()
-		got := slices.Clone(a.got)
-		s.mu.Unlock()
-		if slices.Equal(got, want) {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("got %v, want %v", got, want)
-		}
-		time.Sleep(2 * time.Millisecond)
+	synctest.Wait()
+	s.mu.Lock()
+	got := slices.Clone(a.got)
+	s.mu.Unlock()
+	if !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
 }
 
@@ -1439,25 +1439,27 @@ func waitGot(t *testing.T, s *session[int], a *captureApp, want []int) {
 // fires the new one. The key itself is identical across renders — the
 // element's address — so the versions are doing all the work.
 func TestDispatchIsVersionExact(t *testing.T) {
-	app := &captureApp{body: func(n int) Node { return Textf("%d", n) }}
-	s := newTestSession[int](app)
-	defer s.cancel()
+	synctest.Test(t, func(t *testing.T) {
+		app := &captureApp{body: func(n int) Node { return Textf("%d", n) }}
+		s := newTestSession[int](app)
+		defer s.cancel()
 
-	ver0 := s.ver
-	s.apply(s.ctx, -1, nil) // n: 0 → 1; body changes; fresh ver
-	ver1 := s.ver
-	if ver1 == ver0 {
-		t.Fatal("changed tree should have minted a fresh ver")
-	}
-	key := soleKey(t, s, ver1)
-	if key != soleKey(t, s, ver0) {
-		t.Fatal("handler key should be the element's address, stable across renders")
-	}
+		ver0 := s.ver
+		s.apply(s.ctx, -1, nil) // n: 0 → 1; body changes; fresh ver
+		ver1 := s.ver
+		if ver1 == ver0 {
+			t.Fatal("changed tree should have minted a fresh ver")
+		}
+		key := soleKey(t, s, ver1)
+		if key != soleKey(t, s, ver0) {
+			t.Fatal("handler key should be the element's address, stable across renders")
+		}
 
-	s.dispatch(s.ctx, ver0, key, nil)
-	waitGot(t, s, app, []int{0})
-	s.dispatch(s.ctx, ver1, key, nil)
-	waitGot(t, s, app, []int{0, 1})
+		s.dispatch(s.ctx, ver0, key, nil)
+		waitGot(t, s, app, []int{0})
+		s.dispatch(s.ctx, ver1, key, nil)
+		waitGot(t, s, app, []int{0, 1})
+	})
 }
 
 // When an apply changes captures but not the DOM — a subscription tick
@@ -1465,28 +1467,31 @@ func TestDispatchIsVersionExact(t *testing.T) {
 // table's bindings are refreshed in place, so events fire the latest
 // functions rather than stale captures.
 func TestDispatchRefreshesUnchangedTree(t *testing.T) {
-	app := &captureApp{body: func(int) Node { return Text("retry") }}
-	s := newTestSession[int](app)
-	defer s.cancel()
+	synctest.Test(t, func(t *testing.T) {
+		app := &captureApp{body: func(int) Node { return Text("retry") }}
+		s := newTestSession[int](app)
+		defer s.cancel()
 
-	ver0 := s.ver
-	s.apply(s.ctx, -1, nil) // n: 0 → 1; body unchanged; same ver
-	if s.ver != ver0 {
-		t.Fatal("unchanged tree should keep its ver")
-	}
-	s.dispatch(s.ctx, ver0, soleKey(t, s, ver0), nil)
-	waitGot(t, s, app, []int{1})
+		ver0 := s.ver
+		s.apply(s.ctx, -1, nil) // n: 0 → 1; body unchanged; same ver
+		if s.ver != ver0 {
+			t.Fatal("unchanged tree should keep its ver")
+		}
+		s.dispatch(s.ctx, ver0, soleKey(t, s, ver0), nil)
+		waitGot(t, s, app, []int{1})
+	})
 }
 
 // An event naming a version the session never produced is dropped.
 func TestDispatchUnknownVerDropped(t *testing.T) {
-	app := &captureApp{body: func(int) Node { return Text("x") }}
-	s := newTestSession[int](app)
-	defer s.cancel()
+	synctest.Test(t, func(t *testing.T) {
+		app := &captureApp{body: func(int) Node { return Text("x") }}
+		s := newTestSession[int](app)
+		defer s.cancel()
 
-	s.dispatch(s.ctx, "nonexistent", soleKey(t, s, s.ver), nil)
-	time.Sleep(20 * time.Millisecond)
-	waitGot(t, s, app, nil)
+		s.dispatch(s.ctx, "nonexistent", soleKey(t, s, s.ver), nil)
+		waitGot(t, s, app, nil)
+	})
 }
 
 // A handler whose function produces some other app's Msg type is a
@@ -1508,16 +1513,17 @@ func TestTypedMismatchPanics(t *testing.T) {
 // An error from the app's unmarshal function skips the event, like a
 // failing decoder in Elm.
 func TestDispatchUnmarshalErrorSkips(t *testing.T) {
-	app := &captureApp{body: func(int) Node { return Text("x") }}
-	s := newTestSession[int](app)
-	defer s.cancel()
+	synctest.Test(t, func(t *testing.T) {
+		app := &captureApp{body: func(int) Node { return Text("x") }}
+		s := newTestSession[int](app)
+		defer s.cancel()
 
-	s.tables[s.ver] = table[int]{"bad": func(jsontext.Value) (int, error) {
-		return 7, fmt.Errorf("no thanks")
-	}}
-	s.dispatch(s.ctx, s.ver, "bad", nil)
-	time.Sleep(20 * time.Millisecond)
-	waitGot(t, s, app, nil)
+		s.tables[s.ver] = table[int]{"bad": func(jsontext.Value) (int, error) {
+			return 7, fmt.Errorf("no thanks")
+		}}
+		s.dispatch(s.ctx, s.ver, "bad", nil)
+		waitGot(t, s, app, nil)
+	})
 }
 
 // pathSetApp renders one handler carrying a non-empty path set.
@@ -1673,13 +1679,13 @@ func topMove(key, before string) []vdom.ClientMutation {
 }
 
 // optimistic drives an event carrying a client mutation set the way
-// handleEvent does — apply the mutations, then dispatch the event msg on
-// top — and waits out the async handler so callers can assert. The wait
-// mirrors the existing dispatch tests (TODO: a deterministic apply hook).
+// handleEvent does — apply the mutations, then dispatch the event msg
+// on top — then settles the bubble so callers can assert on the
+// finished apply. Must run inside a synctest bubble.
 func optimistic(s *session[moveMsg], ver, handler string, muts []vdom.ClientMutation) {
 	s.applyClientMutations(s.ctx, ver, muts)
 	s.dispatch(s.ctx, ver, handler, nil)
-	time.Sleep(20 * time.Millisecond)
+	synctest.Wait()
 }
 
 // reconstruct replays a reported move onto the acted-on tree, rebuilding
@@ -1719,80 +1725,86 @@ func TestSessionReconstructUnknownVersion(t *testing.T) {
 // diff is empty: no DOM patch is sent, so the row never visibly reverts.
 // The lineage rebases onto the client's derived version.
 func TestDispatchOptimisticAgreementPaintsOnce(t *testing.T) {
-	app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
-	s := newTestSession[moveMsg](app)
-	defer s.cancel()
-	v0 := s.ver
-	key := soleKey(t, s, v0)
+	synctest.Test(t, func(t *testing.T) {
+		app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
+		s := newTestSession[moveMsg](app)
+		defer s.cancel()
+		v0 := s.ver
+		key := soleKey(t, s, v0)
 
-	optimistic(s, v0, key, topMove("c", "a"))
+		optimistic(s, v0, key, topMove("c", "a"))
 
-	derived := v0 + verMutatedSuffix
-	s.mu.Lock()
-	base, ver, order := s.base, s.ver, slices.Clone(app.order)
-	s.mu.Unlock()
-	if base != derived || ver != derived {
-		t.Fatalf("base/ver = %q/%q, want both %q", base, ver, derived)
-	}
-	if !slices.Equal(order, []string{"c", "a", "b"}) {
-		t.Fatalf("model order = %v, want [c a b]", order)
-	}
-	if hasApplyPatch(lastFrame(s)) {
-		t.Fatal("agreement emitted a DOM patch; the optimistic row should stand untouched")
-	}
+		derived := v0 + verMutatedSuffix
+		s.mu.Lock()
+		base, ver, order := s.base, s.ver, slices.Clone(app.order)
+		s.mu.Unlock()
+		if base != derived || ver != derived {
+			t.Fatalf("base/ver = %q/%q, want both %q", base, ver, derived)
+		}
+		if !slices.Equal(order, []string{"c", "a", "b"}) {
+			t.Fatalf("model order = %v, want [c a b]", order)
+		}
+		if hasApplyPatch(lastFrame(s)) {
+			t.Fatal("agreement emitted a DOM patch; the optimistic row should stand untouched")
+		}
+	})
 }
 
 // When the server declines the move, the forward diff is the correction:
 // a DOM patch that returns the row to its server-known place.
 func TestDispatchOptimisticRejectionReverts(t *testing.T) {
-	app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}, reject: true}
-	s := newTestSession[moveMsg](app)
-	defer s.cancel()
-	v0 := s.ver
-	key := soleKey(t, s, v0)
+	synctest.Test(t, func(t *testing.T) {
+		app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}, reject: true}
+		s := newTestSession[moveMsg](app)
+		defer s.cancel()
+		v0 := s.ver
+		key := soleKey(t, s, v0)
 
-	optimistic(s, v0, key, topMove("c", "a"))
+		optimistic(s, v0, key, topMove("c", "a"))
 
-	s.mu.Lock()
-	base, order := s.base, slices.Clone(app.order)
-	s.mu.Unlock()
-	if base != v0+verMutatedSuffix {
-		t.Fatalf("base = %q, want derived", base)
-	}
-	if !slices.Equal(order, []string{"a", "b", "c"}) {
-		t.Fatalf("model order = %v, want unchanged [a b c]", order)
-	}
-	if !hasApplyPatch(lastFrame(s)) {
-		t.Fatal("rejection should emit a corrective DOM patch")
-	}
+		s.mu.Lock()
+		base, order := s.base, slices.Clone(app.order)
+		s.mu.Unlock()
+		if base != v0+verMutatedSuffix {
+			t.Fatalf("base = %q, want derived", base)
+		}
+		if !slices.Equal(order, []string{"a", "b", "c"}) {
+			t.Fatalf("model order = %v, want unchanged [a b c]", order)
+		}
+		if !hasApplyPatch(lastFrame(s)) {
+			t.Fatal("rejection should emit a corrective DOM patch")
+		}
+	})
 }
 
 // A second optimistic move arriving before the first's catch-up chains: the
 // server reconstructs from the tree the first move left, so both stand.
 func TestDispatchOptimisticChains(t *testing.T) {
-	app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
-	s := newTestSession[moveMsg](app)
-	defer s.cancel()
-	v0 := s.ver
-	key := soleKey(t, s, v0)
+	synctest.Test(t, func(t *testing.T) {
+		app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
+		s := newTestSession[moveMsg](app)
+		defer s.cancel()
+		v0 := s.ver
+		key := soleKey(t, s, v0)
 
-	// Move 1: c before a → [c a b].
-	optimistic(s, v0, key, topMove("c", "a"))
-	d1 := v0 + verMutatedSuffix
+		// Move 1: c before a → [c a b].
+		optimistic(s, v0, key, topMove("c", "a"))
+		d1 := v0 + verMutatedSuffix
 
-	// Move 2, echoing the first's derived version: b before c → [b c a].
-	app.move = moveMsg{Key: "b", Before: "c"}
-	optimistic(s, d1, key, topMove("b", "c"))
+		// Move 2, echoing the first's derived version: b before c → [b c a].
+		app.move = moveMsg{Key: "b", Before: "c"}
+		optimistic(s, d1, key, topMove("b", "c"))
 
-	s.mu.Lock()
-	base, order := s.base, slices.Clone(app.order)
-	s.mu.Unlock()
-	if want := d1 + verMutatedSuffix; base != want {
-		t.Fatalf("base = %q, want twice-derived %q", base, want)
-	}
-	if !slices.Equal(order, []string{"b", "c", "a"}) {
-		t.Fatalf("model order = %v, want [b c a]", order)
-	}
+		s.mu.Lock()
+		base, order := s.base, slices.Clone(app.order)
+		s.mu.Unlock()
+		if want := d1 + verMutatedSuffix; base != want {
+			t.Fatalf("base = %q, want twice-derived %q", base, want)
+		}
+		if !slices.Equal(order, []string{"b", "c", "a"}) {
+			t.Fatalf("model order = %v, want [b c a]", order)
+		}
+	})
 }
 
 // An unrelated update can advance the live version between a client's last
@@ -1800,32 +1812,34 @@ func TestDispatchOptimisticChains(t *testing.T) {
 // still retained among recent renders, so the server reconstructs and diffs
 // forward — a minimal correction, not a disruptive reset.
 func TestDispatchOptimisticSurvivesRacedUpdate(t *testing.T) {
-	app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
-	s := newTestSession[moveMsg](app)
-	defer s.cancel()
-	v0 := s.ver
-	key := soleKey(t, s, v0)
+	synctest.Test(t, func(t *testing.T) {
+		app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
+		s := newTestSession[moveMsg](app)
+		defer s.cancel()
+		v0 := s.ver
+		key := soleKey(t, s, v0)
 
-	// An unrelated update advances the live version off v0.
-	s.apply(s.ctx, moveMsg{Key: "a", Before: ""}, nil)
-	if s.ver == v0 {
-		t.Fatal("setup: expected the unrelated update to mint a fresh version")
-	}
+		// An unrelated update advances the live version off v0.
+		s.apply(s.ctx, moveMsg{Key: "a", Before: ""}, nil)
+		if s.ver == v0 {
+			t.Fatal("setup: expected the unrelated update to mint a fresh version")
+		}
 
-	// The client acted on v0 — still retained — not the live version.
-	optimistic(s, v0, key, topMove("c", "a"))
+		// The client acted on v0 — still retained — not the live version.
+		optimistic(s, v0, key, topMove("c", "a"))
 
-	derived := v0 + verMutatedSuffix
-	s.mu.Lock()
-	base := s.base
-	_, rebased := s.recent.get(derived)
-	s.mu.Unlock()
-	if base != derived {
-		t.Fatalf("base = %q, want derived %q", base, derived)
-	}
-	if !rebased {
-		t.Fatal("expected reconstruct to rebase onto the optimistic tree, not reset")
-	}
+		derived := v0 + verMutatedSuffix
+		s.mu.Lock()
+		base := s.base
+		_, rebased := s.recent.get(derived)
+		s.mu.Unlock()
+		if base != derived {
+			t.Fatalf("base = %q, want derived %q", base, derived)
+		}
+		if !rebased {
+			t.Fatal("expected reconstruct to rebase onto the optimistic tree, not reset")
+		}
+	})
 }
 
 // Only when the acted-on tree is genuinely gone — evicted from the recent
@@ -1833,28 +1847,30 @@ func TestDispatchOptimisticSurvivesRacedUpdate(t *testing.T) {
 // action run and the client reset onto its derived base to rebuild from the
 // authoritative tree.
 func TestDispatchOptimisticResetsWhenTreeGone(t *testing.T) {
-	app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
-	s := newTestSession[moveMsg](app)
-	defer s.cancel()
-	v0 := s.ver
-	key := soleKey(t, s, v0)
+	synctest.Test(t, func(t *testing.T) {
+		app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
+		s := newTestSession[moveMsg](app)
+		defer s.cancel()
+		v0 := s.ver
+		key := soleKey(t, s, v0)
 
-	// An unrelated update advances the live version, then enough renders to
-	// evict v0's tree from the recent ring entirely.
-	s.apply(s.ctx, moveMsg{Key: "a", Before: ""}, nil) // [a b c] → [b c a]
-	s.mu.Lock()
-	for i := 0; i < recentRingSize; i++ {
-		s.recent.put(fmt.Sprintf("filler-%d", i), tree{})
-	}
-	s.mu.Unlock()
+		// An unrelated update advances the live version, then enough renders to
+		// evict v0's tree from the recent ring entirely.
+		s.apply(s.ctx, moveMsg{Key: "a", Before: ""}, nil) // [a b c] → [b c a]
+		s.mu.Lock()
+		for i := 0; i < recentRingSize; i++ {
+			s.recent.put(fmt.Sprintf("filler-%d", i), tree{})
+		}
+		s.mu.Unlock()
 
-	optimistic(s, v0, key, topMove("c", "a"))
+		optimistic(s, v0, key, topMove("c", "a"))
 
-	f := lastFrame(s)
-	if f.Base != v0+verMutatedSuffix {
-		t.Fatalf("reset frame base = %q, want the client's derived base", f.Base)
-	}
-	if !hasApplyPatch(f) {
-		t.Fatal("reset should rebuild the client's tree with a DOM patch")
-	}
+		f := lastFrame(s)
+		if f.Base != v0+verMutatedSuffix {
+			t.Fatalf("reset frame base = %q, want the client's derived base", f.Base)
+		}
+		if !hasApplyPatch(f) {
+			t.Fatal("reset should rebuild the client's tree with a DOM patch")
+		}
+	})
 }
