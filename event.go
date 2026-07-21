@@ -59,6 +59,7 @@ func (dst handlers) merge(src handlers) handlers {
 
 // On calls f when the named browser event occurs,
 // then calls Update with the resulting Msg value.
+// Helpers for common events can be found in [ily.dev/domi/event].
 //
 // Each of the given field values
 // is a path of property names into the event object.

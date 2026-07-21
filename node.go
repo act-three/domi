@@ -200,8 +200,6 @@ func (fragment) isNode() {}
 // It contributes its contents
 // to its parent's child list in order,
 // as if they had been written there directly.
-//
-// Fragments may be nested arbitrarily.
 func Fragment(n ...Node) Node {
 	return fragment(func(yield func(node) bool) {
 		for _, c := range n {
