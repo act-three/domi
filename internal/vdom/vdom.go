@@ -111,6 +111,29 @@ func (a Attr) cmp(b Attr) int {
 	return strings.Compare(a.Name, b.Name)
 }
 
+// withAttr returns a copy of attrs with a set,
+// replacing a same-named attr or inserting at its sorted position.
+func withAttr(attrs []Attr, a Attr) []Attr {
+	i, found := slices.BinarySearchFunc(attrs, a, Attr.cmp)
+	out := make([]Attr, len(attrs), len(attrs)+1)
+	copy(out, attrs)
+	if found {
+		out[i] = a
+		return out
+	}
+	return slices.Insert(out, i, a)
+}
+
+// withoutAttr returns attrs without the attr named name,
+// sharing the input when it is already absent.
+func withoutAttr(attrs []Attr, name string) []Attr {
+	i, found := slices.BinarySearchFunc(attrs, Attr{Name: name}, Attr.cmp)
+	if !found {
+		return attrs
+	}
+	return slices.Delete(slices.Clone(attrs), i, i+1)
+}
+
 // WithKey returns a copy of e keyed by key: the key is recorded for
 // identity-based reconciliation and mirrored into the domi-key
 // attribute the client resolves keyed ops against, replacing any
@@ -121,22 +144,21 @@ func (a Attr) cmp(b Attr) int {
 // opaque marks the copy as ignored by the differ: it is matched by
 // key but never descended into, so no patches touch the element or
 // its subtree between its insertion and its eventual removal.
+// Opacity is mirrored into the domi-opaque marker attribute
+// the same way the key is,
+// so the client can recognize opaque subtrees in the live DOM.
 func (e Element) WithKey(key string, opaque bool) Element {
 	if key == "" {
 		panic("domi: a keyed child must have a nonempty key")
 	}
 	e.key = key
 	e.opaque = opaque
-	a := Attr{Name: "domi-key", Value: key}
-	i, found := slices.BinarySearchFunc(e.attrs, a, Attr.cmp)
-	attrs := make([]Attr, len(e.attrs), len(e.attrs)+1)
-	copy(attrs, e.attrs)
-	if found {
-		attrs[i] = a
+	e.attrs = withAttr(e.attrs, Attr{Name: "domi-key", Value: key})
+	if opaque {
+		e.attrs = withAttr(e.attrs, Attr{Name: "domi-opaque"})
 	} else {
-		attrs = slices.Insert(attrs, i, a)
+		e.attrs = withoutAttr(e.attrs, "domi-opaque")
 	}
-	e.attrs = attrs
 	return e
 }
 
