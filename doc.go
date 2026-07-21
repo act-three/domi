@@ -32,6 +32,32 @@
 // However, note that CSS direct-child selectors anchored at body
 // (e.g. "body>*") do not match them.
 //
+// # Form Controls
+//
+// Form controls display the value rendered by [App.View]
+// even after they've been edited by the user.
+// Some programming environments call this "controlled components".
+// The app is responsible for rendering the current value
+// of each form control at all times.
+// This behavior applies to the following cases:
+//
+//	input (except type=file)  => value attribute
+//	textarea                  => text contents
+//	input type=checkbox       => checked attribute
+//	input type=radio          => checked attribute
+//	option                    => selected attribute
+//
+// While the user is editing a control,
+// domi does not apply changes to that control
+// to avoid disturbing their in-progress work.
+// When an "input" or "change" event handler is present,
+// the event commits the user's changes,
+// and domi then resumes applying server updates.
+//
+// Form controls inside an opaque element (see [WithKeyOpaque])
+// are never updated by domi,
+// just like all opaque DOM content.
+//
 // # Bundling the Client
 //
 // The client-side runtime for domi lives in file client.js

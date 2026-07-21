@@ -91,16 +91,16 @@ function uniqueKey(map, key) {
   }
 }
 
-// applyClientMutations applies an event's optimistic mutation set to the
-// live tree and returns the wire ops to report. Each op names DOM nodes;
-// domi resolves them to the paths and keys the server replays. The app
-// hands over a clean tree — any transient drag visuals already undone — so
-// the resolved addresses match the server's vdom.
+// applyClientMutations applies an event's proposed mutation set to the
+// live tree and returns the resolved ops to report. Each op names DOM
+// nodes; domi resolves them to the paths and keys the server replays.
+// The app hands over a clean tree — any transient drag visuals already
+// undone — so the resolved addresses match the server's vdom.
 //
-// The set is vetted before any of it is applied: if an op is unrecognized
-// or malformed, applyClientMutations warns and returns null without
-// touching the DOM, so the caller can fall back to a plain dispatch and let
-// the server's next render reconcile rather than commit a half-applied set.
+// A proposal is applied fully or not at all: the set is vetted first,
+// and if an op is unrecognized or malformed, applyClientMutations
+// warns and returns null without touching the DOM, leaving the
+// server's next render to reconcile what it proposed.
 function applyClientMutations(root, muts) {
   for (const m of muts) {
     if (m.op !== 'move') {
@@ -164,6 +164,112 @@ function applyMove(root, node, before, into) {
   return { Op: 'move', From: from, To: nodePath(root, node), Before: beforeKey };
 }
 
+// isOpaque reports whether el is opaque: everything inside an element
+// carrying domi-opaque is opaque — client-owned, none of domi's
+// business, neither committed to the server nor reverted.
+function isOpaque(el) {
+  return !!(el.closest && el.closest('[domi-opaque]'));
+}
+
+// radioGroup returns el's radio group: the same-name radios under
+// root, excluding opaque ones — or just el when it is unnamed.
+// Checking a radio silently unchecks the rest of its group, so the
+// group is the unit of committed checkedness. The group is name-scoped
+// to the whole root; domi has no form-owner boundaries to respect,
+// since forms are not one of its patterns.
+function radioGroup(root, el) {
+  const name = el.getAttribute('name');
+  if (!name) return [el];
+  const group = [];
+  for (const r of root.querySelectorAll('input')) {
+    if (r.type === 'radio' && r.getAttribute('name') === name && !isOpaque(r)) group.push(r);
+  }
+  return group;
+}
+
+// commitOps builds the mutation ops reporting a form control's committed
+// state — the control facts the server records in its vdom before the
+// handler runs — and writes the same state into the live attributes
+// and text, so the DOM the ops leave behind matches the tree the
+// server reconstructs from them. Radios report their whole group (see
+// radioGroup); a select reports every option's selectedness, which
+// covers multiple-selects and options deselected without an event of
+// their own. Controls domi doesn't commit — file inputs, whose value
+// is not domi's to set, and opaque controls — yield no ops, as does a
+// target that isn't a form control at all; an opaque option inside a
+// plain select is likewise passed over.
+function commitOps(root, el) {
+  if (!el || el.nodeType !== 1 || isOpaque(el)) return [];
+  editing.delete(el);
+  const checkedOp = (r) => {
+    if (r.checked) r.setAttribute('checked', '');
+    else r.removeAttribute('checked');
+    return { Op: 'setchecked', Path: nodePath(root, r), Checked: r.checked };
+  };
+  switch (el.tagName) {
+    case 'INPUT':
+      if (el.type === 'file') return [];
+      if (el.type === 'checkbox') return [checkedOp(el)];
+      if (el.type === 'radio') return radioGroup(root, el).map(checkedOp);
+      el.setAttribute('value', el.value);
+      return [{ Op: 'setvalue', Path: nodePath(root, el), Value: el.value }];
+    case 'TEXTAREA':
+      el.textContent = el.value;
+      return [{ Op: 'settext', Path: nodePath(root, el), Value: el.value }];
+    case 'SELECT': {
+      const ops = [];
+      for (const o of el.options) {
+        if (isOpaque(o)) continue;
+        if (o.selected) o.setAttribute('selected', '');
+        else o.removeAttribute('selected');
+        ops.push({ Op: 'setselected', Path: nodePath(root, o), Selected: o.selected });
+      }
+      return ops;
+    }
+  }
+  return [];
+}
+
+// revertControl restores a form control to its rendered state — the
+// attributes and text the server last sent. This is the degenerate
+// convergence for a control nobody listens to: the render is already
+// in hand, so there is nothing to report and no round trip to make,
+// and the user learns immediately that the control is display-only.
+// The exemptions mirror commitOps's.
+function revertControl(root, el) {
+  if (!el || el.nodeType !== 1 || isOpaque(el)) return;
+  editing.delete(el);
+  switch (el.tagName) {
+    case 'INPUT':
+      if (el.type === 'file') return;
+      if (el.type === 'checkbox') el.checked = el.hasAttribute('checked');
+      else if (el.type === 'radio') {
+        for (const r of radioGroup(root, el)) r.checked = r.hasAttribute('checked');
+      } else el.value = el.getAttribute('value') ?? '';
+      return;
+    case 'TEXTAREA':
+      el.value = el.textContent;
+      return;
+    case 'SELECT':
+      for (const o of el.options) {
+        if (!isOpaque(o)) o.selected = o.hasAttribute('selected');
+      }
+      return;
+  }
+}
+
+// hasEditHandler reports whether a handler on el or an ancestor
+// listens for el's edits — an input or change handler, the two commit
+// events. (Toggles bind change; see event.Check.)
+function hasEditHandler(root, el) {
+  for (let n = el; n && n !== root.parentNode; n = n.parentNode) {
+    if (n.nodeType === 1 && (n.getAttribute('domi-msg-input') || n.getAttribute('domi-msg-change'))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // syncProp mirrors a just-patched attribute into the property it
 // normally reflects into, on the form controls where user interaction
 // severs that reflection: typing sets an input's dirty value flag,
@@ -174,14 +280,12 @@ function applyMove(root, node, before, into) {
 // visible. Attributes and elements outside these three pairs reflect
 // live and need nothing.
 //
-// The value write skips the focused element: a patch born of an event
-// round-trip can land on the very field the user is still editing, and
-// overwriting the property there would discard keystrokes typed after
-// the event was sent. Checkedness and selectedness sync unconditionally
-// — they are discrete, with no half-typed state to protect. On a
-// detached clone (see applyPatch) nothing is focused, so the sync
-// always applies there; a clone carries its original's dirty state, so
-// it needs the sync just as much.
+// The value write is skipped only for a focused control marked
+// editing (see [editing]), so in-flight typing is never overwritten;
+// everything else — committed, unfocused, or a detached clone —
+// converges to the patch. Checkedness and selectedness sync
+// unconditionally: they are discrete, with no half-typed state to
+// protect.
 function syncProp(el, name) {
   switch (name) {
     case 'value':
@@ -190,7 +294,7 @@ function syncProp(el, name) {
       // patch frame) and an empty one discards the user's selected
       // file — and the value attribute doesn't apply to it, so there
       // is no default to mirror in the first place.
-      if (el.tagName === 'INPUT' && el.type !== 'file' && el !== document.activeElement) {
+      if (el.tagName === 'INPUT' && el.type !== 'file' && (el !== document.activeElement || !editing.has(el))) {
         el.value = el.getAttribute('value') ?? '';
       }
       break;
@@ -209,14 +313,20 @@ function syncProp(el, name) {
 // alone leaves the display stale. Called with the parent of any patched
 // text node and any inserted or removed child — a blanked-out textarea
 // arrives as RemoveChild, a filled-in one as InsertChild — it copies
-// the content into the value property, skipping the focused textarea
-// for the reason given at syncProp. Parents other than textarea need
-// nothing and are left alone.
+// the content into the value property under syncProp's guard. Parents
+// other than textarea need nothing and are left alone.
 function syncTextareaValue(parent) {
-  if (parent.tagName === 'TEXTAREA' && parent !== document.activeElement) {
+  if (parent.tagName === 'TEXTAREA' && (parent !== document.activeElement || !editing.has(parent))) {
     parent.value = parent.textContent;
   }
 }
+
+// editing holds the controls with an edit that has not reached a
+// commit point. Every input and change event marks its control (the
+// marking listener in run); reaching a commit (commitOps), a revert
+// (revertControl), or losing focus (the focusout listener in run)
+// clears it.
+const editing = new WeakSet();
 
 // applyPatch applies a single patch to the tree rooted at `root`.
 // Patches address the root's children — a path names the root itself
@@ -483,8 +593,24 @@ export function run() {
     }).catch((err) => console.error('domi: urlChange POST failed', err));
   }
 
+  // Be sure to run marking before the dispatch listeners (registration order),
+  // so a commit or revert in the same event clears the mark it just
+  // set. See [editing].
+  for (const ev of ['input', 'change']) {
+    root.addEventListener(ev, (e) => {
+      if (e.target.nodeType === 1) editing.add(e.target);
+    });
+  }
+  root.addEventListener('focusout', (e) => {
+    if (e.target.nodeType === 1) editing.delete(e.target);
+  });
+
   for (const ev of EVENTS) {
     root.addEventListener(ev, (e) => {
+      // input and change are commit points: the user's edit to a form
+      // control is ready to reconcile with the server. During IME
+      // composition nothing is ready yet, so nothing commits.
+      const commits = (ev === 'input' || ev === 'change') && !e.isComposing;
       let el = e.target;
       while (el && el !== root.parentNode) {
         if (el.nodeType === 1) {
@@ -500,9 +626,11 @@ export function run() {
               if (p) paths.push(...p);
             }
             const fields = getFields(e, el, paths);
+            const committed = commits ? commitOps(root, e.target) : [];
             const muts = e.detail && e.detail.domi && e.detail.domi.mutations;
-            const wire = Array.isArray(muts) && muts.length ? applyClientMutations(root, muts) : null;
-            if (wire) {
+            const proposed = Array.isArray(muts) && muts.length ? (applyClientMutations(root, muts) ?? []) : [];
+            const ops = committed.concat(proposed);
+            if (ops.length) {
               // Optimistic commit: the mutations are applied and we rebase
               // onto a derived version (so frames built against the old tree
               // drop), echoing the version we acted on. The server replays
@@ -510,7 +638,7 @@ export function run() {
               // its render.
               const acted = ver;
               base = ver = acted + '-mutated';
-              postEnvelope(eventURL, keys.join(','), fields, acted, wire);
+              postEnvelope(eventURL, keys.join(','), fields, acted, ops);
             } else {
               // No mutations, or a set we declined to apply: a plain
               // dispatch, leaving the server's next render to reconcile.
@@ -520,6 +648,11 @@ export function run() {
           }
         }
         el = el.parentNode;
+      }
+      // A commit on a control with no app handler is reverted here
+      // to the rendered state, to keep client DOM in sync.
+      if (commits && e.target.nodeType === 1 && !hasEditHandler(root, e.target)) {
+        revertControl(root, e.target);
       }
     });
   }
