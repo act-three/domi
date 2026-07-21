@@ -151,7 +151,7 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 func TestSessionApplyFragmentAtRoot(t *testing.T) {
 	s := newTestSession(&fragmentApp{})
 	defer s.cancel()
-	s.apply(s.ctx, 1, nil)
+	s.apply(s.ctx, []int{1}, nil)
 	if s.head != 1 {
 		t.Fatalf("expected head=1 after one apply, got %d", s.head)
 	}
@@ -303,7 +303,7 @@ func TestApplyMintsVerOnTreeChange(t *testing.T) {
 	defer s.cancel()
 
 	old := s.ver
-	s.apply(s.ctx, 1, nil) // counterApp's view changes every Update
+	s.apply(s.ctx, []int{1}, nil) // counterApp's view changes every Update
 	if s.ver == old {
 		t.Fatal("apply with patches did not mint a new ver")
 	}
@@ -326,7 +326,7 @@ func TestApplyKeepsVerWithoutPatches(t *testing.T) {
 	defer s.cancel()
 
 	old := s.ver
-	s.apply(s.ctx, 0, nil)
+	s.apply(s.ctx, []int{0}, nil)
 	if s.ver != old {
 		t.Fatalf("apply without patches changed ver from %q to %q", old, s.ver)
 	}
@@ -458,9 +458,9 @@ func TestSessionApplyRingBuffer(t *testing.T) {
 	s.sv.replayWindow = window
 	s.log = make([]frame, window)
 	defer s.cancel()
-	s.apply(s.ctx, 1, nil) // seq 1 → log[1]
-	s.apply(s.ctx, 2, nil) // seq 2 → log[0] (overwrites zero-value)
-	s.apply(s.ctx, 3, nil) // seq 3 → log[1] (overwrites seq 1)
+	s.apply(s.ctx, []int{1}, nil) // seq 1 → log[1]
+	s.apply(s.ctx, []int{2}, nil) // seq 2 → log[0] (overwrites zero-value)
+	s.apply(s.ctx, []int{3}, nil) // seq 3 → log[1] (overwrites seq 1)
 	if s.head != 3 {
 		t.Fatalf("expected head=3, got %d", s.head)
 	}
@@ -485,9 +485,9 @@ func TestSessionSSEFreshClient(t *testing.T) {
 func TestSessionSSEReplayWithinWindow(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	s.apply(s.ctx, 1, nil)
-	s.apply(s.ctx, 2, nil)
-	s.apply(s.ctx, 3, nil)
+	s.apply(s.ctx, []int{1}, nil)
+	s.apply(s.ctx, []int{2}, nil)
+	s.apply(s.ctx, []int{3}, nil)
 	out := runSSE(t, s, "1", 30*time.Millisecond)
 	if !strings.Contains(out, "id: 2") || !strings.Contains(out, "id: 3") {
 		t.Fatalf("expected frames 2 and 3 in output, got: %s", out)
@@ -508,10 +508,10 @@ func TestSessionSSEResyncOutOfWindow(t *testing.T) {
 	defer s.cancel()
 	// Four apply calls overflow the window of 2, so the oldest two
 	// frames are gone from the ring. Client at seq 1 needs them.
-	s.apply(s.ctx, 1, nil)
-	s.apply(s.ctx, 2, nil)
-	s.apply(s.ctx, 3, nil)
-	s.apply(s.ctx, 4, nil)
+	s.apply(s.ctx, []int{1}, nil)
+	s.apply(s.ctx, []int{2}, nil)
+	s.apply(s.ctx, []int{3}, nil)
+	s.apply(s.ctx, []int{4}, nil)
 	out := runSSE(t, s, "1", 30*time.Millisecond)
 	if !strings.Contains(out, `"Op":"Reset"`) {
 		t.Fatalf("expected reset patch for out-of-window client, got: %s", out)
@@ -530,7 +530,7 @@ func TestSessionSSEResyncOutOfWindow(t *testing.T) {
 func TestSessionSSEResyncAheadOfHead(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	s.apply(s.ctx, 1, nil)
+	s.apply(s.ctx, []int{1}, nil)
 	out := runSSE(t, s, "42", 30*time.Millisecond)
 	if !strings.Contains(out, `"Op":"Reset"`) {
 		t.Fatalf("expected reset for stale client, got: %s", out)
@@ -818,7 +818,7 @@ func TestSessionSnapshotStoredOnApply(t *testing.T) {
 	defer s.cancel()
 	origView := s.view
 	origVer := s.ver
-	s.apply(s.ctx, 1, &nav{push: "/about"})
+	s.apply(s.ctx, []int{1}, &nav{push: "/about"})
 	s.mu.Lock()
 	sn, ok := s.snapshots.get(origVer)
 	s.mu.Unlock()
@@ -863,7 +863,7 @@ func TestSessionApplyLoadNav(t *testing.T) {
 	s.sv.onURLChange = func(*url.URL) int { changed++; return 0 }
 
 	const target = "https://example.com/logout"
-	s.apply(s.ctx, 1, &nav{load: target})
+	s.apply(s.ctx, []int{1}, &nav{load: target})
 
 	if app.n != 0 {
 		t.Fatalf("Update ran for a load nav (counter=%d), want 0", app.n)
@@ -889,7 +889,7 @@ func TestSessionApplyLoadNav(t *testing.T) {
 func TestSessionApplyEffectOrder(t *testing.T) {
 	s := newTestSession[int](&titledApp{})
 	defer s.cancel()
-	s.apply(s.ctx, 1, &nav{push: "/about"})
+	s.apply(s.ctx, []int{1}, &nav{push: "/about"})
 
 	f := s.log[1%uint64(len(s.log))]
 	if len(f.Effects) != 3 {
@@ -1025,7 +1025,7 @@ func TestSessionPreviewRebasedOnApply(t *testing.T) {
 	u, _ := url.Parse("/next")
 	s.prefetch(s.ctx, u)
 
-	s.apply(s.ctx, 0, nil)
+	s.apply(s.ctx, []int{0}, nil)
 	f := s.log[2%uint64(len(s.log))]
 	var ap, sp *effect
 	for i := range f.Effects {
@@ -1138,7 +1138,7 @@ func TestSessionPreviewFreezesAtLimit(t *testing.T) {
 	// Drive enough applies to fill the log. Each view-changing apply adds
 	// one candidate until the limit, then the next freezes the preview.
 	for i := 0; i < limit; i++ {
-		s.apply(s.ctx, 0, nil)
+		s.apply(s.ctx, []int{0}, nil)
 	}
 
 	s.mu.Lock()
@@ -1175,7 +1175,7 @@ func TestSessionPrefetchSupersedes(t *testing.T) {
 
 	// Move the live tree so the second prefetch's candidate gets a
 	// different name than the first's.
-	s.apply(s.ctx, 0, nil)
+	s.apply(s.ctx, []int{0}, nil)
 
 	second, _ := url.Parse("/b")
 	s.prefetch(s.ctx, second)
@@ -1354,14 +1354,14 @@ func TestSessionSnapshotRePutRefreshesAge(t *testing.T) {
 func TestSessionFrameBase(t *testing.T) {
 	s := newTestSession(&counterApp{})
 	defer s.cancel()
-	s.apply(s.ctx, 1, nil) // base "11111..."
+	s.apply(s.ctx, []int{1}, nil) // base "11111..."
 	s.mu.Lock()
 	if s.log[1].Base != verInitial {
 		t.Fatalf("expected base %q, got %q", verInitial, s.log[1].Base)
 	}
 	s.base = "ver2"
 	s.mu.Unlock()
-	s.apply(s.ctx, 2, nil) // base "ver2"
+	s.apply(s.ctx, []int{2}, nil) // base "ver2"
 	s.mu.Lock()
 	if s.log[2].Base != "ver2" {
 		t.Fatalf("expected base %q, got %q", "ver2", s.log[2].Base)
@@ -1445,7 +1445,7 @@ func TestDispatchIsVersionExact(t *testing.T) {
 		defer s.cancel()
 
 		ver0 := s.ver
-		s.apply(s.ctx, -1, nil) // n: 0 → 1; body changes; fresh ver
+		s.apply(s.ctx, []int{-1}, nil) // n: 0 → 1; body changes; fresh ver
 		ver1 := s.ver
 		if ver1 == ver0 {
 			t.Fatal("changed tree should have minted a fresh ver")
@@ -1473,7 +1473,7 @@ func TestDispatchRefreshesUnchangedTree(t *testing.T) {
 		defer s.cancel()
 
 		ver0 := s.ver
-		s.apply(s.ctx, -1, nil) // n: 0 → 1; body unchanged; same ver
+		s.apply(s.ctx, []int{-1}, nil) // n: 0 → 1; body unchanged; same ver
 		if s.ver != ver0 {
 			t.Fatal("unchanged tree should keep its ver")
 		}
@@ -1820,7 +1820,7 @@ func TestDispatchOptimisticSurvivesRacedUpdate(t *testing.T) {
 		key := soleKey(t, s, v0)
 
 		// An unrelated update advances the live version off v0.
-		s.apply(s.ctx, moveMsg{Key: "a", Before: ""}, nil)
+		s.apply(s.ctx, []moveMsg{moveMsg{Key: "a", Before: ""}}, nil)
 		if s.ver == v0 {
 			t.Fatal("setup: expected the unrelated update to mint a fresh version")
 		}
@@ -1856,7 +1856,7 @@ func TestDispatchOptimisticResetsWhenTreeGone(t *testing.T) {
 
 		// An unrelated update advances the live version, then enough renders to
 		// evict v0's tree from the recent ring entirely.
-		s.apply(s.ctx, moveMsg{Key: "a", Before: ""}, nil) // [a b c] → [b c a]
+		s.apply(s.ctx, []moveMsg{moveMsg{Key: "a", Before: ""}}, nil) // [a b c] → [b c a]
 		s.mu.Lock()
 		for i := 0; i < recentRingSize; i++ {
 			s.recent.put(fmt.Sprintf("filler-%d", i), tree{})
@@ -1871,6 +1871,45 @@ func TestDispatchOptimisticResetsWhenTreeGone(t *testing.T) {
 		}
 		if !hasApplyPatch(f) {
 			t.Fatal("reset should rebuild the client's tree with a DOM patch")
+		}
+	})
+}
+
+// A mutation-carrying envelope whose handler never runs — its Msg
+// fails to decode — still converges at the event: the replay rebased
+// the view, and the render pass emits the correction returning the
+// moved row to the model's order, rather than leaving the move
+// standing until some unrelated update.
+func TestDispatchMutatedUndecodedRerenders(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		app := &sortApp{order: []string{"a", "b", "c"}}
+		s := newTestSession[moveMsg](app)
+		defer s.cancel()
+		v0 := s.ver
+		s.mu.Lock()
+		s.tables[v0] = table[moveMsg]{"bad": func(jsontext.Value) (moveMsg, error) {
+			return moveMsg{}, fmt.Errorf("no thanks")
+		}}
+		s.mu.Unlock()
+
+		body := fmt.Sprintf(
+			`{"Type":"Dispatch","Handler":"bad","Ver":%q,"Mutations":[{"Op":"move","From":[0,"c"],"To":[0,"c"],"Before":"a"}]}`, v0)
+		rec := httptest.NewRecorder()
+		s.handleEvent(rec, httptest.NewRequest("POST", "/x/event", strings.NewReader(body)))
+		synctest.Wait()
+
+		s.mu.Lock()
+		order := slices.Clone(app.order)
+		s.mu.Unlock()
+		if !slices.Equal(order, []string{"a", "b", "c"}) {
+			t.Fatalf("model order = %v, want untouched [a b c]", order)
+		}
+		f := lastFrame(s)
+		if f.Base != v0+verMutatedSuffix {
+			t.Fatalf("frame base = %q, want derived %q", f.Base, v0+verMutatedSuffix)
+		}
+		if !hasApplyPatch(f) {
+			t.Fatal("the render pass should emit the corrective patch at the event")
 		}
 	})
 }
