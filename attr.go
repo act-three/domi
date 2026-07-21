@@ -20,7 +20,7 @@ var Bypass Attr = Name("domi-bypass")
 //
 //  1. For each combining attribute,
 //     domi combines the values into a single value.
-//     See [RegisterCombining] for more.
+//     See [RegisterCombining].
 //  2. Event handlers are combined internally.
 //  3. For all other attributes,
 //     only the first occurrence appears.
@@ -46,6 +46,7 @@ func isReservedAttr(name string) bool {
 }
 
 // Name returns an HTML attribute with the given name and value.
+// Helpers for common attributes can be found in [ily.dev/domi/attr].
 //
 // Providing no value arguments or the empty string
 // produces a name-only attribute.

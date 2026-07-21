@@ -9,7 +9,7 @@
 //
 // Package domi exposes primitives needed for the app
 // to build any node or attribute.
-// Convenient constructors for common HTML tags, attributes, and events
+// Helpers for common HTML tags, attributes, and events
 // can be found in [ily.dev/domi/html],
 // [ily.dev/domi/attr],
 // and [ily.dev/domi/event].
