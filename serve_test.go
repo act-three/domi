@@ -1722,8 +1722,8 @@ func TestSessionReconstructUnknownVersion(t *testing.T) {
 	}
 }
 
-// When the server's render agrees with the optimistic move, the forward
-// diff is empty: no DOM patch is sent, so the row never visibly reverts.
+// When the server's render agrees with the optimistic move, the diff
+// is empty: no DOM patch is sent, so the row never visibly reverts.
 // The lineage rebases onto the client's derived version.
 func TestDispatchOptimisticAgreementPaintsOnce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -1751,7 +1751,7 @@ func TestDispatchOptimisticAgreementPaintsOnce(t *testing.T) {
 	})
 }
 
-// When the server declines the move, the forward diff is the correction:
+// When the server declines the move, the diff is the correction:
 // a DOM patch that returns the row to its server-known place.
 func TestDispatchOptimisticRejectionReverts(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
@@ -1810,8 +1810,8 @@ func TestDispatchOptimisticChains(t *testing.T) {
 
 // An unrelated update can advance the live version between a client's last
 // sync and an optimistic action it based on that sync. The acted-on tree is
-// still retained among recent renders, so the server reconstructs and diffs
-// forward — a minimal correction, not a disruptive reset.
+// still retained among recent renders, so the server reconstructs and
+// diffs — a minimal correction, not a disruptive reset.
 func TestDispatchOptimisticSurvivesRacedUpdate(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}

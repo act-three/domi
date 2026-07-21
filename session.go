@@ -481,10 +481,10 @@ func (s *session[Msg]) resolve(ctx context.Context, ver, handler string, event j
 
 // applyClientMutations brings the server's tree into line with what the
 // client is showing after it mutates the DOM, so the dispatch that
-// follows diffs forward from there to the authoritative render. The client
+// follows diffs from there to the authoritative render. The client
 // applied muts to its DOM and rebased onto a derived version; the server
 // reconstructs that same tree and rebases its lineage onto it. When the
-// following render agrees the forward diff is empty and the client's
+// following render agrees the diff is empty and the client's
 // mutation stands with no repaint; when it doesn't, the diff is the
 // correction. If the acted-on tree can't be reconstructed — it named a
 // version the server no longer retains, or a mutation didn't fit — the

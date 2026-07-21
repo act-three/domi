@@ -120,7 +120,7 @@ function applyClientMutations(root, muts) {
 // or an explicit container — that is itself an element inside root
 // (an app-supplied text or detached destination would otherwise throw
 // halfway through a vetted set). An anchor, when given, must itself
-// be keyed: the wire op names it by key, so an unkeyed anchor would
+// be keyed: the reported op names it by key, so an unkeyed anchor would
 // be reported as a plain append and the server's replay would diverge
 // from the DOM. Mirrors applyMove's preconditions so a set can be
 // vetted before any of it touches the DOM.
@@ -136,7 +136,7 @@ function moveOK(root, m) {
 // uses for keyed reconciliation in sync. If the destination already holds
 // the node's key, domi generates a fresh one so the maps stay consistent;
 // the server's next render owns the real key, so the re-keyed node is just
-// removed when the render lands. Returns the move as a wire op whose From
+// removed when the render lands. Returns the move as a mutation op whose From
 // and To are the node's path before and after the move — each ending in the
 // node's key, the steps before it addressing its container.
 function applyMove(root, node, before, into) {
@@ -371,9 +371,10 @@ function applyPatch(root, p) {
     }
     case 'SetAttr': {
       // Coerce undefined → "" so name-only / empty-valued attrs land as
-      // present-with-empty-string. The wire omits `Value` when it's the
-      // empty string (omitempty on the Go side), so a missing field here
-      // means "set this attribute to empty", not "set it to undefined".
+      // present-with-empty-string. The encoder omits `Value` when it's
+      // the empty string (omitempty on the Go side), so a missing field
+      // here means "set this attribute to empty", not "set it to
+      // undefined".
       const el = walk(root, p.Path);
       el.setAttribute(p.Name, p.Value ?? '');
       syncProp(el, p.Name);
@@ -634,8 +635,8 @@ export function run() {
               // Optimistic commit: the mutations are applied and we rebase
               // onto a derived version (so frames built against the old tree
               // drop), echoing the version we acted on. The server replays
-              // the ops to reconstruct what we show, then diffs forward to
-              // its render.
+              // the ops to reconstruct what we show, then diffs that
+              // against its render.
               const acted = ver;
               base = ver = acted + '-mutated';
               postEnvelope(eventURL, keys.join(','), fields, acted, ops);
