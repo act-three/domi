@@ -95,7 +95,7 @@ function uniqueKey(map, key) {
 // live tree and returns the wire ops to report. Each op names DOM nodes;
 // domi resolves them to the paths and keys the server replays. The app
 // hands over a clean tree — any transient drag visuals already undone — so
-// the resolved addresses match the server's shadow.
+// the resolved addresses match the server's vdom.
 //
 // The set is vetted before any of it is applied: if an op is unrecognized
 // or malformed, applyClientMutations warns and returns null without

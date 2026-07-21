@@ -45,8 +45,8 @@ function fresh(html) {
   return root.firstChild;
 }
 
-// 1. Dirty input: the user's typing sets the dirty value flag, after
-//    which SetAttr must update the display through the value property.
+// Dirty input: the user's typing sets the dirty value flag, after
+// which SetAttr must update the display through the value property.
 {
   const input = fresh('<input value="A">');
   input.value = 'B'; // user typed
@@ -55,8 +55,8 @@ function fresh(html) {
   check(input.getAttribute('value') === 'C', 'dirty input SetAttr: attribute not written');
 }
 
-// 2. The wire omits Value for the empty string; a dirty input must
-//    still blank out — the shape of the act3 stale-field report.
+// The wire omits Value for the empty string; a dirty input must
+// still blank out — the shape of the act3 stale-field report.
 {
   const input = fresh('<input value="2022">');
   input.value = '2023'; // user typed
@@ -64,7 +64,7 @@ function fresh(html) {
   check(input.value === '', `dirty input SetAttr empty: value = ${JSON.stringify(input.value)}, want ""`);
 }
 
-// 3. RemoveAttr value on a dirty input clears the display.
+// RemoveAttr value on a dirty input clears the display.
 {
   const input = fresh('<input value="A">');
   input.value = 'B'; // user typed
@@ -72,9 +72,9 @@ function fresh(html) {
   check(input.value === '', `dirty input RemoveAttr: value = ${JSON.stringify(input.value)}, want ""`);
 }
 
-// 4. The focused field is the one the user is still editing: the
-//    attribute lands but the property — and so the display — is left
-//    alone, so a server echo can't clobber in-flight typing.
+// The focused field is the one the user is still editing: the
+// attribute lands but the property — and so the display — is left
+// alone, so a server echo can't clobber in-flight typing.
 {
   const input = fresh('<input value="A">');
   input.focus();
@@ -85,10 +85,10 @@ function fresh(html) {
   input.blur();
 }
 
-// 5. A file input is excluded from value sync: its value property is
-//    in filename mode, where a non-empty assignment throws — which
-//    would abort the rest of the patch frame — and an empty one
-//    discards the user's selected file. The attribute still lands.
+// A file input is excluded from value sync: its value property is
+// in filename mode, where a non-empty assignment throws — which
+// would abort the rest of the patch frame — and an empty one
+// discards the user's selected file. The attribute still lands.
 {
   const input = fresh('<input type="file">');
   applyPatch(root, { Op: 'SetAttr', Path: [0], Name: 'value', Value: 'x' });
@@ -96,8 +96,8 @@ function fresh(html) {
   check(input.getAttribute('value') === 'x', 'file input SetAttr: attribute not written');
 }
 
-// 6. Dirty checkedness: the user's toggle detaches the checked
-//    attribute; SetAttr/RemoveAttr must sync the property both ways.
+// Dirty checkedness: the user's toggle detaches the checked
+// attribute; SetAttr/RemoveAttr must sync the property both ways.
 {
   const box = fresh('<input type="checkbox" checked>');
   box.checked = false; // user unchecked
@@ -108,9 +108,9 @@ function fresh(html) {
   check(box.checked === false, 'dirty checkbox RemoveAttr: not unchecked');
 }
 
-// 7. Dirty selectedness: the user picked b; the server's render moves
-//    the selected attribute back to a, and the single-select invariant
-//    drops b when a's property is set.
+// Dirty selectedness: the user picked b; the server's render moves
+// the selected attribute back to a, and the single-select invariant
+// drops b when a's property is set.
 {
   const select = fresh('<select><option selected>a</option><option>b</option></select>');
   const [a, b] = select.children;
@@ -121,8 +121,8 @@ function fresh(html) {
   check(b.selected === false, 'dirty option: b still selected');
 }
 
-// 8. Dirty textarea, SetText: the text content is only the default
-//    value, so the applier must copy it into the value property.
+// Dirty textarea, SetText: the text content is only the default
+// value, so the applier must copy it into the value property.
 {
   const ta = fresh('<textarea>A</textarea>');
   ta.value = 'B'; // user typed
@@ -131,9 +131,9 @@ function fresh(html) {
   check(ta.textContent === 'C', 'dirty textarea SetText: text content not written');
 }
 
-// 9. A blanked-out textarea arrives as RemoveChild (empty text is
-//    canonicalized away on the Go side), a filled-in one as
-//    InsertChild; both must reach the display of a dirty textarea.
+// A blanked-out textarea arrives as RemoveChild (empty text is
+// canonicalized away on the Go side), a filled-in one as
+// InsertChild; both must reach the display of a dirty textarea.
 {
   const ta = fresh('<textarea>A</textarea>');
   ta.value = 'B'; // user typed
@@ -144,7 +144,7 @@ function fresh(html) {
   check(ta.value === 'E', `dirty textarea InsertChild: value = ${JSON.stringify(ta.value)}, want "E"`);
 }
 
-// 10. The focused-textarea guard, same rationale as scenario 4.
+// The focused-textarea guard, same rationale as the focused input.
 {
   const ta = fresh('<textarea>A</textarea>');
   ta.focus();

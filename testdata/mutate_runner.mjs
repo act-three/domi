@@ -51,7 +51,7 @@ function freshList(root, parentKeys) {
 const root = document.createElement('domi-root');
 document.body.appendChild(root);
 
-// 1. Reorder within one container, before an anchor.
+// Reorder within one container, before an anchor.
 {
   const ul = freshList(root, ['a', 'b', 'c']);
   const c = ul.children[2];
@@ -62,7 +62,7 @@ document.body.appendChild(root);
   check(mapKeys(ul).join() === 'a,b,c', `reorder childMap = ${mapKeys(ul)}`);
 }
 
-// 2. Append within a container (no anchor → end).
+// Append within a container (no anchor → end).
 {
   const ul = freshList(root, ['a', 'b', 'c']);
   const a = ul.children[0];
@@ -71,7 +71,7 @@ document.body.appendChild(root);
   check(op.Before === '' && op.To.join() === '0,a', `append op = ${JSON.stringify(op)}`);
 }
 
-// 3. Move across containers, addressing each by its own path.
+// Move across containers, addressing each by its own path.
 {
   while (root.firstChild) root.removeChild(root.firstChild);
   delete root.__domiChildren;
@@ -100,8 +100,8 @@ document.body.appendChild(root);
   check(childMap(ul2).get('b') === b, 'cross: destination map missing b');
 }
 
-// 4. A key already present at the destination is re-keyed, carried in To's
-//    last step, and tracked under the new key so the maps stay consistent.
+// A key already present at the destination is re-keyed, carried in To's
+// last step, and tracked under the new key so the maps stay consistent.
 {
   while (root.firstChild) root.removeChild(root.firstChild);
   delete root.__domiChildren;
@@ -130,8 +130,8 @@ document.body.appendChild(root);
   check(childMap(ul2).get('a') !== a, 'collision: re-keyed node clobbered the existing key');
 }
 
-// 5. A container nested under a keyed ancestor is addressed by that
-//    ancestor's key, not its index — the episode-list of a keyed season.
+// A container nested under a keyed ancestor is addressed by that
+// ancestor's key, not its index — the episode-list of a keyed season.
 {
   while (root.firstChild) root.removeChild(root.firstChild);
   delete root.__domiChildren;
@@ -160,10 +160,10 @@ document.body.appendChild(root);
   check(keys(s2).join() === 'a,x,y', `keyed-ancestor dst = ${keys(s2)}, want a,x,y`);
 }
 
-// 6. A set with a malformed op is declined whole: applyClientMutations
-//    returns null and leaves the DOM untouched, even though an earlier op
-//    in the set was applicable — the caller falls back to a plain dispatch
-//    instead of committing a half-applied change.
+// A set with a malformed op is declined whole: applyClientMutations
+// returns null and leaves the DOM untouched, even though an earlier op
+// in the set was applicable — the caller falls back to a plain dispatch
+// instead of committing a half-applied change.
 {
   const ul = freshList(root, ['a', 'b', 'c']);
   const a = ul.children[0];
