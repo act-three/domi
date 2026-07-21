@@ -321,3 +321,185 @@ func TestApplyJSONPath(t *testing.T) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
 }
+
+// ---- control-state mutation tests ----
+
+// input builds an <input> carrying the given attrs.
+func input(a ...Attr) Element { return NewElement("input", attrs(a...), nil) }
+
+// A setvalue replay records the committed value as the input's value
+// attribute — replacing a rendered default or adding the attribute to
+// an input that had none — and leaves the caller's tree unchanged.
+func TestApplySetValue(t *testing.T) {
+	base := func() []Node {
+		return []Node{el("div",
+			input(at("type", "text"), at("value", "old")),
+			input(),
+		)}
+	}
+	roots := base()
+	got, err := Apply(roots, []ClientMutation{
+		{Op: "setvalue", Path: steps(0, 0), Value: "typed"},
+		{Op: "setvalue", Path: steps(0, 1), Value: "fresh"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Node{el("div",
+		input(at("type", "text"), at("value", "typed")),
+		input(at("value", "fresh")),
+	)}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	if !reflect.DeepEqual(roots, base()) {
+		t.Fatal("Apply mutated its input")
+	}
+}
+
+// A settext replay records the committed value as the textarea's text
+// content; the empty value leaves no text child — the shape
+// canonicalization gives an empty textarea.
+func TestApplySetText(t *testing.T) {
+	roots := []Node{el("textarea", tx("old"))}
+	got, err := Apply(roots, []ClientMutation{{Op: "settext", Path: steps(0), Value: "new"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Node{el("textarea", tx("new"))}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	got, err = Apply(got, []ClientMutation{{Op: "settext", Path: steps(0)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []Node{el("textarea")}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("blanked: got %v, want %v", got, want)
+	}
+}
+
+// A setchecked replay records checkedness as the presence of the
+// checked attribute, in both directions.
+func TestApplySetChecked(t *testing.T) {
+	box := func(extra ...Attr) Element {
+		return input(append([]Attr{at("type", "checkbox")}, extra...)...)
+	}
+	roots := []Node{el("div", box(at("checked", "")), box())}
+	got, err := Apply(roots, []ClientMutation{
+		{Op: "setchecked", Path: steps(0, 0), Checked: false},
+		{Op: "setchecked", Path: steps(0, 1), Checked: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Node{el("div", box(), box(at("checked", "")))}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// A setselected replay records an option's selectedness as the
+// presence of the selected attribute, in both directions — the shape
+// of a single-select whose choice moved from a to b.
+func TestApplySetSelected(t *testing.T) {
+	opt := func(label string, a ...Attr) Element {
+		return NewElement("option", attrs(a...), []Node{tx(label)})
+	}
+	roots := []Node{el("select", opt("a", at("selected", "")), opt("b"))}
+	got, err := Apply(roots, []ClientMutation{
+		{Op: "setselected", Path: steps(0, 0), Selected: false},
+		{Op: "setselected", Path: steps(0, 1), Selected: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Node{el("select", opt("a"), opt("b", at("selected", "")))}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// Control paths resolve keyed steps the way move paths do, and on the
+// wire the committed facts ride the op directly.
+func TestApplyControlJSONKeyedPath(t *testing.T) {
+	var muts []ClientMutation
+	const wire = `[{"Op":"setvalue","Path":[0,"row",0],"Value":"typed"}]`
+	if err := json.Unmarshal([]byte(wire), &muts); err != nil {
+		t.Fatal(err)
+	}
+	row := func(v string) Node {
+		return NewElement("li", attrs(), []Node{input(at("value", v))}).WithKey("row", false)
+	}
+	roots := []Node{el("ul", row("old"))}
+	got, err := Apply(roots, muts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Node{el("ul", row("typed"))}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// A control op that doesn't fit — the wrong element kind, an input
+// mode whose committed state is not a value fact, or a target on or
+// inside an app-owned opaque subtree — is reported, never applied
+// silently.
+func TestApplyControlErrors(t *testing.T) {
+	base := []Node{el("main",
+		input(),                       // 0
+		input(at("type", "file")),     // 1
+		input(at("type", "checkbox")), // 2
+		el("textarea", tx("x")),       // 3
+		el("p", tx("plain")),          // 4
+		NewElement("div", attrs(), []Node{input()}).WithKey("w", true), // 5: opaque widget
+		input().WithKey("oi", true),                                    // 6: opaque input
+	)}
+	tests := []struct {
+		name string
+		muts []ClientMutation
+	}{
+		{"setvalue on a non-input", []ClientMutation{{Op: "setvalue", Path: steps(0, 4)}}},
+		{"setvalue on a file input", []ClientMutation{{Op: "setvalue", Path: steps(0, 1)}}},
+		{"setvalue on a checkbox", []ClientMutation{{Op: "setvalue", Path: steps(0, 2)}}},
+		{"settext on a non-textarea", []ClientMutation{{Op: "settext", Path: steps(0, 0)}}},
+		{"setchecked on a text input", []ClientMutation{{Op: "setchecked", Path: steps(0, 0), Checked: true}}},
+		{"setchecked on a non-input", []ClientMutation{{Op: "setchecked", Path: steps(0, 3), Checked: true}}},
+		{"setselected on a non-option", []ClientMutation{{Op: "setselected", Path: steps(0, 0), Selected: true}}},
+		{"target inside an opaque subtree", []ClientMutation{{Op: "setvalue", Path: steps(0, "w", 0)}}},
+		{"target itself opaque", []ClientMutation{{Op: "setvalue", Path: steps(0, "oi")}}},
+		{"path out of range", []ClientMutation{{Op: "setvalue", Path: steps(0, 9)}}},
+		{"empty path", []ClientMutation{{Op: "setvalue"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := Apply(base, tc.muts); err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+		})
+	}
+}
+
+// Input types match the way a browser matches attribute keywords:
+// ASCII case-insensitively, and only ASCII. CHECKBOX is a checkbox;
+// checKbox (the Kelvin sign, which Unicode folding would turn
+// into checkbox) is no keyword at all, so the browser falls back to a
+// text-mode input and the vet must agree with what the client saw.
+func TestApplyInputTypeASCIIFolding(t *testing.T) {
+	base := []Node{el("div",
+		input(at("type", "CHECKBOX")),
+		input(at("type", "chec\u212abox")),
+	)}
+	if _, err := Apply(base, []ClientMutation{{Op: "setchecked", Path: steps(0, 0), Checked: true}}); err != nil {
+		t.Fatalf("setchecked on an ASCII-uppercase checkbox: %v", err)
+	}
+	if _, err := Apply(base, []ClientMutation{{Op: "setvalue", Path: steps(0, 0)}}); err == nil {
+		t.Fatal("setvalue on an ASCII-uppercase checkbox should be rejected")
+	}
+	if _, err := Apply(base, []ClientMutation{{Op: "setvalue", Path: steps(0, 1)}}); err != nil {
+		t.Fatalf("setvalue on a Kelvin-sign type, text mode to a browser: %v", err)
+	}
+	if _, err := Apply(base, []ClientMutation{{Op: "setchecked", Path: steps(0, 1), Checked: true}}); err == nil {
+		t.Fatal("setchecked on a Kelvin-sign type should be rejected; the browser sees text mode")
+	}
+}

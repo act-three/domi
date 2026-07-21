@@ -4,18 +4,29 @@ import (
 	"encoding/json/jsontext"
 	"fmt"
 	"slices"
+	"strings"
 )
 
-// A ClientMutation is a structural change applied by a client.
+// A ClientMutation is a change applied by a client:
+// a structural move, or a form control's committed state.
 // See [Apply].
 //
 // The set of ClientMutation operations
 // is distinct from the patch ops emitted by Diff.
+// Replay never writes a client-chosen attribute name,
+// which would let a hostile client plant handler attributes
+// or URLs in the server's tree.
 type ClientMutation struct {
-	Op     string `json:",omitempty"` // move
-	From   []Step `json:",omitempty"` // path to the moved element
-	To     []Step `json:",omitempty"` // path to the moved element's destination
-	Before string `json:",omitempty"` // anchor key in the dest container; "" means append
+	Op     string `json:",omitempty"` // move, setvalue, settext, setchecked, setselected
+	From   []Step `json:",omitempty"` // move: path to the moved element
+	To     []Step `json:",omitempty"` // move: path to the moved element's destination
+	Before string `json:",omitempty"` // move: anchor key in the dest container; "" means append
+
+	// Path names the form control a control-state op targets.
+	Path     []Step `json:",omitempty"`
+	Value    string `json:",omitempty"` // setvalue, settext: the committed value
+	Checked  bool   `json:",omitempty"` // setchecked: the committed checkedness
+	Selected bool   `json:",omitempty"` // setselected: the committed selectedness
 }
 
 // A Step is one component of a ClientMutation path to a node.
@@ -48,7 +59,7 @@ func (s *Step) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 		}
 		s.index = int(i)
 	default:
-		return fmt.Errorf("vdom: move path step is a %q, want a key or index", tok.Kind())
+		return fmt.Errorf("vdom: mutation path step is a %q, want a key or index", tok.Kind())
 	}
 	return nil
 }
@@ -61,10 +72,10 @@ func (s Step) resolve(nodes []Node) (int, error) {
 		if i := keyIndex(nodes, s.key); i >= 0 {
 			return i, nil
 		}
-		return 0, fmt.Errorf("vdom: move path key %q not found", s.key)
+		return 0, fmt.Errorf("vdom: mutation path key %q not found", s.key)
 	}
 	if s.index < 0 || s.index >= len(nodes) {
-		return 0, fmt.Errorf("vdom: move path index %d out of range %d", s.index, len(nodes))
+		return 0, fmt.Errorf("vdom: mutation path index %d out of range %d", s.index, len(nodes))
 	}
 	return s.index, nil
 }
@@ -82,6 +93,14 @@ func Apply(roots []Node, muts []ClientMutation) ([]Node, error) {
 		switch m.Op {
 		case "move":
 			roots, err = applyMove(roots, m.From, m.To, m.Before)
+		case "setvalue":
+			roots, err = applySetValue(roots, m.Path, m.Value)
+		case "settext":
+			roots, err = applySetText(roots, m.Path, m.Value)
+		case "setchecked":
+			roots, err = applySetChecked(roots, m.Path, m.Checked)
+		case "setselected":
+			roots, err = applySetSelected(roots, m.Path, m.Selected)
 		default:
 			err = fmt.Errorf("vdom: unknown mutation op %q", m.Op)
 		}
@@ -90,6 +109,131 @@ func Apply(roots []Node, muts []ClientMutation) ([]Node, error) {
 		}
 	}
 	return roots, nil
+}
+
+// applyControl rewrites the form control at path with f, after
+// vetting that the path stays outside opaque subtrees: an opaque
+// element and its contents are app-owned and frozen in the vdom, so
+// no replay may rewrite them.
+func applyControl(roots []Node, path []Step, f func(Element) (Element, error)) ([]Node, error) {
+	if err := vetOutsideOpaque(roots, path); err != nil {
+		return nil, err
+	}
+	return updateAt(roots, path, f)
+}
+
+// vetOutsideOpaque errors if path lands on or descends through an
+// opaque element.
+func vetOutsideOpaque(nodes []Node, path []Step) error {
+	for _, s := range path {
+		i, err := s.resolve(nodes)
+		if err != nil {
+			return err
+		}
+		e, ok := nodes[i].(Element)
+		if !ok {
+			return fmt.Errorf("vdom: mutation path descends into a text node")
+		}
+		if e.opaque {
+			return fmt.Errorf("vdom: mutation path enters opaque element %q", e.key)
+		}
+		nodes = e.children
+	}
+	return nil
+}
+
+// inputType returns e's type attribute, folded the way a browser
+// matches attribute keywords: ASCII case-insensitively.
+func inputType(e Element) string {
+	return lowerASCII(attrValue(e.attrs, "type"))
+}
+
+// lowerASCII lowercases ASCII letters only, leaving other runes as
+// they are.
+func lowerASCII(s string) string {
+	return strings.Map(func(r rune) rune {
+		if 'A' <= r && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return r
+	}, s)
+}
+
+// attrValue returns the value of the attr named name, "" if absent.
+func attrValue(attrs []Attr, name string) string {
+	i, found := slices.BinarySearchFunc(attrs, Attr{Name: name}, Attr.cmp)
+	if !found {
+		return ""
+	}
+	return attrs[i].Value
+}
+
+// applySetValue records a text-mode input's committed value as its
+// value attribute. Inputs whose value attribute means something other
+// than the displayed text — file (filename mode), checkbox and radio
+// (default/on mode) — are rejected: their committed state is not a
+// value fact.
+func applySetValue(roots []Node, path []Step, value string) ([]Node, error) {
+	return applyControl(roots, path, func(e Element) (Element, error) {
+		if e.tag != "input" {
+			return Element{}, fmt.Errorf("vdom: setvalue targets a <%s>, want an <input>", e.tag)
+		}
+		if t := inputType(e); t == "file" || t == "checkbox" || t == "radio" {
+			return Element{}, fmt.Errorf("vdom: setvalue on an input of type %q", t)
+		}
+		e.attrs = withAttr(e.attrs, Attr{Name: "value", Value: value})
+		return e, nil
+	})
+}
+
+// applySetText records a textarea's committed value as its text
+// content. The empty value leaves no text child, matching
+// canonicalization, which drops empty text.
+func applySetText(roots []Node, path []Step, value string) ([]Node, error) {
+	return applyControl(roots, path, func(e Element) (Element, error) {
+		if e.tag != "textarea" {
+			return Element{}, fmt.Errorf("vdom: settext targets a <%s>, want a <textarea>", e.tag)
+		}
+		if value == "" {
+			return e.withChildren(nil), nil
+		}
+		return e.withChildren([]Node{Text(value)}), nil
+	})
+}
+
+// applySetChecked records a checkbox's or radio's committed
+// checkedness as the presence of its checked attribute.
+func applySetChecked(roots []Node, path []Step, checked bool) ([]Node, error) {
+	return applyControl(roots, path, func(e Element) (Element, error) {
+		if e.tag != "input" {
+			return Element{}, fmt.Errorf("vdom: setchecked targets a <%s>, want an <input>", e.tag)
+		}
+		if t := inputType(e); t != "checkbox" && t != "radio" {
+			return Element{}, fmt.Errorf("vdom: setchecked on an input of type %q", t)
+		}
+		if checked {
+			e.attrs = withAttr(e.attrs, Attr{Name: "checked"})
+		} else {
+			e.attrs = withoutAttr(e.attrs, "checked")
+		}
+		return e, nil
+	})
+}
+
+// applySetSelected records an option's committed selectedness as the
+// presence of its selected attribute.
+func applySetSelected(roots []Node, path []Step, selected bool) ([]Node, error) {
+	return applyControl(roots, path, func(e Element) (Element, error) {
+		if e.tag != "option" {
+			return Element{}, fmt.Errorf("vdom: setselected targets a <%s>, want an <option>", e.tag)
+		}
+		if selected {
+			e.attrs = withAttr(e.attrs, Attr{Name: "selected"})
+		} else {
+			e.attrs = withoutAttr(e.attrs, "selected")
+		}
+		return e, nil
+	})
 }
 
 // applyMove relocates a keyed child named by from to the container named by
@@ -188,7 +332,7 @@ func splitKey(path []Step) ([]Step, string, error) {
 // key, an out-of-range index, a descent through a text node).
 func updateAt(nodes []Node, path []Step, f func(Element) (Element, error)) ([]Node, error) {
 	if len(path) == 0 {
-		return nil, fmt.Errorf("vdom: empty move path")
+		return nil, fmt.Errorf("vdom: empty mutation path")
 	}
 	i, err := path[0].resolve(nodes)
 	if err != nil {
@@ -196,7 +340,7 @@ func updateAt(nodes []Node, path []Step, f func(Element) (Element, error)) ([]No
 	}
 	e, ok := nodes[i].(Element)
 	if !ok {
-		return nil, fmt.Errorf("vdom: move path descends into a text node")
+		return nil, fmt.Errorf("vdom: mutation path descends into a text node")
 	}
 
 	var ne Element

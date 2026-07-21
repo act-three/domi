@@ -126,10 +126,16 @@ func withAttr(attrs []Attr, a Attr) []Attr {
 
 // withoutAttr returns attrs without the attr named name,
 // sharing the input when it is already absent.
+// Removing the last attr yields nil, the no-attrs form
+// NewElement gives an attr-less element,
+// so rewritten and freshly built trees compare equal.
 func withoutAttr(attrs []Attr, name string) []Attr {
 	i, found := slices.BinarySearchFunc(attrs, Attr{Name: name}, Attr.cmp)
 	if !found {
 		return attrs
+	}
+	if len(attrs) == 1 {
+		return nil
 	}
 	return slices.Delete(slices.Clone(attrs), i, i+1)
 }
