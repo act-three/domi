@@ -48,5 +48,19 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # bun and jsdom back the jsdom-driven client.js tests and the vdom
+      # diff/apply property tests, which skip when bun is absent (as it may
+      # be on dev machines). Pinned versions and frozen lockfiles keep the
+      # runs reproducible. Installed after the formatting check so goimports
+      # never walks a node_modules tree.
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install jsdom
+        run: |
+          bun install --frozen-lockfile --cwd testdata
+          bun install --frozen-lockfile --cwd internal/vdom/testdata
+
       - name: Test
         run: go test -race ./...
