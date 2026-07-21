@@ -22,8 +22,8 @@ globalThis.Node = dom.window.Node;
 
 const src = await readFile(new URL('../client.js', import.meta.url), 'utf8');
 const tmp = join(tmpdir(), `domi-patch-${process.pid}.mjs`);
-await writeFile(tmp, src + '\nexport { applyPatch };');
-const { applyPatch } = await import(pathToFileURL(tmp).href);
+await writeFile(tmp, src + '\nexport { applyPatch, editing };');
+const { applyPatch, editing } = await import(pathToFileURL(tmp).href);
 await unlink(tmp);
 
 let failures = 0;
@@ -72,17 +72,52 @@ function fresh(html) {
   check(input.value === '', `dirty input RemoveAttr: value = ${JSON.stringify(input.value)}, want ""`);
 }
 
-// The focused field is the one the user is still editing: the
-// attribute lands but the property — and so the display — is left
-// alone, so a server echo can't clobber in-flight typing.
+// A focused field marked editing holds typing that has not reached a
+// commit point: the attribute lands but the property — and so the
+// display — is left alone, so a server-initiated patch can't clobber
+// in-flight typing. (The listener marks the control on every input
+// event; the runner marks it by hand.)
 {
   const input = fresh('<input value="A">');
   input.focus();
   input.value = 'B'; // user typed, still focused
+  editing.add(input); // not yet committed
   applyPatch(root, { Op: 'SetAttr', Path: [0], Name: 'value', Value: 'C' });
-  check(input.value === 'B', `focused input SetAttr: value = ${JSON.stringify(input.value)}, want user's "B"`);
-  check(input.getAttribute('value') === 'C', 'focused input SetAttr: attribute not written');
+  check(input.value === 'B', `focused editing input SetAttr: value = ${JSON.stringify(input.value)}, want user's "B"`);
+  check(input.getAttribute('value') === 'C', 'focused editing input SetAttr: attribute not written');
   input.blur();
+  editing.delete(input);
+}
+
+// A focused field not marked editing — its last edit committed, as
+// after commitOps — takes a correction even while focused: having
+// passed the frame base check, the patch is based on exactly what the
+// field committed. The Enter-committed field the server normalizes
+// must not stay stale until blur.
+{
+  const input = fresh('<input value="B">');
+  input.focus();
+  input.value = 'B'; // committed: the mark was cleared at the commit
+  applyPatch(root, { Op: 'SetAttr', Path: [0], Name: 'value', Value: 'C' });
+  check(input.value === 'C', `focused committed input SetAttr: value = ${JSON.stringify(input.value)}, want "C"`);
+  input.blur();
+}
+
+// The guard trusts the editing mark, not DOM equality: a patch that
+// coincidentally sets the attribute to the user's uncommitted text
+// must not launder the next patch into an overwrite of in-flight
+// typing.
+{
+  const input = fresh('<input value="A">');
+  input.focus();
+  input.value = 'B'; // user typed, still focused
+  editing.add(input); // not yet committed
+  applyPatch(root, { Op: 'SetAttr', Path: [0], Name: 'value', Value: 'B' }); // coincidence
+  applyPatch(root, { Op: 'SetAttr', Path: [0], Name: 'value', Value: 'C' });
+  check(input.value === 'B', `spoofed input SetAttr: value = ${JSON.stringify(input.value)}, want user's "B"`);
+  check(input.getAttribute('value') === 'C', 'spoofed input SetAttr: attribute not written');
+  input.blur();
+  editing.delete(input);
 }
 
 // A file input is excluded from value sync: its value property is
@@ -144,14 +179,26 @@ function fresh(html) {
   check(ta.value === 'E', `dirty textarea InsertChild: value = ${JSON.stringify(ta.value)}, want "E"`);
 }
 
-// The focused-textarea guard, same rationale as the focused input.
+// The focused-textarea guard, same rationale as the focused input:
+// typing marked editing is protected, an unmarked (committed) value
+// takes the correction.
 {
   const ta = fresh('<textarea>A</textarea>');
   ta.focus();
   ta.value = 'B'; // user typed, still focused
+  editing.add(ta); // not yet committed
   applyPatch(root, { Op: 'SetText', Path: [0, 0], Value: 'C' });
-  check(ta.value === 'B', `focused textarea SetText: value = ${JSON.stringify(ta.value)}, want user's "B"`);
-  check(ta.textContent === 'C', 'focused textarea SetText: text content not written');
+  check(ta.value === 'B', `focused editing textarea SetText: value = ${JSON.stringify(ta.value)}, want user's "B"`);
+  check(ta.textContent === 'C', 'focused editing textarea SetText: text content not written');
+  ta.blur();
+  editing.delete(ta);
+}
+{
+  const ta = fresh('<textarea>B</textarea>');
+  ta.focus();
+  ta.value = 'B'; // committed: the mark was cleared at the commit
+  applyPatch(root, { Op: 'SetText', Path: [0, 0], Value: 'C' });
+  check(ta.value === 'C', `focused committed textarea SetText: value = ${JSON.stringify(ta.value)}, want "C"`);
   ta.blur();
 }
 
