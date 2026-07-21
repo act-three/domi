@@ -215,12 +215,15 @@ func (s *session[Msg]) spawn(cmd Cmd[Msg]) {
 	for f := range Batch[Msg](cmd).(batch[Msg]) {
 		go func() {
 			msg, n := f(s)
-			s.apply(s.ctx, msg, n)
+			s.apply(s.ctx, []Msg{msg}, n)
 		}()
 	}
 }
 
-func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
+// apply calls Update for each msg in order,
+// then renders once and emits a frame for the view's diff and any effects.
+// Applying no msgs is just a render pass.
+func (s *session[Msg]) apply(ctx context.Context, msgs []Msg, n *nav) {
 	// s.mu serializes the whole update cycle, including the user's Update
 	// and View. If those grow expensive, split state under a second lock.
 	s.mu.Lock()
@@ -229,7 +232,7 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 	// A load is a full-page browser navigation: the document is replaced
 	// wholesale, so there's no Update to run, view to diff, or
 	// subscriptions to reconcile. Emit a lone LoadURL effect and return;
-	// the accompanying msg is the zero value and is intentionally dropped.
+	// any accompanying msgs are intentionally dropped.
 	if n != nil && n.load != "" {
 		// No Base: a LoadURL frame has no DOM patches, so the client runs
 		// it regardless of which snapshot its tree is built on.
@@ -237,7 +240,11 @@ func (s *session[Msg]) apply(ctx context.Context, msg Msg, n *nav) {
 		return
 	}
 
-	cmd := s.app.Update(ctx, msg)
+	cmds := make([]Cmd[Msg], len(msgs))
+	for i, msg := range msgs {
+		cmds[i] = s.app.Update(ctx, msg)
+	}
+	cmd := Batch(cmds...)
 	title, view := s.app.View(ctx)
 	next, h := lower(0, view)
 	add := s.addPathSets(h)
@@ -334,7 +341,7 @@ func (s *session[Msg]) updateSubs(wanted Sub[Msg]) {
 				if ctx.Err() != nil {
 					break
 				}
-				s.apply(s.ctx, msg, nil)
+				s.apply(s.ctx, []Msg{msg}, nil)
 			}
 		}()
 	}
@@ -374,10 +381,16 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 	case msgDispatch:
 		// The client can optionally apply DOM mutations before an event.
 		// We must do the same here, to stay in sync with its state.
-		if len(envelope.Mutations) > 0 {
+		mutated := len(envelope.Mutations) > 0
+		if mutated {
 			s.applyClientMutations(ctx, envelope.Ver, envelope.Mutations)
 		}
-		s.dispatch(ctx, envelope.Ver, envelope.Handler, envelope.Event)
+		if !s.dispatch(ctx, envelope.Ver, envelope.Handler, envelope.Event) && mutated {
+			// The mutations rebased the view, but no handler ran
+			// (its Msg failed to decode, or its key is unknown).
+			// So emit a render-only frame to correct client mutations.
+			go s.apply(mergedContext{s.ctx, ctx}, nil, nil)
+		}
 	case msgURLRequest:
 		u, err := url.Parse(envelope.URL)
 		if err != nil {
@@ -385,7 +398,7 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 			break
 		}
 		msg := s.sv.onURLRequest(u, envelope.Internal)
-		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
+		go s.apply(mergedContext{s.ctx, ctx}, []Msg{msg}, nil)
 	case msgPrefetch:
 		u, err := url.Parse(envelope.URL)
 		if err != nil {
@@ -406,7 +419,7 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 			s.restoreSnapshot(envelope.SnapshotVer)
 		}
 		msg := s.sv.onURLChange(u)
-		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
+		go s.apply(mergedContext{s.ctx, ctx}, []Msg{msg}, nil)
 	default:
 		s.logger.WarnContext(ctx, "unknown client message", "type", string(envelope.Type))
 		http.Error(w, "unknown type", http.StatusBadRequest)
@@ -439,13 +452,14 @@ func typed[Msg any](h handlers) table[Msg] {
 // table of the tree version the client displayed, whose unmarshal
 // function builds the Msg fed to Update. An event for an unretained
 // version is dropped, and an unmarshal error skips the event, like a
-// failing decoder in Elm.
-func (s *session[Msg]) dispatch(ctx context.Context, ver, handler string, event jsontext.Value) {
+// failing decoder in Elm. It reports whether any handler ran.
+func (s *session[Msg]) dispatch(ctx context.Context, ver, handler string, event jsontext.Value) bool {
 	table, ok := s.table(ver)
 	if !ok {
 		s.logger.WarnContext(ctx, "unknown tree version", "ver", ver)
-		return
+		return false
 	}
+	dispatched := false
 	for key := range strings.SplitSeq(handler, ",") {
 		if key == "" {
 			continue
@@ -459,8 +473,10 @@ func (s *session[Msg]) dispatch(ctx context.Context, ver, handler string, event 
 		if err != nil {
 			continue
 		}
-		go s.apply(mergedContext{s.ctx, ctx}, msg, nil)
+		go s.apply(mergedContext{s.ctx, ctx}, []Msg{msg}, nil)
+		dispatched = true
 	}
+	return dispatched
 }
 
 // applyClientMutations brings the server's tree into line with what the
