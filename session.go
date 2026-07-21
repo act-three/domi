@@ -385,11 +385,11 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		if mutated {
 			s.applyClientMutations(ctx, envelope.Ver, envelope.Mutations)
 		}
-		if !s.dispatch(ctx, envelope.Ver, envelope.Handler, envelope.Event) && mutated {
-			// The mutations rebased the view, but no handler ran
-			// (its Msg failed to decode, or its key is unknown).
-			// So emit a render-only frame to correct client mutations.
-			go s.apply(mergedContext{s.ctx, ctx}, nil, nil)
+		msgs := s.resolve(ctx, envelope.Ver, envelope.Handler, envelope.Event)
+		if len(msgs) > 0 || mutated {
+			// If msgs is empty, we still apply it if there are
+			// client mutations, to send a corrective diff.
+			go s.apply(mergedContext{s.ctx, ctx}, msgs, nil)
 		}
 	case msgURLRequest:
 		u, err := url.Parse(envelope.URL)
@@ -447,19 +447,20 @@ func typed[Msg any](h handlers) table[Msg] {
 	return t
 }
 
-// dispatch applies the app Msg for each handler key in a Dispatch
-// message. The keys are comma-separated; each names a binding in the
-// table of the tree version the client displayed, whose unmarshal
-// function builds the Msg fed to Update. An event for an unretained
-// version is dropped, and an unmarshal error skips the event, like a
-// failing decoder in Elm. It reports whether any handler ran.
-func (s *session[Msg]) dispatch(ctx context.Context, ver, handler string, event jsontext.Value) bool {
+// resolve decodes a Dispatch message's comma-separated handler keys
+// into the Msgs they carry, in key order.
+// Each key specifies a binding in the table of the client's tree version.
+// The binding's unmarshal function builds the Msg.
+// An missing version resolves to nothing.
+// An unknown key or an unmarshal error (like a failing decoder in Elm)
+// skips that handler.
+func (s *session[Msg]) resolve(ctx context.Context, ver, handler string, event jsontext.Value) []Msg {
 	table, ok := s.table(ver)
 	if !ok {
 		s.logger.WarnContext(ctx, "unknown tree version", "ver", ver)
-		return false
+		return nil
 	}
-	dispatched := false
+	var msgs []Msg
 	for key := range strings.SplitSeq(handler, ",") {
 		if key == "" {
 			continue
@@ -473,10 +474,9 @@ func (s *session[Msg]) dispatch(ctx context.Context, ver, handler string, event 
 		if err != nil {
 			continue
 		}
-		go s.apply(mergedContext{s.ctx, ctx}, []Msg{msg}, nil)
-		dispatched = true
+		msgs = append(msgs, msg)
 	}
-	return dispatched
+	return msgs
 }
 
 // applyClientMutations brings the server's tree into line with what the
