@@ -164,6 +164,60 @@ function applyMove(root, node, before, into) {
   return { Op: 'move', From: from, To: nodePath(root, node), Before: beforeKey };
 }
 
+// syncProp mirrors a just-patched attribute into the property it
+// normally reflects into, on the form controls where user interaction
+// severs that reflection: typing sets an input's dirty value flag,
+// toggling sets its dirty checkedness flag, and choosing an option sets
+// its selectedness's dirtiness. From then on the content attribute only
+// tracks the default, so a bare setAttribute/removeAttribute leaves the
+// user's stale state on screen; assigning the property makes the patch
+// visible. Attributes and elements outside these three pairs reflect
+// live and need nothing.
+//
+// The value write skips the focused element: a patch born of an event
+// round-trip can land on the very field the user is still editing, and
+// overwriting the property there would discard keystrokes typed after
+// the event was sent. Checkedness and selectedness sync unconditionally
+// — they are discrete, with no half-typed state to protect. On a
+// detached clone (see applyPatch) nothing is focused, so the sync
+// always applies there; a clone carries its original's dirty state, so
+// it needs the sync just as much.
+function syncProp(el, name) {
+  switch (name) {
+    case 'value':
+      // Never on a file input: its value property is in filename mode,
+      // where a non-empty assignment throws (aborting the rest of the
+      // patch frame) and an empty one discards the user's selected
+      // file — and the value attribute doesn't apply to it, so there
+      // is no default to mirror in the first place.
+      if (el.tagName === 'INPUT' && el.type !== 'file' && el !== document.activeElement) {
+        el.value = el.getAttribute('value') ?? '';
+      }
+      break;
+    case 'checked':
+      if (el.tagName === 'INPUT') el.checked = el.hasAttribute('checked');
+      break;
+    case 'selected':
+      if (el.tagName === 'OPTION') el.selected = el.hasAttribute('selected');
+      break;
+  }
+}
+
+// syncTextareaValue is syncProp's counterpart for a textarea's content:
+// the text inside a textarea is only its default value, so once the
+// user has typed (dirty value flag again), patching the child text
+// alone leaves the display stale. Called with the parent of any patched
+// text node and any inserted or removed child — a blanked-out textarea
+// arrives as RemoveChild, a filled-in one as InsertChild — it copies
+// the content into the value property, skipping the focused textarea
+// for the reason given at syncProp. Parents other than textarea need
+// nothing and are left alone.
+function syncTextareaValue(parent) {
+  if (parent.tagName === 'TEXTAREA' && parent !== document.activeElement) {
+    parent.value = parent.textContent;
+  }
+}
+
 // applyPatch applies a single patch to the tree rooted at `root`.
 // Patches address the root's children — a path names the root itself
 // only as the parent of a child op — so the root is never replaced; it
@@ -200,7 +254,9 @@ function applyPatch(root, p) {
       // survives. A text node never goes empty: the Go side drops empty
       // text during canonicalization, so a blanked-out value arrives as
       // RemoveChild, not SetText with a missing Value.
-      walk(root, p.Path).nodeValue = p.Value;
+      const text = walk(root, p.Path);
+      text.nodeValue = p.Value;
+      syncTextareaValue(text.parentNode);
       break;
     }
     case 'SetAttr': {
@@ -208,11 +264,15 @@ function applyPatch(root, p) {
       // present-with-empty-string. The wire omits `Value` when it's the
       // empty string (omitempty on the Go side), so a missing field here
       // means "set this attribute to empty", not "set it to undefined".
-      walk(root, p.Path).setAttribute(p.Name, p.Value ?? '');
+      const el = walk(root, p.Path);
+      el.setAttribute(p.Name, p.Value ?? '');
+      syncProp(el, p.Name);
       break;
     }
     case 'RemoveAttr': {
-      walk(root, p.Path).removeAttribute(p.Name);
+      const el = walk(root, p.Path);
+      el.removeAttribute(p.Name);
+      syncProp(el, p.Name);
       break;
     }
     case 'InsertChild': {
@@ -229,6 +289,7 @@ function applyPatch(root, p) {
       } else {
         parent.insertBefore(newNode, parent.childNodes[p.Index] || null);
       }
+      syncTextareaValue(parent);
       break;
     }
     case 'RemoveChild': {
@@ -243,6 +304,7 @@ function applyPatch(root, p) {
       } else {
         parent.removeChild(parent.childNodes[p.Index]);
       }
+      syncTextareaValue(parent);
       break;
     }
     case 'MoveChild': {
