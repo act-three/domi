@@ -182,7 +182,7 @@ func TestApplyMoveFromRootIntoContainer(t *testing.T) {
 // A move whose key already names a child in the destination is
 // rejected: the client re-keys to dodge collisions before reporting,
 // so a colliding move is forged or stale, and accepting it would
-// plant duplicate sibling keys in the shadow tree.
+// plant duplicate sibling keys in the server's tree.
 func TestApplyMoveKeyCollisionErrors(t *testing.T) {
 	roots := []Node{el("div", keyedList("a", "b"), keyedList("a", "c"))}
 	if _, err := Apply(roots, move([]any{0, 0}, "a", []any{0, 1}, "")); err == nil {
@@ -191,7 +191,7 @@ func TestApplyMoveKeyCollisionErrors(t *testing.T) {
 }
 
 // A destination that cannot hold element children — a raw-text or
-// void element — is rejected rather than corrupting the shadow tree
+// void element — is rejected rather than corrupting the server's tree
 // into something the renderer must refuse.
 func TestApplyMoveIntoChildlessElementErrors(t *testing.T) {
 	for name, dst := range map[string]Node{
@@ -256,7 +256,7 @@ func TestApplyMoveRekeys(t *testing.T) {
 }
 
 // The rewrite is functional: the caller's tree is never mutated, so it can
-// still be diffed against as the pre-move shadow.
+// still be diffed against as the pre-move tree.
 func TestApplyLeavesInputUnchanged(t *testing.T) {
 	roots := []Node{el("div", keyedList("a", "b", "c"), keyedList("x", "y"))}
 	before := []Node{el("div", keyedList("a", "b", "c"), keyedList("x", "y"))}

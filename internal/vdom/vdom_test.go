@@ -99,7 +99,7 @@ func TestDuplicateSiblingKeysPanic(t *testing.T) {
 }
 
 // A void element serializes without children, so a child kept in the
-// tree would exist only in the server's shadow tree and any later
+// tree would exist only on the server and any later
 // patch addressed into it would fail on the client. NewElement rejects
 // it at construction, where the panic points at the render that
 // introduced it.
