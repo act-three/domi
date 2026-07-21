@@ -136,7 +136,7 @@ func Tag(name string, attr ...Attr) Element {
 	}
 }
 
-// WithKey assigns key to n, which must be an element.
+// WithKey returns a copy of element n assigned to key.
 // Keyed nodes are diffed by identity rather than position:
 // inserting, removing, or reordering items in the middle of a list
 // moves the surviving children intact to their new positions
@@ -148,13 +148,11 @@ func Tag(name string, attr ...Attr) Element {
 //	}
 //	list := Tag("ul")(header, Fragment(rows...), footer)
 //
-// Keys must be nonempty,
+// The value of key must be nonempty,
 // stable (any given item should be assigned the same key every time),
 // and unique within the enclosing element.
 //
-// Node n must be an element, not Text or a Fragment.
-// If n is not an element, WithKey panics.
-// If n already has a key, WithKey panics.
+// If n is not an element or already has a key, WithKey panics.
 func WithKey(key string, n Node) Node {
 	if key == "" {
 		panic("domi: key must be nonempty")
@@ -173,7 +171,7 @@ func WithKey(key string, n Node) Node {
 	return e
 }
 
-// WithKeyOpaque assigns key to n,
+// WithKeyOpaque returns a copy of element n assigned to key,
 // just as [WithKey] does,
 // and additionally marks n as opaque, ignored by the virtual DOM diff.
 // An opaque node is inserted,
