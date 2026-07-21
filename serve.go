@@ -189,9 +189,9 @@ func (sv *server[Msg]) delete(id string) {
 func defaultDocument(clientPath, title string, body Node) Node {
 	return Tag("html")(
 		Tag("head")(
-			Tag("meta", Name("charset")("utf-8")),
+			Tag("meta", Name("charset", "utf-8")),
 			Tag("title")(Text(title)),
-			Tag("script", Name("type")("module"))(
+			Tag("script", Name("type", "module"))(
 				Text(fmt.Sprintf(`import * as Domi from %q; Domi.run();`, clientPath)),
 			),
 		),

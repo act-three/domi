@@ -175,7 +175,7 @@ func TestHandlerDocumentOption(t *testing.T) {
 		return Tag("html")(
 			Tag("head")(
 				Tag("title")(Text("custom:"+title)),
-				Tag("meta", Name("name")("test"), Name("content")("hello")),
+				Tag("meta", Name("name", "test"), Name("content", "hello")),
 			),
 			body,
 		)

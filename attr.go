@@ -10,7 +10,7 @@ import (
 
 // Bypass annotates a link to use the browser's built-in navigation,
 // rather than being intercepted by domi.
-var Bypass Attr = Name("domi-bypass")()
+var Bypass Attr = Name("domi-bypass")
 
 // An Attr is an HTML attribute.
 //
@@ -53,48 +53,45 @@ func isReservedAttr(name string) bool {
 	return strings.HasPrefix(name, "domi-") && name != "domi-bypass"
 }
 
-// Name constructs an HTML attribute with the given name and value.
+// Name returns an HTML attribute with the given name and value.
 //
-// Providing the empty string or zero value arguments
+// Providing no value arguments or the empty string
 // produces a name-only attribute.
-// Name(s)() is equivalent to Name(s)("").
+// Name(s) is equivalent to Name(s, "").
 //
-//	Name("value")()    // value
-//	Name("value")("")  // value
-//	Name("value")("a") // value="a"
+//	Name("value")      // value
+//	Name("value", "")  // value
+//	Name("value", "a") // value="a"
 //
 // Providing multiple value arguments produces multiple attribute declarations.
-// Name(s)(a, b, ...) is equivalent to Group(Name(s)(a), Name(s)(b), ...).
+// Name(s, a, b, ...) is equivalent to Group(Name(s, a), Name(s, b), ...).
 // These combine using the same rules described on [Attr] and [RegisterCombining].
 // In particular, for most attributes, only the first value will be used.
 //
-//	Name("value")("a")      // value="a"
-//	Name("value")("a", "b") // value="a"
-//	Name("class")("a")      // class="a"
-//	Name("class")("a", "b") // class="a b"
-//	Name("style")("a")      // style="a"
-//	Name("style")("a", "b") // style="a;b"
+//	Name("value", "a")      // value="a"
+//	Name("value", "a", "b") // value="a"
+//	Name("class", "a")      // class="a"
+//	Name("class", "a", "b") // class="a b"
+//	Name("style", "a")      // style="a"
+//	Name("style", "a", "b") // style="a;b"
 //
 // If name is invalid or reserved, Name panics.
-// See [Attr].
-func Name(name string) func(value ...string) Attr {
+func Name(name string, value ...string) Attr {
 	mustValidAttrName(name)
 	if isReservedAttr(name) {
 		panic(fmt.Sprintf("domi: attribute %s is reserved", name))
 	}
-	return func(value ...string) Attr {
-		switch len(value) {
-		case 0:
-			return attr{vdom.Attr{Name: name}, nil}
-		case 1:
-			return attr{vdom.Attr{Name: name, Value: value[0]}, nil}
-		}
-		var a []Attr
-		for _, v := range value {
-			a = append(a, attr{vdom.Attr{Name: name, Value: v}, nil})
-		}
-		return Group(a...)
+	switch len(value) {
+	case 0:
+		return attr{vdom.Attr{Name: name}, nil}
+	case 1:
+		return attr{vdom.Attr{Name: name, Value: value[0]}, nil}
 	}
+	var a []Attr
+	for _, v := range value {
+		a = append(a, attr{vdom.Attr{Name: name, Value: v}, nil})
+	}
+	return Group(a...)
 }
 
 // group is the lowered form of a [Group]: a sequence of attrs that

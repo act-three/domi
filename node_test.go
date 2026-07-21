@@ -105,8 +105,8 @@ func TestWithKeyMixesWithUnkeyedSiblings(t *testing.T) {
 // WithKey accepts a childless [Element] builder just as a child list
 // does, applying it to a finished element.
 func TestWithKeyAppliesElementBuilder(t *testing.T) {
-	a := vdom.Render(lowerOneNode(Tag("ul")(WithKey("a", Tag("li", Name("class")("x"))))))
-	b := vdom.Render(lowerOneNode(Tag("ul")(WithKey("a", Tag("li", Name("class")("x"))()))))
+	a := vdom.Render(lowerOneNode(Tag("ul")(WithKey("a", Tag("li", Name("class", "x"))))))
+	b := vdom.Render(lowerOneNode(Tag("ul")(WithKey("a", Tag("li", Name("class", "x"))()))))
 	if a != b {
 		t.Fatalf("builder and element should key identically: %q vs %q", a, b)
 	}
@@ -240,16 +240,16 @@ func TestLowerOneNilPanics(t *testing.T) {
 // indistinguishable from writing its attrs inline at the use site.
 
 func TestGroupNestedFlattens(t *testing.T) {
-	a := lowerOneNode(Tag("div", Group(Group(Name("class")("a"), Name("id")("x")), Name("data-x")("1")))())
-	b := lowerOneNode(Tag("div", Name("class")("a"), Name("id")("x"), Name("data-x")("1"))())
+	a := lowerOneNode(Tag("div", Group(Group(Name("class", "a"), Name("id", "x")), Name("data-x", "1")))())
+	b := lowerOneNode(Tag("div", Name("class", "a"), Name("id", "x"), Name("data-x", "1"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("nested Group should flatten: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
 }
 
 func TestGroupEmptyContributesNothing(t *testing.T) {
-	a := lowerOneNode(Tag("div", Group(), Name("id")("x"))())
-	b := lowerOneNode(Tag("div", Name("id")("x"))())
+	a := lowerOneNode(Tag("div", Group(), Name("id", "x"))())
+	b := lowerOneNode(Tag("div", Name("id", "x"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("empty Group should contribute nothing: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
@@ -259,8 +259,8 @@ func TestGroupEmptyContributesNothing(t *testing.T) {
 // wherever an Attr is accepted, so conditional attributes can be an
 // attr-or-nil with no guard at the use site.
 func TestNilAttrContributesNothing(t *testing.T) {
-	a := lowerOneNode(Tag("div", Name("class")("a"), nil, Name("id")("x"))())
-	b := lowerOneNode(Tag("div", Name("class")("a"), Name("id")("x"))())
+	a := lowerOneNode(Tag("div", Name("class", "a"), nil, Name("id", "x"))())
+	b := lowerOneNode(Tag("div", Name("class", "a"), Name("id", "x"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("nil attr should contribute nothing: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
@@ -268,14 +268,14 @@ func TestNilAttrContributesNothing(t *testing.T) {
 
 func TestGroupPreservesAttrOrder(t *testing.T) {
 	a := lowerOneNode(Tag("div",
-		Name("id")("x"),
-		Group(Name("class")("a"), Name("data-y")("1")),
-		Name("data-z")("2"))())
+		Name("id", "x"),
+		Group(Name("class", "a"), Name("data-y", "1")),
+		Name("data-z", "2"))())
 	b := lowerOneNode(Tag("div",
-		Name("id")("x"),
-		Name("class")("a"),
-		Name("data-y")("1"),
-		Name("data-z")("2"))())
+		Name("id", "x"),
+		Name("class", "a"),
+		Name("data-y", "1"),
+		Name("data-z", "2"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("Group attrs should appear in position: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
@@ -285,8 +285,8 @@ func TestGroupPreservesAttrOrder(t *testing.T) {
 // a Group of duplicate classes should combine with a sibling Class just
 // like inline duplicates do.
 func TestGroupClassCombinesAcrossBoundary(t *testing.T) {
-	a := lowerOneNode(Tag("div", Group(Name("class")("a"), Name("class")("b")), Name("class")("c"))())
-	b := lowerOneNode(Tag("div", Name("class")("a"), Name("class")("b"), Name("class")("c"))())
+	a := lowerOneNode(Tag("div", Group(Name("class", "a"), Name("class", "b")), Name("class", "c"))())
+	b := lowerOneNode(Tag("div", Name("class", "a"), Name("class", "b"), Name("class", "c"))())
 	if vdom.Render(a) != vdom.Render(b) {
 		t.Fatalf("Group-of-classes should combine like inline: %q vs %q", vdom.Render(a), vdom.Render(b))
 	}
@@ -299,7 +299,7 @@ func TestGroupClassCombinesAcrossBoundary(t *testing.T) {
 // exercise the observable contract through Tag → Render.
 
 func TestCombineClassWithSpace(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div", Name("class")("a"), Name("class")("b"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("class", "a"), Name("class", "b"))()))
 	want := `<div class="a b"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -307,7 +307,7 @@ func TestCombineClassWithSpace(t *testing.T) {
 }
 
 func TestCombineStyleWithSemicolon(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div", Name("style")("color:red"), Name("style")("font-weight:bold"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("style", "color:red"), Name("style", "font-weight:bold"))()))
 	want := `<div style="color:red;font-weight:bold"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -346,7 +346,7 @@ func TestCombineSingleMsgNoComma(t *testing.T) {
 }
 
 func TestCombineOtherAttrFirstWins(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div", Name("id")("first"), Name("id")("second"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("id", "first"), Name("id", "second"))()))
 	want := `<div id="first"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -354,7 +354,7 @@ func TestCombineOtherAttrFirstWins(t *testing.T) {
 }
 
 func TestCombineClassEmptyGuard(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div", Name("class")(""), Name("class")("b"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("class", ""), Name("class", "b"))()))
 	want := `<div class="b"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -363,7 +363,7 @@ func TestCombineClassEmptyGuard(t *testing.T) {
 
 func TestRegisterCombining(t *testing.T) {
 	RegisterCombining("data-x", ":")
-	got := vdom.Render(lowerOneNode(Tag("div", Name("data-x")("a"), Name("data-x")("b"), Name("data-x")("c"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("data-x", "a"), Name("data-x", "b"), Name("data-x", "c"))()))
 	want := `<div data-x="a:b:c"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -377,7 +377,7 @@ func TestRegisterCombining(t *testing.T) {
 // calls. These pin that equivalence at the builder's own signature.
 
 func TestNameVariadicClass(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div", Name("class")("a", "b"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("class", "a", "b"))()))
 	want := `<div class="a b"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -385,7 +385,7 @@ func TestNameVariadicClass(t *testing.T) {
 }
 
 func TestNameVariadicStyle(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div", Name("style")("color:red", "font-weight:bold"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("style", "color:red", "font-weight:bold"))()))
 	want := `<div style="color:red;font-weight:bold"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -395,7 +395,7 @@ func TestNameVariadicStyle(t *testing.T) {
 // Name is fully general.
 // It can represent a boolean attribute in its name-only form.
 func TestNameZeroArgBare(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div", Name("disabled")())()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("disabled"))()))
 	want := `<div disabled></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -403,7 +403,7 @@ func TestNameZeroArgBare(t *testing.T) {
 }
 
 func TestNameVariadicFirstWins(t *testing.T) {
-	got := vdom.Render(lowerOneNode(Tag("div", Name("id")("first", "second"))()))
+	got := vdom.Render(lowerOneNode(Tag("div", Name("id", "first", "second"))()))
 	want := `<div id="first"></div>`
 	if got != want {
 		t.Fatalf("got %q, want %q", got, want)
@@ -771,7 +771,7 @@ func TestUnsafeParseRawCanonicalMarkupIsStable(t *testing.T) {
 func TestOpaqueKeyedChildFreezes(t *testing.T) {
 	build := func(body string) []vdom.Node {
 		return lowerNodes(Tag("main")(
-			WithKeyOpaque("player", Tag("div", Name("data-controller")("player"))(Text(body))),
+			WithKeyOpaque("player", Tag("div", Name("data-controller", "player"))(Text(body))),
 		))
 	}
 	if got := vdom.Diff(build("first"), build("second")); len(got) != 0 {
@@ -784,7 +784,7 @@ func TestOpaqueKeyedChildFreezes(t *testing.T) {
 // client reads and which stays in the markup.
 func TestOpaqueNotRendered(t *testing.T) {
 	html := vdom.Render(lowerOneNode(Tag("ul")(
-		WithKeyOpaque("a", Tag("li", Name("class")("widget"))(Text("x"))),
+		WithKeyOpaque("a", Tag("li", Name("class", "widget"))(Text("x"))),
 	)))
 	if strings.Contains(html, "opaque") {
 		t.Fatalf("internal opaque marker leaked into HTML: %q", html)
