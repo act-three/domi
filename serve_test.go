@@ -1455,9 +1455,9 @@ func TestDispatchIsVersionExact(t *testing.T) {
 			t.Fatal("handler key should be the element's address, stable across renders")
 		}
 
-		s.dispatch(s.ctx, ver0, key, nil)
+		s.apply(s.ctx, s.resolve(s.ctx, ver0, key, nil), nil)
 		waitGot(t, s, app, []int{0})
-		s.dispatch(s.ctx, ver1, key, nil)
+		s.apply(s.ctx, s.resolve(s.ctx, ver1, key, nil), nil)
 		waitGot(t, s, app, []int{0, 1})
 	})
 }
@@ -1477,7 +1477,7 @@ func TestDispatchRefreshesUnchangedTree(t *testing.T) {
 		if s.ver != ver0 {
 			t.Fatal("unchanged tree should keep its ver")
 		}
-		s.dispatch(s.ctx, ver0, soleKey(t, s, ver0), nil)
+		s.apply(s.ctx, s.resolve(s.ctx, ver0, soleKey(t, s, ver0), nil), nil)
 		waitGot(t, s, app, []int{1})
 	})
 }
@@ -1489,7 +1489,7 @@ func TestDispatchUnknownVerDropped(t *testing.T) {
 		s := newTestSession[int](app)
 		defer s.cancel()
 
-		s.dispatch(s.ctx, "nonexistent", soleKey(t, s, s.ver), nil)
+		s.apply(s.ctx, s.resolve(s.ctx, "nonexistent", soleKey(t, s, s.ver), nil), nil)
 		waitGot(t, s, app, nil)
 	})
 }
@@ -1521,7 +1521,7 @@ func TestDispatchUnmarshalErrorSkips(t *testing.T) {
 		s.tables[s.ver] = table[int]{"bad": func(jsontext.Value) (int, error) {
 			return 7, fmt.Errorf("no thanks")
 		}}
-		s.dispatch(s.ctx, s.ver, "bad", nil)
+		s.apply(s.ctx, s.resolve(s.ctx, s.ver, "bad", nil), nil)
 		waitGot(t, s, app, nil)
 	})
 }
@@ -1679,12 +1679,12 @@ func topMove(key, before string) []vdom.ClientMutation {
 }
 
 // optimistic drives an event carrying a client mutation set the way
-// handleEvent does — apply the mutations, then dispatch the event msg
-// on top — then settles the bubble so callers can assert on the
+// handleEvent does — replay the mutations, then apply the resolved
+// msgs — then settles the bubble so callers can assert on the
 // finished apply. Must run inside a synctest bubble.
 func optimistic(s *session[moveMsg], ver, handler string, muts []vdom.ClientMutation) {
 	s.applyClientMutations(s.ctx, ver, muts)
-	s.dispatch(s.ctx, ver, handler, nil)
+	s.apply(s.ctx, s.resolve(s.ctx, ver, handler, nil), nil)
 	synctest.Wait()
 }
 
@@ -1910,6 +1910,53 @@ func TestDispatchMutatedUndecodedRerenders(t *testing.T) {
 		}
 		if !hasApplyPatch(f) {
 			t.Fatal("the render pass should emit the corrective patch at the event")
+		}
+	})
+}
+
+// An event naming several handlers resolves to all their Msgs and
+// applies them in one pass: Update runs for each, in key order, and a
+// single render emits a single frame.
+func TestDispatchCoalescesHandlers(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		app := &captureApp{body: func(n int) Node { return Textf("%d", n) }}
+		s := newTestSession[int](app)
+		defer s.cancel()
+		s.tables[s.ver] = table[int]{"k1": msgInt(1), "k2": msgInt(2)}
+
+		body := fmt.Sprintf(`{"Type":"Dispatch","Handler":"k1,k2","Ver":%q}`, s.ver)
+		rec := httptest.NewRecorder()
+		s.handleEvent(rec, httptest.NewRequest("POST", "/x/event", strings.NewReader(body)))
+		synctest.Wait()
+
+		waitGot(t, s, app, []int{1, 2})
+		s.mu.Lock()
+		head := s.head
+		s.mu.Unlock()
+		if head != 1 {
+			t.Fatalf("frames = %d, want 1: several handlers render once", head)
+		}
+	})
+}
+
+// An envelope that resolves to nothing and carried no mutations does
+// nothing: no Update, no render.
+func TestDispatchUnresolvedSkipsApply(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var views int
+		app := &captureApp{body: func(n int) Node { views++; return Textf("%d", n) }}
+		s := newTestSession[int](app)
+		defer s.cancel()
+		before := views
+
+		body := fmt.Sprintf(`{"Type":"Dispatch","Handler":"nope","Ver":%q}`, s.ver)
+		rec := httptest.NewRecorder()
+		s.handleEvent(rec, httptest.NewRequest("POST", "/x/event", strings.NewReader(body)))
+		synctest.Wait()
+
+		waitGot(t, s, app, nil)
+		if views != before {
+			t.Fatalf("render passes = %d, want none", views-before)
 		}
 	})
 }
