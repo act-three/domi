@@ -779,18 +779,23 @@ func TestOpaqueKeyedChildFreezes(t *testing.T) {
 	}
 }
 
-// Opaqueness is an internal construction directive, not an HTML attribute, so
-// it never reaches the rendered output — unlike domi-key, which the
-// client reads and which stays in the markup.
-func TestOpaqueNotRendered(t *testing.T) {
+// Opacity is mirrored into the domi-opaque marker attribute the way the
+// key is mirrored into domi-key: the client reads it to recognize
+// app-owned subtrees in the live DOM and keep its hands off the state
+// inside them. A merely keyed child carries no such marker.
+func TestOpaqueRendered(t *testing.T) {
 	html := vdom.Render(lowerOneNode(Tag("ul")(
 		WithKeyOpaque("a", Tag("li", Name("class", "widget"))(Text("x"))),
+		WithKey("b", Tag("li")(Text("y"))),
 	)))
-	if strings.Contains(html, "opaque") {
-		t.Fatalf("internal opaque marker leaked into HTML: %q", html)
+	if !strings.Contains(html, "domi-opaque") {
+		t.Fatalf("opaque child should render its marker: %q", html)
 	}
 	if !strings.Contains(html, `domi-key="a"`) {
 		t.Fatalf("keyed child should still render its key: %q", html)
+	}
+	if strings.Contains(html, `<li domi-key="b" domi-opaque`) {
+		t.Fatalf("keyed-but-not-opaque child must not carry the marker: %q", html)
 	}
 }
 
