@@ -260,7 +260,7 @@ function revertControl(root, el) {
 
 // hasEditHandler reports whether a handler on el or an ancestor
 // listens for el's edits — an input or change handler, the two commit
-// events. (Toggles bind change; see event.Check.)
+// events (bound by event.Input, event.Change, and event.Check).
 function hasEditHandler(root, el) {
   for (let n = el; n && n !== root.parentNode; n = n.parentNode) {
     if (n.nodeType === 1 && (n.getAttribute('domi-msg-input') || n.getAttribute('domi-msg-change'))) {
