@@ -26,6 +26,13 @@ func Input[Msg any](f func(value string) Msg) domi.Attr {
 	return domi.On("input", targetField("value", f), []string{"target", "value"})
 }
 
+// Change responds to "change" events
+// on text fields, text areas, and select elements.
+// It calls f with the new value and delivers the resulting message.
+func Change[Msg any](f func(value string) Msg) domi.Attr {
+	return domi.On("change", targetField("value", f), []string{"target", "value"})
+}
+
 // Check responds to "change" events on checkboxes and radio buttons.
 // It calls f with the new value and delivers the resulting message.
 func Check[Msg any](f func(checked bool) Msg) domi.Attr {
