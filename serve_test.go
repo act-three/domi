@@ -3,6 +3,7 @@ package domi
 import (
 	"context"
 	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"iter"
 	"log/slog"
@@ -1682,7 +1683,7 @@ func topMove(key, before string) []vdom.ClientMutation {
 // handleEvent does — replay the mutations, then apply the resolved
 // msgs — then settles the bubble so callers can assert on the
 // finished apply. Must run inside a synctest bubble.
-func optimistic(s *session[moveMsg], ver, handler string, muts []vdom.ClientMutation) {
+func optimistic[Msg any](s *session[Msg], ver, handler string, muts []vdom.ClientMutation) {
 	s.applyClientMutations(s.ctx, ver, muts)
 	s.apply(s.ctx, s.resolve(s.ctx, ver, handler, nil), nil)
 	synctest.Wait()
@@ -1957,6 +1958,135 @@ func TestDispatchUnresolvedSkipsApply(t *testing.T) {
 		waitGot(t, s, app, nil)
 		if views != before {
 			t.Fatalf("render passes = %d, want none", views-before)
+		}
+	})
+}
+
+// ---- control-state commit tests ----
+
+// fieldApp renders one text input whose value attribute tracks the
+// model, with a change handler that stores the value it is told to —
+// or ignores it, for the silent-rejection scenario.
+type fieldApp struct {
+	value  string
+	commit string // the value the handler stores when not rejecting
+	reject bool
+}
+
+func (a *fieldApp) Update(_ context.Context, v string) Cmd[string] {
+	if !a.reject {
+		a.value = v
+	}
+	return Batch[string]()
+}
+
+func (a *fieldApp) View(context.Context) (string, Node) {
+	return "", Tag("input",
+		Name("value", a.value),
+		On("change", func(jsontext.Value) (string, error) { return a.commit, nil }),
+	)
+}
+
+func (a *fieldApp) Subscriptions(context.Context) Sub[string] { return nil }
+func (a *fieldApp) Preview(ctx context.Context, u *url.URL) (string, string, Node) {
+	t, v := a.View(ctx)
+	return u.String(), t, v
+}
+
+// setValue is a one-op setvalue mutation set for the control at path.
+func setValue(path []vdom.Step, v string) []vdom.ClientMutation {
+	return []vdom.ClientMutation{{Op: "setvalue", Path: path, Value: v}}
+}
+
+// A committed value the handler stores round-trips to an empty diff:
+// the field the user just typed in is never repainted — the echo
+// race doesn't exist for reporting fields.
+func TestDispatchCommitAgreement(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		app := &fieldApp{value: "old", commit: "new"}
+		s := newTestSession[string](app)
+		defer s.cancel()
+		v0 := s.ver
+		key := soleKey(t, s, v0)
+
+		optimistic(s, v0, key, setValue([]vdom.Step{vdom.Index(0)}, "new"))
+
+		s.mu.Lock()
+		value := app.value
+		s.mu.Unlock()
+		if value != "new" {
+			t.Fatalf("model value = %q, want %q", value, "new")
+		}
+		if hasApplyPatch(lastFrame(s)) {
+			t.Fatal("agreement emitted a DOM patch; the committed field should stand untouched")
+		}
+	})
+}
+
+// A handler that ignores the committed value no longer stands silently:
+// the reconstruction holds the user's text, the render holds the
+// model's, and the diff is the correction — the rejection the
+// differ could not express before the commit entered its base (DOM-64).
+func TestDispatchCommitRejectionCorrects(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		app := &fieldApp{value: "old", commit: "new", reject: true}
+		s := newTestSession[string](app)
+		defer s.cancel()
+		v0 := s.ver
+		key := soleKey(t, s, v0)
+
+		optimistic(s, v0, key, setValue([]vdom.Step{vdom.Index(0)}, "new"))
+
+		var corrected bool
+		for _, e := range lastFrame(s).Effects {
+			if e.Type == effectApplyPatch {
+				b, err := json.Marshal(e.Patches)
+				if err != nil {
+					t.Fatal(err)
+				}
+				corrected = strings.Contains(string(b), `"Name":"value"`) && strings.Contains(string(b), `"Value":"old"`)
+			}
+		}
+		if !corrected {
+			t.Fatal("rejection should emit the patch correcting value back to the model's")
+		}
+	})
+}
+
+// A control commit whose handler fails to decode converges like a
+// rejection: no Update runs, and the render pass corrects the field
+// back to the model's value at the very event that carried the commit
+// (TestDispatchMutatedUndecodedRerenders pins the move flavor).
+func TestDispatchCommitUndecodedCorrects(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		app := &fieldApp{value: "old", commit: "new"}
+		s := newTestSession[string](app)
+		defer s.cancel()
+		v0 := s.ver
+		s.mu.Lock()
+		s.tables[v0] = table[string]{"bad": func(jsontext.Value) (string, error) {
+			return "", fmt.Errorf("no thanks")
+		}}
+		s.mu.Unlock()
+
+		body := fmt.Sprintf(
+			`{"Type":"Dispatch","Handler":"bad","Ver":%q,"Mutations":[{"Op":"setvalue","Path":[0],"Value":"new"}]}`, v0)
+		rec := httptest.NewRecorder()
+		s.handleEvent(rec, httptest.NewRequest("POST", "/x/event", strings.NewReader(body)))
+		synctest.Wait()
+
+		var corrected bool
+		for _, e := range lastFrame(s).Effects {
+			if e.Type == effectApplyPatch {
+				b, err := json.Marshal(e.Patches)
+				if err != nil {
+					t.Fatal(err)
+				}
+				corrected = strings.Contains(string(b), `"Name":"value"`) && strings.Contains(string(b), `"Value":"old"`)
+			}
+		}
+		if !corrected {
+			t.Fatal("an undecoded commit should correct the field at the event")
 		}
 	})
 }
