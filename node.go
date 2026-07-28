@@ -61,9 +61,13 @@ func Textf(format string, a ...any) Node {
 //	Tag("div")                    // <div></div>
 //	Tag("input", attr.Value("x")) // <input value="x">
 //
-// If a [void element] is called with a nonempty child list, it panics.
+// If a [void element] is called with children, it panics.
+// Arguments that contribute no nodes,
+// such as nil or an empty [Fragment],
+// are permitted.
 //
 //	Tag("input")(Text("not allowed")) // panic
+//	Tag("input")(nil, Fragment())     // ok
 //
 // [void element]: https://html.spec.whatwg.org/multipage/syntax.html#void-elements
 type Element func(child ...Node) Node
@@ -129,11 +133,20 @@ func Tag(name string, attr ...Attr) Element {
 		panic(fmt.Sprintf("domi: tag %s is reserved", name))
 	}
 	return func(children ...Node) Node {
-		if len(children) > 0 && vdom.IsVoid(name) {
+		if vdom.IsVoid(name) && hasNode(children) {
 			panic(fmt.Sprintf("domi: void element <%s> cannot have children", name))
 		}
 		return element{tag: name, attrs: attr, children: children}
 	}
+}
+
+// hasNode returns whether nodes contains
+// at least one element or text node.
+func hasNode(nodes []Node) bool {
+	for range Fragment(nodes...).(fragment) {
+		return true
+	}
+	return false
 }
 
 // WithKey returns a copy of element n assigned to key.

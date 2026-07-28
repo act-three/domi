@@ -191,6 +191,39 @@ func TestVoidElementWithChildrenPanics(t *testing.T) {
 	_ = Tag("input")(Text("boom"))
 }
 
+// The void-element check counts contributed nodes, not arguments:
+// nils and empty Fragments give the element nothing, so passing them
+// is not the mistake the panic guards against.
+func TestVoidElementWithNoRealChildren(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		children []Node
+	}{
+		{"none", nil},
+		{"nil", []Node{nil}},
+		{"empty fragment", []Node{Fragment()}},
+		{"nested nothing", []Node{Fragment(nil, Fragment(Fragment(), nil))}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got := vdom.Render(lowerOneNode(Tag("input")(tt.children...)))
+			if want := vdom.Render(lowerOneNode(Tag("input"))); got != want {
+				t.Fatalf("got %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+// An empty text node is still a child: it lives in the vdom tree even
+// though it renders as nothing, so a void element rejects it.
+func TestVoidElementWithEmptyTextPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for an empty text child of a void element")
+		}
+	}()
+	_ = Tag("input")(Text(""))
+}
+
 // ---- nil Node tests ----
 //
 // A nil Node is the empty Fragment's degenerate twin: it lowers to
