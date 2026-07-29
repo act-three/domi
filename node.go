@@ -70,7 +70,7 @@ func Textf(format string, a ...any) Node {
 //	Tag("input")(nil, Fragment())     // ok
 //
 // [void element]: https://html.spec.whatwg.org/multipage/syntax.html#void-elements
-type Element func(child ...Node) Node
+type Element func(child ...Node) node
 
 func (Element) isNode() {}
 
@@ -132,7 +132,7 @@ func Tag(name string, attr ...Attr) Element {
 	if isReservedTag(name) {
 		panic(fmt.Sprintf("domi: tag %s is reserved", name))
 	}
-	return func(children ...Node) Node {
+	return func(children ...Node) node {
 		if vdom.IsVoid(name) && hasNode(children) {
 			panic(fmt.Sprintf("domi: void element <%s> cannot have children", name))
 		}
@@ -218,7 +218,7 @@ func Fragment(n ...Node) Node {
 			case nil:
 				// A nil Node contributes nothing, like an empty Fragment.
 			case Element:
-				if !yield(v().(node)) {
+				if !yield(v()) {
 					return
 				}
 			case fragment:
