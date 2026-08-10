@@ -46,7 +46,7 @@ type (
 //	}))
 //
 // Apps using Document are responsible for loading the Domi client JavaScript.
-// See [Bundling the Client] for details.
+// See Bundling the Client in the package documentation for details.
 func Document(f func(title string, body Node) Node) Option { return documentOption{f} }
 
 // InternalURLPrefix specifies the prefix p
