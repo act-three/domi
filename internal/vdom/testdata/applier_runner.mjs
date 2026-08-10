@@ -3,7 +3,7 @@
 // Reads newline-delimited JSON requests on stdin:
 //   {"tag": "...", "initial": "<div>...</div>...", "patches": [...]}
 // Stages each initial child list inside a fresh <domi-root> wrapper —
-// the same shape the session patches in production — applies the
+// the same shape the instance patches in production — applies the
 // patches to the wrapper, and writes back the resulting tree as
 // serialized HTML, echoing the tag so the Go side can detect
 // stdin/stdout desync:
@@ -57,7 +57,7 @@ for await (const line of rl) {
   try {
     const req = JSON.parse(line);
     tag = req.tag;
-    // The wrapper plays the session's patch root: the initial child
+    // The wrapper plays the instance's patch root: the initial child
     // list becomes its children, patches address them from it, and the
     // wrapper itself is never a patch target.
     const root = document.createElement('domi-root');

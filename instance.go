@@ -21,8 +21,8 @@ import (
 	"ily.dev/domi/internal/vdom"
 )
 
-// verInitial is the version id naming every session's initial tree.
-// It is also each session's initial base: the first patch lineage is
+// verInitial is the version id naming every instance's initial tree.
+// It is also each instance's initial base: the first patch lineage is
 // rooted in the initial tree.
 const verInitial = "11111111111111111111111111"
 
@@ -32,7 +32,7 @@ const verInitial = "11111111111111111111111111"
 // two agree without it ever travelling on the wire.
 const verMutatedSuffix = "-mutated"
 
-type session[Msg any] struct {
+type instance[Msg any] struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -67,8 +67,8 @@ type sseAttachment struct {
 	ready  chan struct{}
 }
 
-// frame is one entry in a session's patch log: the seq is monotonic per
-// session and travels back to the client as the SSE event id, so a
+// frame is one entry in an instance's patch log: the seq is monotonic per
+// instance and travels back to the client as the SSE event id, so a
 // reconnecting client can ask for everything after the seq it last saw.
 type frame struct {
 	seq     uint64   // SSE event id
@@ -96,7 +96,7 @@ const (
 	effectSetTitle      effectType = "SetTitle"      // set document.title
 	effectPushURL       effectType = "PushURL"       // snapshot outgoing page, then history.pushState
 	effectReplaceURL    effectType = "ReplaceURL"    // history.replaceState
-	effectLoadURL       effectType = "LoadURL"       // full-page navigation, leaving the session
+	effectLoadURL       effectType = "LoadURL"       // full-page navigation, leaving the instance
 	effectSetPreview    effectType = "SetPreview"    // hold a rebased link preview for instant navigation
 	effectDeletePreview effectType = "DeletePreview" // drop the held link preview
 	effectAddPathSets   effectType = "AddPathSets"
@@ -123,7 +123,7 @@ const snapshotRingSize = 30
 // client mutations); older bases fall back to a reset.
 const recentRingSize = 16
 
-// preview is the session's single outstanding link preview.
+// preview is the instance's single outstanding link preview.
 // We store the preview's view as a value so we can generate a new
 // patchset for each new view in the history.
 type preview struct {
@@ -158,7 +158,7 @@ func (p *preview) addView(ver string, sn tree) bool {
 	return true
 }
 
-func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
+func (s *instance[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	appCtx := mergedContext{s.ctx, ctx}
 	app, cmd := s.sv.appf(appCtx, req.URL)
@@ -211,7 +211,7 @@ func (s *session[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 
 // spawn runs each Cmd body in its own goroutine and feeds the
 // resulting Msg and optional nav back into apply.
-func (s *session[Msg]) spawn(cmd Cmd[Msg]) {
+func (s *instance[Msg]) spawn(cmd Cmd[Msg]) {
 	for f := range Batch[Msg](cmd).(batch[Msg]) {
 		go func() {
 			msg, n := f(s)
@@ -223,7 +223,7 @@ func (s *session[Msg]) spawn(cmd Cmd[Msg]) {
 // apply calls Update for each msg in order,
 // then renders once and emits a frame for the view's diff and any effects.
 // Applying no msgs is just a render pass.
-func (s *session[Msg]) apply(ctx context.Context, msgs []Msg, n *nav) {
+func (s *instance[Msg]) apply(ctx context.Context, msgs []Msg, n *nav) {
 	// s.mu serializes the whole update cycle, including the user's Update
 	// and View. If those grow expensive, split state under a second lock.
 	s.mu.Lock()
@@ -315,7 +315,7 @@ func (s *session[Msg]) apply(ctx context.Context, msgs []Msg, n *nav) {
 // updateSubs reconciles the active subscription set against wanted.
 // New keys start a goroutine that iterates the event stream;
 // absent keys cancel their goroutine via context.
-func (s *session[Msg]) updateSubs(wanted Sub[Msg]) {
+func (s *instance[Msg]) updateSubs(wanted Sub[Msg]) {
 	all := Subs[Msg](wanted).(subs[Msg])
 	next := make(map[any]func(context.Context) iter.Seq[Msg], len(all))
 	for _, e := range all {
@@ -347,7 +347,7 @@ func (s *session[Msg]) updateSubs(wanted Sub[Msg]) {
 	}
 }
 
-func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
+func (s *instance[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 
 	type msgType string
@@ -429,7 +429,7 @@ func (s *session[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 }
 
 // A table holds a tree version's handler bindings: handler key → the
-// unmarshal function producing this session's Msg. It is the typed
+// unmarshal function producing this instance's Msg. It is the typed
 // form of a lowering harvest; see typed.
 type table[Msg any] map[string]func(jsontext.Value) (Msg, error)
 
@@ -454,7 +454,7 @@ func typed[Msg any](h handlers) table[Msg] {
 // An missing version resolves to nothing.
 // An unknown key or an unmarshal error (like a failing decoder in Elm)
 // skips that handler.
-func (s *session[Msg]) resolve(ctx context.Context, ver, handler string, event jsontext.Value) []Msg {
+func (s *instance[Msg]) resolve(ctx context.Context, ver, handler string, event jsontext.Value) []Msg {
 	table, ok := s.table(ver)
 	if !ok {
 		s.logger.WarnContext(ctx, "unknown tree version", "ver", ver)
@@ -490,7 +490,7 @@ func (s *session[Msg]) resolve(ctx context.Context, ver, handler string, event j
 // version the server no longer retains, or a mutation didn't fit — the
 // client is reset onto its derived base to rebuild from the authoritative
 // tree instead.
-func (s *session[Msg]) applyClientMutations(ctx context.Context, ver string, muts []vdom.ClientMutation) {
+func (s *instance[Msg]) applyClientMutations(ctx context.Context, ver string, muts []vdom.ClientMutation) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -528,7 +528,7 @@ func (s *session[Msg]) applyClientMutations(ctx context.Context, ver string, mut
 // missed (see restoreSnapshot). It errors if the acted-on tree is gone or
 // a mutation doesn't fit, signalling the caller to reset rather than trust
 // a bad reconstruction. Must be called with s.mu held.
-func (s *session[Msg]) reconstruct(ver string, muts []vdom.ClientMutation) (tree, error) {
+func (s *instance[Msg]) reconstruct(ver string, muts []vdom.ClientMutation) (tree, error) {
 	base, ok := s.actedOn(ver)
 	if !ok {
 		return tree{}, fmt.Errorf("no retained tree for version %q", ver)
@@ -543,7 +543,7 @@ func (s *session[Msg]) reconstruct(ver string, muts []vdom.ClientMutation) (tree
 // actedOn returns the tree named ver: the live view when ver is current,
 // else a recent render (which another update may have moved off of).
 // else a back/forward snapshot. Must be called with s.mu held.
-func (s *session[Msg]) actedOn(ver string) (tree, bool) {
+func (s *instance[Msg]) actedOn(ver string) (tree, bool) {
 	if ver == s.ver {
 		return tree{view: s.view, title: s.title, pathSets: s.pathSets}, true
 	}
@@ -570,8 +570,8 @@ func resetEffects(view []vdom.Node, title, ver string, ps map[string]pathSet) []
 }
 
 // table returns the handler bindings for the tree version named ver,
-// or false if the session never produced (or no longer retains) it.
-func (s *session[Msg]) table(ver string) (table[Msg], bool) {
+// or false if the instance never produced (or no longer retains) it.
+func (s *instance[Msg]) table(ver string) (table[Msg], bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	t, ok := s.tables[ver]
@@ -581,7 +581,7 @@ func (s *session[Msg]) table(ver string) (table[Msg], bool) {
 // addPathSets adds to s.pathSets
 // the items from h that aren't already there,
 // and returns the newly-added items.
-func (s *session[Msg]) addPathSets(h handlers) map[string]pathSet {
+func (s *instance[Msg]) addPathSets(h handlers) map[string]pathSet {
 	var add map[string]pathSet
 	for _, hd := range h {
 		k := hd.ps.key()
@@ -609,15 +609,15 @@ func marshalPathSets(m map[string]pathSet) string {
 }
 
 // touch defers the idle timeout.
-func (s *session[Msg]) touch() {
+func (s *instance[Msg]) touch() {
 	s.mu.Lock()
 	s.active = time.Now()
 	s.mu.Unlock()
 }
 
-// idleWatch cancels the session after d of inactivity. Started as a
-// goroutine at session creation; exits when s.ctx fires.
-func (s *session[Msg]) idleWatch(d time.Duration) {
+// idleWatch cancels the instance after d of inactivity. Started as a
+// goroutine at instance creation; exits when s.ctx fires.
+func (s *instance[Msg]) idleWatch(d time.Duration) {
 	for {
 		s.mu.Lock()
 		wait := d - time.Since(s.active)
@@ -634,7 +634,7 @@ func (s *session[Msg]) idleWatch(d time.Duration) {
 	}
 }
 
-func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
+func (s *instance[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 	var seen uint64
 	if v := req.Header.Get("Last-Event-ID"); v != "" {
 		n, err := strconv.ParseUint(v, 10, 64)
@@ -692,7 +692,7 @@ func (s *session[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 // attachSSE evicts any prior SSE consumer by cancelling its
 // attachment ctx, then returns a fresh attachment for the new caller
 // to watch.
-func (s *session[Msg]) attachSSE() *sseAttachment {
+func (s *instance[Msg]) attachSSE() *sseAttachment {
 	attCtx, attCancel := context.WithCancel(s.ctx)
 	att := &sseAttachment{
 		ctx:    attCtx,
@@ -712,7 +712,7 @@ func (s *session[Msg]) attachSSE() *sseAttachment {
 
 // detachSSE clears att's slot on s only if it's still the current
 // attachment — an eviction may have already replaced it.
-func (s *session[Msg]) detachSSE(att *sseAttachment) {
+func (s *instance[Msg]) detachSSE(att *sseAttachment) {
 	att.cancel()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -725,7 +725,7 @@ func (s *session[Msg]) detachSSE(att *sseAttachment) {
 // decision so the caller can write the resync frame against a single
 // consistent snapshot — without it, head could advance between the
 // decision and the write.
-func (s *session[Msg]) needsResync(seen uint64) (resync bool, view []vdom.Node, title string, head uint64, base, ver string, ps map[string]pathSet) {
+func (s *instance[Msg]) needsResync(seen uint64) (resync bool, view []vdom.Node, title string, head uint64, base, ver string, ps map[string]pathSet) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	head = s.head
@@ -740,7 +740,7 @@ func (s *session[Msg]) needsResync(seen uint64) (resync bool, view []vdom.Node, 
 	return false, nil, "", head, base, "", nil
 }
 
-func (s *session[Msg]) framesSince(seen uint64) []frame {
+func (s *instance[Msg]) framesSince(seen uint64) []frame {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if seen >= s.head {
@@ -761,7 +761,7 @@ func (s *session[Msg]) framesSince(seen uint64) []frame {
 // sets likewise lets that render re-deliver any path set that reached the
 // client only in a frame dropped at the rebase. Frames committed under an
 // older base are dropped by the client.
-func (s *session[Msg]) restoreSnapshot(ver string) {
+func (s *instance[Msg]) restoreSnapshot(ver string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.base = ver
@@ -783,7 +783,7 @@ func (s *session[Msg]) restoreSnapshot(ver string) {
 // An empty dest denies the preview.
 // A non-empty dest must be relative, like a PushURL target; a malformed
 // one is an app bug and panics.
-func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
+func (s *instance[Msg]) prefetch(ctx context.Context, u *url.URL) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	href := u.String()
@@ -823,7 +823,7 @@ func (s *session[Msg]) prefetch(ctx context.Context, u *url.URL) {
 // — the sets known when it was prefetched, which the client had received
 // before it could commit — so any set stranded in a frame dropped at the
 // rebase is re-delivered by the next render.
-func (s *session[Msg]) commitPreview(ctx context.Context, ver string) {
+func (s *instance[Msg]) commitPreview(ctx context.Context, ver string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.preview == nil {
@@ -847,7 +847,7 @@ func (s *session[Msg]) commitPreview(ctx context.Context, ver string) {
 // appendFrame commits f to the patch log with the next sequence
 // number and signals any waiting SSE consumer. Must be called with
 // s.mu held.
-func (s *session[Msg]) appendFrame(f frame) {
+func (s *instance[Msg]) appendFrame(f frame) {
 	s.head++
 	f.seq = s.head
 	s.log[s.head%uint64(len(s.log))] = f

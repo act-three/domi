@@ -28,8 +28,8 @@ var clientJSPath = func() string {
 // On each initial page load, Handler calls f with the request URL.
 // The callback f is responsible for constructing an App instance
 // and returning any initial [Cmd] to be run.
-// The context carries the session ID (see [SessionID])
-// and is cancelled when the session ends.
+// The context carries the instance ID (see [InstanceID])
+// and is cancelled when the instance ends.
 //
 // When the user clicks a link,
 // domi intercepts the navigation
@@ -66,20 +66,20 @@ func Handler[Msg any, A App[Msg]](
 
 type server[Msg any] struct {
 	// Config. Never changed after init. Safe to read concurrently.
-	document       func(clientPath, title string, body Node) Node
-	logger         *slog.Logger
-	sessionTimeout time.Duration
-	replayWindow   int
-	keepalive      time.Duration
-	prefix         string // namespace for internal URLs, e.g. "/-/domi"; "" for the site root
-	clientPath     string // full path the client runtime is served at, prefix included
+	document        func(clientPath, title string, body Node) Node
+	logger          *slog.Logger
+	instanceTimeout time.Duration
+	replayWindow    int
+	keepalive       time.Duration
+	prefix          string // namespace for internal URLs, e.g. "/-/domi"; "" for the site root
+	clientPath      string // full path the client runtime is served at, prefix included
 
 	appf         func(context.Context, *url.URL) (App[Msg], Cmd[Msg])
 	onURLRequest func(*url.URL, bool) Msg
 	onURLChange  func(*url.URL) Msg
 
 	mu sync.Mutex
-	m  map[string]*session[Msg]
+	m  map[string]*instance[Msg]
 }
 
 func newServer[Msg any, A App[Msg]](
@@ -89,16 +89,16 @@ func newServer[Msg any, A App[Msg]](
 	opts []Option,
 ) *server[Msg] {
 	sv := &server[Msg]{
-		document:       defaultDocument,
-		logger:         slog.Default(),
-		sessionTimeout: 48 * time.Hour,
-		replayWindow:   128,
-		keepalive:      25 * time.Second,
+		document:        defaultDocument,
+		logger:          slog.Default(),
+		instanceTimeout: 48 * time.Hour,
+		replayWindow:    128,
+		keepalive:       25 * time.Second,
 
 		appf:         func(ctx context.Context, u *url.URL) (App[Msg], Cmd[Msg]) { return f(ctx, u) },
 		onURLRequest: onURLRequest,
 		onURLChange:  onURLChange,
-		m:            make(map[string]*session[Msg]),
+		m:            make(map[string]*instance[Msg]),
 	}
 	for _, o := range opts {
 		switch o := o.(type) {
@@ -108,8 +108,8 @@ func newServer[Msg any, A App[Msg]](
 			}
 		case internalURLPrefixOption:
 			sv.prefix = o.p
-		case sessionTimeoutOption:
-			sv.sessionTimeout = o.d
+		case instanceTimeoutOption:
+			sv.instanceTimeout = o.d
 		case replayWindowOption:
 			sv.replayWindow = o.n
 		case keepaliveOption:
@@ -125,13 +125,13 @@ func newServer[Msg any, A App[Msg]](
 func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	id := rand.Text()
 	ctx, cancel := context.WithCancel(context.Background())
-	ctx = context.WithValue(ctx, sessionIDKey{}, id)
-	s := &session[Msg]{
+	ctx = context.WithValue(ctx, instanceIDKey{}, id)
+	s := &instance[Msg]{
 		ctx:       ctx,
 		cancel:    cancel,
 		id:        id,
 		sv:        sv,
-		logger:    sv.logger.With("session", id),
+		logger:    sv.logger.With("instance", id),
 		log:       make([]frame, sv.replayWindow),
 		base:      verInitial,
 		ver:       verInitial,
@@ -141,7 +141,7 @@ func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 		recent:    newTreeRing(recentRingSize),
 	}
 	sv.put(id, s)
-	go s.idleWatch(sv.sessionTimeout)
+	go s.idleWatch(sv.instanceTimeout)
 	go func() {
 		<-ctx.Done()
 		sv.delete(id)
@@ -152,7 +152,7 @@ func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 func (sv *server[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 	s, ok := sv.get(req.PathValue("id"))
 	if !ok {
-		http.Error(w, "session not found", http.StatusNotFound)
+		http.Error(w, "instance not found", http.StatusNotFound)
 		return
 	}
 	s.handleEvent(w, req)
@@ -161,19 +161,19 @@ func (sv *server[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 func (sv *server[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 	s, ok := sv.get(req.PathValue("id"))
 	if !ok {
-		http.Error(w, "session not found", http.StatusNotFound)
+		http.Error(w, "instance not found", http.StatusNotFound)
 		return
 	}
 	s.handleSSE(w, req)
 }
 
-func (sv *server[Msg]) put(id string, s *session[Msg]) {
+func (sv *server[Msg]) put(id string, s *instance[Msg]) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	sv.m[id] = s
 }
 
-func (sv *server[Msg]) get(id string) (*session[Msg], bool) {
+func (sv *server[Msg]) get(id string) (*instance[Msg], bool) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	s, ok := sv.m[id]

@@ -38,7 +38,7 @@ func TestRenderToEmptyFragmentWritesNothing(t *testing.T) {
 	}
 }
 
-// Handlers have no session to dispatch to in a static render, so their
+// Handlers have no instance to dispatch to in a static render, so their
 // domi-msg-* attributes appear but do nothing.
 func TestRenderToHandlerAttrIsInert(t *testing.T) {
 	got := renderToString(t, Tag("button", On("click", msgFn("m")))(Text("ok")))

@@ -9,12 +9,12 @@ import (
 )
 
 // App is the state machine provided by a domi application.
-// One instance holds the state for a single browser sesssion.
-// See [Handler] for session lifecycle.
+// One instance holds the state for a single browser page load.
+// See [Handler] for instance lifecycle.
 //
-// The context given to each method contains the session ID (see [SessionID])
+// The context given to each method contains the instance ID (see [InstanceID])
 // as well as values from the HTTP request context, if any.
-// It is cancelled when the session ends.
+// It is cancelled when the instance ends.
 type App[Msg any] interface {
 	// Update is responsible for updating the App state
 	// in response to each Msg.
@@ -72,17 +72,17 @@ type batch[Msg any] iter.Seq[cmd[Msg]]
 func (batch[Msg]) isCmd() {}
 
 // cmd is the internal function type of a [Cmd].
-// It receives the session for access to framework state
+// It receives the instance for access to framework state
 // (e.g. the onURLChange callback for navigation commands)
 // and returns a Msg to dispatch through Update
 // and an optional [nav] describing a navigation side-effect
 // domi should apply alongside the Msg.
-type cmd[Msg any] func(*session[Msg]) (Msg, *nav)
+type cmd[Msg any] func(*instance[Msg]) (Msg, *nav)
 
 // Func returns a Cmd that calls f.
 func Func[Msg any](f func() Msg) Cmd[Msg] {
 	return batch[Msg](slices.Values([]cmd[Msg]{
-		func(*session[Msg]) (Msg, *nav) {
+		func(*instance[Msg]) (Msg, *nav) {
 			return f(), nil
 		},
 	}))

@@ -37,7 +37,7 @@ func TestClientJSNoUndefinedNames(t *testing.T) {
 
 // TestClientJSNoShadowedVars lints client.js for a helper parameter that
 // shadows an outer binding and the self-assignment it causes — like
-// restoreSnapshot(ver) hiding the session's ver. eslint runs in CI only;
+// restoreSnapshot(ver) hiding the instance's ver. eslint runs in CI only;
 // the test skips where it is absent.
 func TestClientJSNoShadowedVars(t *testing.T) {
 	eslint, err := exec.LookPath("eslint")

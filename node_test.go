@@ -179,7 +179,7 @@ func TestWithKeyTwicePanics(t *testing.T) {
 
 // A void element serializes without children, so children provided to
 // one would live only in the server's vdom tree and desync the
-// session once they change. The Element panics at construction, where
+// instance once they change. The Element panics at construction, where
 // the stack points at the offending call site, rather than letting
 // the divergence go latent until a render.
 func TestVoidElementWithChildrenPanics(t *testing.T) {
