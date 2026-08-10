@@ -1,13 +1,13 @@
 // Package domi is a server-rendered framework
 // for building browser applications in Go.
-// An application is a state machine implementing interface [App].
+// Client packages implement interface [App].
 // Method [App.View] renders the app's current state as a tree of [Node] values.
 // Method [App.Update] transitions the state in response to events.
 // Domi hosts the application as an [http.Handler].
 // It keeps the browser's DOM in sync with the return value of View,
-// and dispatches browser events back to Update.
+// and dispatches browser events to Update.
 //
-// Package domi exposes primitives needed for the app
+// Package domi exposes primitives for the app
 // to build any node or attribute.
 // Helpers for common HTML tags, attributes, and events
 // can be found in [ily.dev/domi/html],
@@ -29,13 +29,12 @@
 // Element domi-root has the CSS property "display:contents",
 // so the view's elements participate in layout
 // as if they were direct children of the body element.
-// However, note that CSS direct-child selectors anchored at body
-// (e.g. "body>*") do not match them.
 //
 // # Form Controls
 //
-// Form controls display the value rendered by [App.View]
-// even after they've been edited by the user.
+// Form controls display the value rendered by [App.View].
+// This includes updates to the rendered value
+// after the control has been edited by the user.
 // Some programming environments call this "controlled components".
 // The app is responsible for rendering the current value
 // of each form control at all times.
@@ -48,15 +47,15 @@
 //	option                    => selected attribute
 //
 // While the user is editing a control,
-// domi does not apply changes to that control
-// to avoid disturbing their in-progress work.
+// domi avoids disturbing their in-progress work
+// by suspending its updates to that control's value.
 // When an "input" or "change" event handler is present,
-// the event commits the user's changes,
-// and domi then resumes applying server updates.
+// the event commits the user's changes
+// and domi resumes applying server updates.
 //
-// Form controls inside an opaque element (see [WithKeyOpaque])
+// Opaque form controls (see [WithKeyOpaque])
 // are never updated by domi,
-// just like all opaque DOM content.
+// like all opaque DOM content.
 //
 // # Bundling the Client
 //
