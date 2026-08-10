@@ -30,7 +30,8 @@ type (
 // The builder is called once per session
 // with the initial document title and the body element.
 // It is responsible for returning a complete html element.
-// Domi always writes the HTML5 doctype declaration
+// Domi unconditionally writes the HTML5 doctype declaration
+// to its HTTP response
 // before the html element.
 //
 //	domi.Handler(newApp, domi.Document(func(title string, body domi.Node) domi.Node {
@@ -51,18 +52,15 @@ func Document(f func(title string, body Node) Node) Option { return documentOpti
 // InternalURLPrefix specifies the prefix p
 // used for domi's internal URL paths.
 // This lets the application guarantee that domi's
-// internal URL paths never overlap with paths the app uses.
+// internal URL paths don't overlap with paths the app uses.
 //
-// For instance, a prefix of "a/b"
-// results in internal URL paths like "/a/b/{id}/events"
-// (where "{id}" is a session id).
 // The default prefix is the empty string.
 func InternalURLPrefix(p string) Option { return internalURLPrefixOption{p} }
 
-// Keepalive sets the maximum SSE connection idle time
+// Keepalive sets how long an SSE connection is left idle
 // before the server sends an SSE comment line to the client.
-// Keepalives keep proxies from killing an idle connection.
-// The default interval is 25 seconds.
+// This traffic prevents proxies from killing an idle connection.
+// The default keepalive time is 25 seconds.
 func Keepalive(d time.Duration) Option { return keepaliveOption{d} }
 
 // Logger sets the structured logger used by domi
@@ -71,15 +69,15 @@ func Keepalive(d time.Duration) Option { return keepaliveOption{d} }
 // The default logger is [slog.Default].
 func Logger(l *slog.Logger) Option { return loggerOption{l} }
 
-// ReplayWindow sets how many recent patch frames a session retains
-// for SSE clients to resume from after a transient disconnect.
+// ReplayWindow sets the number of recent patch frames a session retains
+// for SSE clients to resume from after a transient disconnection.
 // Clients reconnecting within this window
-// receive only the patches they missed;
-// clients further behind get a full resync of the current view.
+// receive the patches they missed.
+// Clients further behind get a full resync of the current view.
 // The default window is 128 frames.
 func ReplayWindow(n int) Option { return replayWindowOption{n} }
 
 // SessionTimeout sets how long a session can remain idle
-// before domi releases it.
+// before domi considers it garbage and deletes it.
 // The default timeout is 48 hours.
 func SessionTimeout(d time.Duration) Option { return sessionTimeoutOption{d} }

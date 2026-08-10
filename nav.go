@@ -6,15 +6,11 @@ import (
 	"slices"
 )
 
-// PushURL returns a Cmd that changes the browser URL
+// PushURL changes the browser URL
 // and adds an entry to the navigation history.
+//
 // The url must be an origin-relative URL (path, query, fragment)
 // with no scheme or host.
-//
-// The resulting Cmd dispatches the onURLChange callback
-// registered on [Handler] so the app can update its route state,
-// and bundles the history.pushState instruction
-// into the same SSE frame as the DOM patches from that update.
 func PushURL[Msg any](url string) Cmd[Msg] {
 	u := mustParseRelativeURL("domi.PushURL", url)
 	href := u.String()
@@ -25,15 +21,11 @@ func PushURL[Msg any](url string) Cmd[Msg] {
 	}))
 }
 
-// ReplaceURL returns a Cmd that changes the browser URL
+// ReplaceURL changes the browser URL
 // without adding an entry to the navigation history.
+//
 // The url must be an origin-relative URL (path, query, fragment)
 // with no scheme or host.
-//
-// The resulting Cmd dispatches the onURLChange callback
-// registered on [Handler] so the app can update its route state,
-// and bundles the history.replaceState instruction
-// into the same SSE frame as the DOM patches from that update.
 func ReplaceURL[Msg any](url string) Cmd[Msg] {
 	u := mustParseRelativeURL("domi.ReplaceURL", url)
 	href := u.String()
@@ -44,20 +36,15 @@ func ReplaceURL[Msg any](url string) Cmd[Msg] {
 	}))
 }
 
-// Load returns a Cmd that triggers a full-page browser navigation
-// to url, leaving the current session behind. Unlike [PushURL] and
-// [ReplaceURL], which update the history of the running application,
-// Load performs a real navigation (window.location): the browser
-// discards the current document and fetches a fresh one. The url may
-// therefore be absolute and cross-origin.
+// Load causes a full-page browser navigation to url,
+// leaving the domi session behind.
 //
-// Load is the escape hatch for links the application does not route
-// itself — logging out, leaving for an external site, or following a
-// same-origin link served outside the domi app. The app returns it
-// from Update in response to a [URLRequest] it decides not to handle
-// internally. To opt a link out of interception ahead of time, without
-// a server round trip, give the anchor the domi-bypass attribute
-// instead.
+// The url can be any valid URL,
+// including cross-scheme and cross-origin.
+//
+// To obtain this behavior from a link
+// without a server round trip,
+// use [Bypass] instead.
 func Load[Msg any](url string) Cmd[Msg] {
 	mustParseURL("domi.Load", url)
 	return batch[Msg](slices.Values([]cmd[Msg]{

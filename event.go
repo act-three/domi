@@ -61,8 +61,8 @@ func (dst handlers) merge(src handlers) handlers {
 // then calls Update with the resulting Msg value.
 // Helpers for common events can be found in [ily.dev/domi/event].
 //
-// Each of the given field values
-// is a path of property names into the event object.
+// Each field value
+// is a path of JavaScript property names rooted at the event object.
 // The client reads the value at each path
 // and includes it in the JSON object given to f.
 // For instance,
@@ -73,10 +73,6 @@ func (dst handlers) merge(src handlers) handlers {
 //
 //	{"target": {"value": "hello, world"}}
 //
-// Note that an empty field set results in an empty JSON object.
-//
-// Multiple handlers for the same event on the same element
-// all fire when their event occurs.
 // If f returns an error, the event is discarded.
 //
 // The event name must be lowercase.

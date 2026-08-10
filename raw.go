@@ -22,7 +22,8 @@ import (
 // Do not use UnsafeParseRaw for untrusted input.
 // It is only suitable for HTML text the app fully controls
 // or knows to be trustworthy.
-// Use [Safe] for HTML, or [Text] for plain text.
+// Use [HTML] for most HTML,
+// or [Text] for plain text.
 //
 // Note that domi's rendered output (e.g. from [RenderTo])
 // can contain reserved tag names and attributes

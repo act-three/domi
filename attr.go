@@ -14,16 +14,19 @@ var Bypass Attr = Name("domi-bypass")
 
 // An Attr is an HTML attribute.
 //
-// In rendered output,
-// a single attribute name does not appear more than once
-// on any given element:
+// A given attribute name does not appear more than once
+// in the rendered output for an element.
+// When an attribute is declared more than once:
 //
-//  1. For each combining attribute,
-//     domi combines the values into a single value.
+//   - If it is a combining attribute,
+//     domi combines the declared values into a single value.
 //     See [RegisterCombining].
-//  2. Event handlers are combined internally.
-//  3. For all other attributes,
-//     only the first occurrence appears.
+//   - Otherwise, only the first occurrence appears.
+//
+// For instance:
+//
+//	Tag("div", Name("class", "a"), Name("class", "b")) // <div class="a b">
+//	Tag("div", Name("value", "a"), Name("value", "b")) // <div value="a">
 //
 // A nil Attr is a valid Attr that emits nothing.
 type Attr interface {
@@ -65,15 +68,13 @@ func isReservedAttr(name string) bool {
 //	Name("value", "a", "b") // value="a"
 //	Name("class", "a")      // class="a"
 //	Name("class", "a", "b") // class="a b"
-//	Name("style", "a")      // style="a"
-//	Name("style", "a", "b") // style="a;b"
 //
 // The given name must be lowercase,
 // except for foreign-content (SVG and MathML) mixed-case names
 // like viewBox.
 //
-// This package defines custom attributes for use by applications,
-// all having names that begin with "domi-".
+// This package defines a custom attribute ([Bypass]) for use by applications.
+// Its name has the prefix "domi-".
 // Other attribute names with that prefix are reserved.
 //
 // If name is invalid or reserved, Name panics.
@@ -102,9 +103,6 @@ type group iter.Seq[attr]
 func (group) isAttr() {}
 
 // A Group is a sequence of HTML attributes.
-// It contributes its contents
-// to its parent's child list in order,
-// as if they had been written there directly.
 func Group(a ...Attr) Attr {
 	return group(func(yield func(attr) bool) {
 		for _, a := range a {

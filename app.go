@@ -11,73 +11,56 @@ import (
 // App is the state machine provided by a domi application.
 // One instance holds the state for a single browser sesssion.
 // See [Handler] for session lifecycle.
+//
+// The context given to each method contains the session ID (see [SessionID])
+// as well as values from the HTTP request context, if any.
+// It is cancelled when the session ends.
 type App[Msg any] interface {
 	// Update is responsible for updating the App state
-	// in response to each Msg. It must not produce external
-	// side-effects. It must only mutate its internal state
-	// (which can include persistent databases).
+	// in response to each Msg.
 	//
-	// The context carries the session ID (see SessionID)
-	// as well as values from the HTTP request context, if any.
-	// It is cancelled when the session ends.
-	//
-	// For external side-effects such as network I/O,
-	// Update should return a Cmd.
+	// Update should avoid long-running work and operations
+	// that take unknown amounts of time, such as network I/O.
+	// For these cases, Update should return a Cmd.
 	Update(context.Context, Msg) Cmd[Msg]
 
-	// View returns the document title and body tree
+	// View returns the document title and HTML contents
 	// to be displayed in the browser.
-	//
-	// The context carries the session ID (see SessionID)
-	// as well as values from the HTTP request context, if any.
-	// It is cancelled when the session ends.
 	View(context.Context) (title string, n Node)
 
 	// Subscriptions returns the set of active subscriptions.
-	// Domi diffs this set between update cycles.
-	// New subscriptions are connected to the App,
-	// absent subscriptions are canceled.
-	//
-	// The context carries the session ID (see SessionID)
-	// as well as values from the HTTP request context, if any.
-	// It is cancelled when the session ends.
 	Subscriptions(context.Context) Sub[Msg]
 
 	// Preview returns the result of a potential navigation.
-	// This result comprises the destination URL dest, title, and body n.
-	// Preview must not modify the App's state.
+	//
+	// Preview must not modify the App state.
 	//
 	// The call to Preview represents a hypothetical
-	// onURLRequest call from the browser.
-	// If Preview returns a nonempty dest value,
-	// it must be the same as the app uses for the PushURL command
-	// it issues in response to the URL request.
-	// The value for n must be the same as what View returns
-	// after a navigation to dest.
+	// onURLRequest call from the browser. If Preview returns
+	// a nonempty dest value, it must equal the value the app
+	// would use for the PushURL command it issues in response
+	// to the URL request. The value for n should be the same as
+	// that returned by View after a navigation to dest.
 	//
 	// An empty dest denotes that there is no preview available.
 	// It is always safe to decline to provide a preview.
-	// This method is an optimization only.
-	// Domi calls Preview to pre-render pages
-	// the user is likely to visit (e.g. on link hover),
-	// so navigation appears instant when the link is clicked.
-	//
-	// The context carries the session ID (see SessionID)
-	// as well as values from the HTTP request context, if any.
-	// It is cancelled when the session ends.
+	// This method is an optimization only. Domi calls Preview
+	// to pre-render pages the user is likely to visit (e.g. on
+	// link hover), so navigation appears instant when the link
+	// is clicked.
 	Preview(context.Context, *url.URL) (dest, title string, n Node)
 }
 
-// A Cmd is an operation with side-effects.
-// It may perform network I/O
+// A Cmd is an arbitrary operation.
+// It may do network I/O,
+// perform long-running work,
 // or cause changes in browser state such as the location bar.
-//
-// Domi runs each Cmd in its own goroutine.
-// When the Cmd completes, it produces a Msg describing its result,
+// When a Cmd completes, it produces a Msg describing its result,
 // which domi provides to the app's Update method.
 //
-// A nil Cmd is a valid command that never executes.
-// It means "there is no command to run".
+// Domi runs each Cmd in its own goroutine.
+//
+// A nil Cmd is a valid command with no effect.
 type Cmd[Msg any] interface {
 	isCmd()
 }
@@ -96,7 +79,7 @@ func (batch[Msg]) isCmd() {}
 // domi should apply alongside the Msg.
 type cmd[Msg any] func(*session[Msg]) (Msg, *nav)
 
-// Func returns a Cmd that runs f.
+// Func returns a Cmd that calls f.
 func Func[Msg any](f func() Msg) Cmd[Msg] {
 	return batch[Msg](slices.Values([]cmd[Msg]{
 		func(*session[Msg]) (Msg, *nav) {
@@ -125,10 +108,10 @@ func Batch[Msg any](c ...Cmd[Msg]) Cmd[Msg] {
 	})
 }
 
-// A Sub is a long-lived event source
-// that produces Msg values in response to external stimuli.
+// A Sub produces a sequence of Msg values,
+// which domi provides to the app's Update method.
 //
-// A nil Sub is a valid subscription that produces no messages.
+// A nil Sub is valid and produces no messages.
 type Sub[Msg any] interface {
 	isSub()
 }
@@ -144,19 +127,23 @@ type sub[Msg any] struct {
 	events func(context.Context) iter.Seq[Msg]
 }
 
-// Subscription creates a [Sub] that runs f and dispatches
-// each yielded Msg back into Update.
-// Domi uses key to identify this subscription.
-// If a key persists between update cycles, the source stays alive.
-// If it disappears, the source is cancelled.
+// Subscription returns a Sub that calls f to produce Msg values.
 //
-// The Seq returned from f must exit when its context becomes done,
+// Domi uses key to identify this subscription.
+// If a key remains present in subsequent calls to [App.Subscriptions],
+// the existing sequence is retained
+// and f is not called again.
+// If the key is absent,
+// the sequence is discarded
+// and its context is cancelled.
+//
+// The sequence returned from f must exit when its context becomes done,
 // in addition to exiting when yield returns false.
 func Subscription[Msg any, Key comparable](key Key, f func(context.Context) iter.Seq[Msg]) Sub[Msg] {
 	return subs[Msg]{{key: key, events: f}}
 }
 
-// Subs composes multiple [Sub] values into one.
+// Subs composes multiple Sub values into one.
 func Subs[Msg any](s ...Sub[Msg]) Sub[Msg] {
 	var all subs[Msg]
 	for _, s := range s {

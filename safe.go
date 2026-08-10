@@ -3,29 +3,33 @@ package domi
 import (
 	"strings"
 
-	"golang.org/x/net/html"
+	htmlpkg "golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
 )
 
-// Safe parses the given HTML string and returns a sanitized Node
-// tree. It uses a hard-coded allowlist of tag names and tag-attribute
-// pairs. Tags not in the allowlist are unwrapped (children preserved).
-// Dangerous tags like script and style are removed entirely,
+// HTML parses the given HTML text.
+//
+// The return value is sanitized.
+// HTML uses a hard-coded allowlist of tag names
+// and tag-attribute pairs.
+// Tags not in the allowlist are unwrapped,
+// with their children preserved.
+// Dangerous tags like "script" and "style" are removed entirely,
 // including their children.
-func Safe(s string) Node {
-	if s == "" {
+func HTML(html string) Node {
+	if html == "" {
 		return Fragment()
 	}
-	nodes, err := html.ParseFragment(
-		strings.NewReader(s),
-		&html.Node{
-			Type:     html.ElementNode,
+	nodes, err := htmlpkg.ParseFragment(
+		strings.NewReader(html),
+		&htmlpkg.Node{
+			Type:     htmlpkg.ElementNode,
 			DataAtom: atom.Body,
 			Data:     "body",
 		},
 	)
 	if err != nil {
-		return Text(s)
+		return Text(html)
 	}
 	children := make([]Node, len(nodes))
 	for i, n := range nodes {
@@ -34,18 +38,18 @@ func Safe(s string) Node {
 	return Fragment(children...)
 }
 
-func safeNode(n *html.Node) Node {
+func safeNode(n *htmlpkg.Node) Node {
 	switch n.Type {
-	case html.TextNode:
+	case htmlpkg.TextNode:
 		return Text(n.Data)
-	case html.ElementNode:
+	case htmlpkg.ElementNode:
 		return safeElement(n)
 	default:
 		return nil
 	}
 }
 
-func safeElement(n *html.Node) Node {
+func safeElement(n *htmlpkg.Node) Node {
 	tag := n.Data
 	if removeTags[tag] {
 		return nil
@@ -71,7 +75,7 @@ func safeElement(n *html.Node) Node {
 	return Tag(tag, attrs...)(children...)
 }
 
-func safeChildren(n *html.Node) []Node {
+func safeChildren(n *htmlpkg.Node) []Node {
 	var children []Node
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		children = append(children, safeNode(c))
@@ -97,7 +101,7 @@ func isSafeURL(u string) bool {
 		!strings.HasPrefix(u, "vbscript:")
 }
 
-// allowedTags is the set of tag names permitted by [Safe].
+// allowedTags is the set of tag names permitted by [HTML].
 var allowedTags = map[string]bool{
 	"a": true, "abbr": true, "b": true,
 	"blockquote": true, "br": true,

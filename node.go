@@ -31,17 +31,17 @@ type text vdom.Text
 func (text) isNode()                              {}
 func (t text) lowered(addr) (vdom.Node, handlers) { return vdom.Text(t), nil }
 
-// Text constructs a text node.
+// Text returns a text node containing s.
 //
-// The contents of s will be preserved exactly
+// The contents of s are preserved exactly
 // in the browser's DOM text node,
 // so Text cannot be used to construct HTML elements from a string.
-// Use [Safe] for HTML markup.
+// Use [HTML] for HTML markup.
 func Text(s string) Node {
 	return text(s)
 }
 
-// Textf constructs a text node with [fmt.Sprintf].
+// Textf returns a text node formatted with [fmt.Sprintf].
 func Textf(format string, a ...any) Node {
 	return Text(fmt.Sprintf(format, a...))
 }
@@ -151,8 +151,9 @@ func hasNode(nodes []Node) bool {
 
 // WithKey returns a copy of element n assigned to key.
 // Keyed nodes are diffed by identity rather than position:
-// inserting, removing, or reordering items in the middle of a list
-// moves the surviving children intact to their new positions
+// inserting, removing, or reordering elements
+// in the middle of a keyed sequence
+// moves the surviving elements intact to their new positions
 // instead of replacing their contents.
 //
 //	var rows []Node
@@ -162,7 +163,7 @@ func hasNode(nodes []Node) bool {
 //	list := Tag("ul")(header, Fragment(rows...), footer)
 //
 // The value of key must be nonempty,
-// stable (any given item should be assigned the same key every time),
+// stable (any given element should be assigned the same key every time),
 // and unique within the enclosing element.
 //
 // If n is not an element or already has a key, WithKey panics.
@@ -185,15 +186,28 @@ func WithKey(key string, n Node) Node {
 }
 
 // WithKeyOpaque returns a copy of element n assigned to key,
-// just as [WithKey] does,
-// and additionally marks n as opaque, ignored by the virtual DOM diff.
-// An opaque node is inserted,
-// and then never modified until its eventual removal (if any).
-// Any changes to its contents during its existence are ignored.
+// as [WithKey] does,
+// and additionally marks n as opaque.
+//
+// An opaque element is inserted
+// and never modified until it is removed.
+// Any changes the app makes
+// to the element's contents
+// during its existence
+// are ignored.
 // This allows client-side browser code to take ownership of the node
 // without worrying about patches modifying it underfoot.
 //
-// The key requirements and panics are as for [WithKey].
+// When an element is opaque,
+// its contents are opaque.
+// This includes attributes, text nodes, and child elements, recursively,
+// covering the entire subtree.
+//
+// The value of key must be nonempty,
+// stable (any given element should be assigned the same key every time),
+// and unique within the enclosing element.
+//
+// If n is not an element or already has a key, WithKeyOpaque panics.
 func WithKeyOpaque(key string, n Node) Node {
 	e := WithKey(key, n).(element)
 	e.opaque = true
@@ -208,9 +222,6 @@ type fragment iter.Seq[node]
 func (fragment) isNode() {}
 
 // A Fragment is a sequence of HTML nodes.
-// It contributes its contents
-// to its parent's child list in order,
-// as if they had been written there directly.
 func Fragment(n ...Node) Node {
 	return fragment(func(yield func(node) bool) {
 		for _, c := range n {
