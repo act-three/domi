@@ -214,7 +214,7 @@ func genAttrs(seed uint64) iter.Seq[Attr] {
 // TestDiffApplyProperty runs N iterations of: pick a random seed,
 // generate two child lists from it, run the production [Diff] through
 // the production JS applier (jsdom under bun, patching a <domi-root>
-// wrapper like the session does), and compare the post-apply HTML to
+// wrapper like the instance does), and compare the post-apply HTML to
 // the rendered new list via golang.org/x/net/html — so attr-order,
 // void-slash, and adjacent-text-merge differences in HTML
 // serialization wash out.

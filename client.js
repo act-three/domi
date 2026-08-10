@@ -1,5 +1,5 @@
 // domi client — ES module. Importing it has no side effects; a caller
-// boots a session by invoking [run] explicitly, as the framework's HTML
+// boots an instance by invoking [run] explicitly, as the framework's HTML
 // renderer does from an inline module script.
 
 // fragmentFromHTML parses an HTML string into a DocumentFragment using a
@@ -439,7 +439,7 @@ function applyPatch(root, p) {
     }
     case 'Reset': {
       // The root (and its delegated listeners) survives the rebuild, so
-      // the session keeps working after a server-driven full resync.
+      // the instance keeps working after a server-driven full resync.
       while (root.firstChild) root.removeChild(root.firstChild);
       delete root.__domiChildren;
       const frag = fragmentFromHTML(p.HTML);
@@ -475,7 +475,7 @@ function getFields(e, el, paths) {
   return out;
 }
 
-// ---- session initialization ----
+// ---- instance initialization ----
 
 const EVENTS = ['click', 'submit', 'input', 'change', 'keydown', 'keyup'];
 
@@ -489,7 +489,7 @@ function postEnvelope(eventURL, h, e, ver, mutations) {
   }).catch((err) => console.error('domi: event POST failed', err));
 }
 
-// run wires up the domi session on the <domi-root> mount element just
+// run wires up the domi instance on the <domi-root> mount element just
 // inside document.body and starts the SSE patch stream. Reads the URL
 // prefix from domi-root[prefix=…] (which the server emits on initial
 // render) and removes the attribute on its way out.
@@ -836,7 +836,7 @@ export function run() {
       }
     }
   });
-  // A non-2xx response — the server's signal that the session is
+  // A non-2xx response — the server's signal that the instance is
   // permanently gone — moves the EventSource to CLOSED and fires
   // onerror. Transient network drops leave readyState at CONNECTING
   // and EventSource auto-reconnects, so checking for CLOSED is what

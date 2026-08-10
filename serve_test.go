@@ -113,16 +113,16 @@ func (a *previewApp) Preview(_ context.Context, u *url.URL) (string, string, Nod
 	return p.route, p.route, p.body()
 }
 
-// newTestSession wires up a session for direct method tests, bypassing
-// the http surface. The session points at a default-configured server
+// newTestInstance wires up an instance for direct method tests, bypassing
+// the http surface. The instance points at a default-configured server
 // so apply, idleWatch, and friends can read config fields without going
 // through Handler.
-func newTestSession[Msg any](app App[Msg]) *session[Msg] {
+func newTestInstance[Msg any](app App[Msg]) *instance[Msg] {
 	const replayWindow = 128
 	ctx, cancel := context.WithCancel(context.Background())
 	_, view := app.View(ctx)
 	nodes, h := lower(0, view)
-	s := &session[Msg]{
+	s := &instance[Msg]{
 		ctx:    ctx,
 		cancel: cancel,
 		app:    app,
@@ -149,8 +149,8 @@ func newTestSession[Msg any](app App[Msg]) *session[Msg] {
 
 // A Fragment returned from View lowers to multiple top-level children,
 // and apply diffs them positionally against the previous frame.
-func TestSessionApplyFragmentAtRoot(t *testing.T) {
-	s := newTestSession(&fragmentApp{})
+func TestInstanceApplyFragmentAtRoot(t *testing.T) {
+	s := newTestInstance(&fragmentApp{})
 	defer s.cancel()
 	s.apply(s.ctx, []int{1}, nil)
 	if s.head != 1 {
@@ -170,7 +170,7 @@ func TestSessionApplyFragmentAtRoot(t *testing.T) {
 }
 
 // The Document option swaps the default HTML shell for the App's
-// builder, lets it own <head>, and still attaches the session marker
+// builder, lets it own <head>, and still attaches the instance marker
 // to domi-root.
 func TestHandlerDocumentOption(t *testing.T) {
 	custom := func(title string, body Node) Node {
@@ -202,7 +202,7 @@ func TestHandlerDocumentOption(t *testing.T) {
 		t.Fatalf("custom head content missing; body: %s", body)
 	}
 	if !strings.Contains(body, ` prefix="`) {
-		t.Fatalf("session marker not attached to domi-root; got: %s", body)
+		t.Fatalf("instance marker not attached to domi-root; got: %s", body)
 	}
 	// The default bootstrap script must not appear when Document is set —
 	// the App is responsible for loading the client itself.
@@ -212,7 +212,7 @@ func TestHandlerDocumentOption(t *testing.T) {
 }
 
 // InternalURLPrefix moves every framework-served URL beneath the chosen
-// path: the rendered session prefix, the client bootstrap import, the
+// path: the rendered instance prefix, the client bootstrap import, the
 // path the client runtime is served at, and the event routes the client
 // posts back to. The site root stays the app's. A trailing slash in the
 // option is tolerated; path.Join folds the variants together.
@@ -231,15 +231,15 @@ func TestHandlerInternalURLPrefix(t *testing.T) {
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
 	body := w.Body.String()
 
-	// The session's internal-URL base is the prefix joined with the id,
+	// The instance's internal-URL base is the prefix joined with the id,
 	// joined cleanly (no doubled slash from the option's trailing one).
 	m := regexp.MustCompile(` prefix="([^"]*)"`).FindStringSubmatch(body)
 	if m == nil {
-		t.Fatalf("session marker missing; body: %s", body)
+		t.Fatalf("instance marker missing; body: %s", body)
 	}
 	base := m[1]
 	if !strings.HasPrefix(base, "/-/domi/") || base == "/-/domi/" || strings.Contains(base[1:], "//") {
-		t.Fatalf("session prefix not cleanly under /-/domi/: %q", base)
+		t.Fatalf("instance prefix not cleanly under /-/domi/: %q", base)
 	}
 
 	// The bootstrap imports the client runtime from under the prefix, and
@@ -257,9 +257,9 @@ func TestHandlerInternalURLPrefix(t *testing.T) {
 		t.Fatalf("client runtime content-type = %q", ct)
 	}
 
-	// The event sink answers under the prefix for the live session: a
+	// The event sink answers under the prefix for the live instance: a
 	// well-formed envelope is accepted, not met with the wrapper's 404 for
-	// an unknown session (which is what an unprefixed POST would hit).
+	// an unknown instance (which is what an unprefixed POST would hit).
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("POST", base+"/event", strings.NewReader("{}")))
 	if w.Code == http.StatusNotFound {
@@ -271,11 +271,11 @@ func TestHandlerInternalURLPrefix(t *testing.T) {
 // that handler's Msg, and applies it — landing as a frame.
 func TestHandleEventDispatch(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		s := newTestSession(&counterApp{})
+		s := newTestInstance(&counterApp{})
 		defer s.cancel()
 
 		// Register an unmarshal function the way lowering would, under the
-		// session's current tree version, then dispatch its key. The client
+		// instance's current tree version, then dispatch its key. The client
 		// sends the bare handler key, stripping the pathSet key, plus the
 		// version id of the tree its DOM displays.
 		s.tables[s.ver] = table[int]{"k1": msgInt(1)}
@@ -300,7 +300,7 @@ func TestHandleEventDispatch(t *testing.T) {
 // A frame that changes the tree carries a fresh version id naming the
 // new tree, so the client learns the name along with the change.
 func TestApplyMintsVerOnTreeChange(t *testing.T) {
-	s := newTestSession(&counterApp{})
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 
 	old := s.ver
@@ -323,7 +323,7 @@ func TestApplyMintsVerOnTreeChange(t *testing.T) {
 // An apply that leaves the tree unchanged mints nothing: the client's
 // echoed name stays valid for the tree it still displays.
 func TestApplyKeepsVerWithoutPatches(t *testing.T) {
-	s := newTestSession(&staticApp{})
+	s := newTestInstance(&staticApp{})
 	defer s.cancel()
 
 	old := s.ver
@@ -336,27 +336,27 @@ func TestApplyKeepsVerWithoutPatches(t *testing.T) {
 	}
 }
 
-// idleWatch cancels the session once activity falls behind by d.
-func TestSessionIdleWatchFires(t *testing.T) {
+// idleWatch cancels the instance once activity falls behind by d.
+func TestInstanceIdleWatchFires(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const d = 50 * time.Millisecond
-		s := newTestSession(&counterApp{})
+		s := newTestInstance(&counterApp{})
 		defer s.cancel()
 		go s.idleWatch(d)
 		select {
 		case <-s.ctx.Done():
 		case <-time.After(d * 10):
-			t.Fatal("idleWatch did not cancel an idle session")
+			t.Fatal("idleWatch did not cancel an idle instance")
 		}
 	})
 }
 
-// touch defers the idle deadline. Repeated touches keep the session
+// touch defers the idle deadline. Repeated touches keep the instance
 // alive past d; once they stop, idleWatch fires.
-func TestSessionIdleWatchTouchDefers(t *testing.T) {
+func TestInstanceIdleWatchTouchDefers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		const d = 50 * time.Millisecond
-		s := newTestSession(&counterApp{})
+		s := newTestInstance(&counterApp{})
 		defer s.cancel()
 		go s.idleWatch(d)
 
@@ -366,7 +366,7 @@ func TestSessionIdleWatchTouchDefers(t *testing.T) {
 			s.touch()
 		}
 		if s.ctx.Err() != nil {
-			t.Fatalf("session cancelled despite recent touches: %v", s.ctx.Err())
+			t.Fatalf("instance cancelled despite recent touches: %v", s.ctx.Err())
 		}
 
 		// Stop touching; cancellation should follow within roughly d.
@@ -378,25 +378,25 @@ func TestSessionIdleWatchTouchDefers(t *testing.T) {
 	})
 }
 
-// A session whose client never attaches SSE expires after
-// SessionTimeout: the watchdog cancels its ctx and the server removes it
-// from the live-session map.
-func TestServerSessionTimeoutNeverAttached(t *testing.T) {
+// An instance whose client never attaches SSE expires after
+// InstanceTimeout: the watchdog cancels its ctx and the server removes it
+// from the live-instance map.
+func TestServerInstanceTimeoutNeverAttached(t *testing.T) {
 	const d = 50 * time.Millisecond
 	sv := newServer(
 		func(context.Context, *url.URL) (*counterApp, Cmd[int]) { return &counterApp{}, Batch[int]() },
 		func(*url.URL, bool) int { return 0 },
 		func(*url.URL) int { return 0 },
-		[]Option{SessionTimeout(d)},
+		[]Option{InstanceTimeout(d)},
 	)
 	sv.handleRoot(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
 
 	sv.mu.Lock()
 	if len(sv.m) != 1 {
 		sv.mu.Unlock()
-		t.Fatalf("expected 1 session, got %d", len(sv.m))
+		t.Fatalf("expected 1 instance, got %d", len(sv.m))
 	}
-	var s *session[int]
+	var s *instance[int]
 	for _, ss := range sv.m {
 		s = ss
 	}
@@ -405,7 +405,7 @@ func TestServerSessionTimeoutNeverAttached(t *testing.T) {
 	select {
 	case <-s.ctx.Done():
 	case <-time.After(d * 10):
-		t.Fatal("session ctx not cancelled after SessionTimeout")
+		t.Fatal("instance ctx not cancelled after InstanceTimeout")
 	}
 
 	// The watcher goroutine deletes from the map once ctx is done.
@@ -419,14 +419,14 @@ func TestServerSessionTimeoutNeverAttached(t *testing.T) {
 		}
 		time.Sleep(d / 10)
 	}
-	t.Fatal("session not removed from server map")
+	t.Fatal("instance not removed from server map")
 }
 
-// runSSE invokes (*session).handleSSE in a goroutine, lets it run for d
+// runSSE invokes (*instance).handleSSE in a goroutine, lets it run for d
 // (long enough to do its initial replay/resync/keepalive work), then
 // cancels the request context and waits for the handler to return.
 // Returns the bytes the handler wrote.
-func runSSE[Msg any](t *testing.T, s *session[Msg], lastEventID string, d time.Duration) string {
+func runSSE[Msg any](t *testing.T, s *instance[Msg], lastEventID string, d time.Duration) string {
 	t.Helper()
 	req := httptest.NewRequest("GET", "/x/events", nil)
 	if lastEventID != "" {
@@ -453,9 +453,9 @@ func runSSE[Msg any](t *testing.T, s *session[Msg], lastEventID string, d time.D
 
 // The patch log is a fixed-size ring sized to ReplayWindow. Oldest
 // frames are overwritten as new ones land; head keeps climbing.
-func TestSessionApplyRingBuffer(t *testing.T) {
+func TestInstanceApplyRingBuffer(t *testing.T) {
 	const window = 2
-	s := newTestSession(&counterApp{})
+	s := newTestInstance(&counterApp{})
 	s.sv.replayWindow = window
 	s.log = make([]frame, window)
 	defer s.cancel()
@@ -472,19 +472,19 @@ func TestSessionApplyRingBuffer(t *testing.T) {
 
 // A fresh client (no Last-Event-ID, empty log) gets no patches —
 // handleSSE establishes the stream and waits for activity.
-func TestSessionSSEFreshClient(t *testing.T) {
-	s := newTestSession(&counterApp{})
+func TestInstanceSSEFreshClient(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	out := runSSE(t, s, "", 30*time.Millisecond)
 	if strings.Contains(out, "event: effect") {
-		t.Fatalf("expected no effect frames for fresh empty session, got: %s", out)
+		t.Fatalf("expected no effect frames for fresh empty instance, got: %s", out)
 	}
 }
 
 // A client reconnecting within the replay window receives only the
 // frames it missed, each tagged with its monotonic id.
-func TestSessionSSEReplayWithinWindow(t *testing.T) {
-	s := newTestSession(&counterApp{})
+func TestInstanceSSEReplayWithinWindow(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	s.apply(s.ctx, []int{1}, nil)
 	s.apply(s.ctx, []int{2}, nil)
@@ -501,9 +501,9 @@ func TestSessionSSEReplayWithinWindow(t *testing.T) {
 // A client far enough behind that the oldest needed frame has aged out
 // of the log gets a single Reset frame carrying the current view's
 // HTML; subsequent reconnects from that Last-Event-ID see no replay.
-func TestSessionSSEResyncOutOfWindow(t *testing.T) {
+func TestInstanceSSEResyncOutOfWindow(t *testing.T) {
 	const window = 2
-	s := newTestSession(&counterApp{})
+	s := newTestInstance(&counterApp{})
 	s.sv.replayWindow = window
 	s.log = make([]frame, window)
 	defer s.cancel()
@@ -526,10 +526,10 @@ func TestSessionSSEResyncOutOfWindow(t *testing.T) {
 }
 
 // A client whose Last-Event-ID is higher than anything the server has
-// issued (stale session, different server instance) gets resynced to
+// issued (stale instance, different server process) gets resynced to
 // current state.
-func TestSessionSSEResyncAheadOfHead(t *testing.T) {
-	s := newTestSession(&counterApp{})
+func TestInstanceSSEResyncAheadOfHead(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	s.apply(s.ctx, []int{1}, nil)
 	out := runSSE(t, s, "42", 30*time.Millisecond)
@@ -541,8 +541,8 @@ func TestSessionSSEResyncAheadOfHead(t *testing.T) {
 // A malformed Last-Event-ID is a client bug, not a transient glitch —
 // reject the request with 400 so EventSource gives up rather than
 // retrying forever.
-func TestSessionSSEBadLastEventID(t *testing.T) {
-	s := newTestSession(&counterApp{})
+func TestInstanceSSEBadLastEventID(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	req := httptest.NewRequest("GET", "/x/events", nil)
 	req.Header.Set("Last-Event-ID", "not-a-number")
@@ -553,24 +553,24 @@ func TestSessionSSEBadLastEventID(t *testing.T) {
 	}
 }
 
-// SSE disconnect no longer ends the session — the session keeps living
+// SSE disconnect no longer ends the instance — the instance keeps living
 // (so a reconnect can resume from the patch log). Only the idle timeout
 // or an explicit cancel ends it now.
-func TestSessionSSEDisconnectDoesNotCancel(t *testing.T) {
-	s := newTestSession(&counterApp{})
+func TestInstanceSSEDisconnectDoesNotCancel(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	_ = runSSE(t, s, "", 20*time.Millisecond)
 	if s.ctx.Err() != nil {
-		t.Fatalf("session ctx cancelled by SSE disconnect: %v", s.ctx.Err())
+		t.Fatalf("instance ctx cancelled by SSE disconnect: %v", s.ctx.Err())
 	}
 }
 
 // With nothing else to send, the SSE handler emits keepalive comment
 // lines on the configured cadence. Useful for proxies that drop idle
-// streams, and the activity touch keeps the session alive even with no
+// streams, and the activity touch keeps the instance alive even with no
 // patches flowing.
-func TestSessionSSEKeepalive(t *testing.T) {
-	s := newTestSession(&counterApp{})
+func TestInstanceSSEKeepalive(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	s.sv.keepalive = 10 * time.Millisecond
 	defer s.cancel()
 	out := runSSE(t, s, "", 50*time.Millisecond)
@@ -580,9 +580,9 @@ func TestSessionSSEKeepalive(t *testing.T) {
 }
 
 // A second SSE attach evicts the first: the first handler's attachment
-// ctx fires and its loop returns. The session itself is not cancelled.
-func TestSessionSSEEviction(t *testing.T) {
-	s := newTestSession(&counterApp{})
+// ctx fires and its loop returns. The instance itself is not cancelled.
+func TestInstanceSSEEviction(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 
 	first := func() (*httptest.ResponseRecorder, chan struct{}, context.CancelFunc) {
@@ -612,16 +612,16 @@ func TestSessionSSEEviction(t *testing.T) {
 		t.Fatal("first SSE attachment was not evicted by the second")
 	}
 	if s.ctx.Err() != nil {
-		t.Fatalf("session ctx cancelled by eviction: %v", s.ctx.Err())
+		t.Fatalf("instance ctx cancelled by eviction: %v", s.ctx.Err())
 	}
 
 	cancel2()
 	<-done2
 }
 
-// (*session).spawn runs each Cmd body in its own goroutine.
-func TestSessionSpawnRunsCmds(t *testing.T) {
-	s := newTestSession(&counterApp{})
+// (*instance).spawn runs each Cmd body in its own goroutine.
+func TestInstanceSpawnRunsCmds(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	done := make(chan struct{})
 	cmd := Func(func() int {
@@ -639,8 +639,8 @@ func TestSessionSpawnRunsCmds(t *testing.T) {
 // A nil Cmd is the empty Batch's degenerate twin: spawning it runs
 // nothing, so Update can return a cmd-or-nil with no guard at the use
 // site.
-func TestSessionSpawnNilCmdRunsNothing(t *testing.T) {
-	s := newTestSession(&counterApp{})
+func TestInstanceSpawnNilCmdRunsNothing(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	s.spawn(nil) // must not panic
 }
@@ -648,7 +648,7 @@ func TestSessionSpawnNilCmdRunsNothing(t *testing.T) {
 // Batch treats a nil Cmd like an empty Batch, so it drops out of the
 // lowered sequence and the surviving commands still run.
 func TestBatchNilCmdContributesNothing(t *testing.T) {
-	s := newTestSession(&counterApp{})
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	done := make(chan struct{})
 	cmd := Batch[int](nil, Func(func() int {
@@ -681,7 +681,7 @@ type tickKey struct{ id string }
 
 // A subscription's event stream runs in its own goroutine and
 // dispatches Msgs through apply.
-func TestSessionSubStartsAndDispatches(t *testing.T) {
+func TestInstanceSubStartsAndDispatches(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		ready := make(chan struct{})
 		app := &subApp{sub: Subscription(tickKey{"a"}, func(ctx context.Context) iter.Seq[int] {
@@ -690,7 +690,7 @@ func TestSessionSubStartsAndDispatches(t *testing.T) {
 				yield(42)
 			}
 		})}
-		s := newTestSession[int](app)
+		s := newTestInstance[int](app)
 		defer s.cancel()
 		// Initial diffSubs to wire up the subscription.
 		s.mu.Lock()
@@ -708,13 +708,13 @@ func TestSessionSubStartsAndDispatches(t *testing.T) {
 }
 
 // A subscription removed from the set has its context cancelled.
-func TestSessionSubCancelledOnRemoval(t *testing.T) {
+func TestInstanceSubCancelledOnRemoval(t *testing.T) {
 	app := &subApp{sub: Subscription(tickKey{"a"}, func(ctx context.Context) iter.Seq[int] {
 		return func(yield func(int) bool) {
 			<-ctx.Done()
 		}
 	})}
-	s := newTestSession[int](app)
+	s := newTestInstance[int](app)
 	defer s.cancel()
 
 	s.mu.Lock()
@@ -737,7 +737,7 @@ func TestSessionSubCancelledOnRemoval(t *testing.T) {
 }
 
 // An unchanged key is not restarted across diffs.
-func TestSessionSubPersistsAcrossDiffs(t *testing.T) {
+func TestInstanceSubPersistsAcrossDiffs(t *testing.T) {
 	starts := make(chan struct{}, 10)
 	app := &subApp{sub: Subscription(tickKey{"a"}, func(ctx context.Context) iter.Seq[int] {
 		return func(yield func(int) bool) {
@@ -745,7 +745,7 @@ func TestSessionSubPersistsAcrossDiffs(t *testing.T) {
 			<-ctx.Done()
 		}
 	})}
-	s := newTestSession[int](app)
+	s := newTestInstance[int](app)
 	defer s.cancel()
 
 	s.mu.Lock()
@@ -794,7 +794,7 @@ func TestSubsNilContributesNothing(t *testing.T) {
 // sub-or-nil with no guard at the use site.
 func TestUpdateSubsNilCancelsAll(t *testing.T) {
 	app := &subApp{}
-	s := newTestSession(app)
+	s := newTestInstance(app)
 	defer s.cancel()
 	started := make(chan struct{})
 	app.sub = Subscription(tickKey{"a"}, func(ctx context.Context) iter.Seq[int] {
@@ -814,8 +814,8 @@ func TestUpdateSubsNilCancelsAll(t *testing.T) {
 
 // apply with a push nav stores the outgoing s.view (not the new view)
 // under the outgoing tree's ver.
-func TestSessionSnapshotStoredOnApply(t *testing.T) {
-	s := newTestSession(&counterApp{})
+func TestInstanceSnapshotStoredOnApply(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	origView := s.view
 	origVer := s.ver
@@ -836,7 +836,7 @@ func TestSessionSnapshotStoredOnApply(t *testing.T) {
 // the dispatched Msg as the zero value. The url may be absolute and
 // cross-origin, unlike PushURL/ReplaceURL.
 func TestLoadCmdProducesLoadNav(t *testing.T) {
-	s := newTestSession(&counterApp{})
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	const target = "https://example.com/logout"
 	var got *nav
@@ -856,9 +856,9 @@ func TestLoadCmdProducesLoadNav(t *testing.T) {
 
 // apply with a load nav emits a lone LoadURL effect and, because the
 // document is replaced wholesale, runs neither Update nor onURLChange.
-func TestSessionApplyLoadNav(t *testing.T) {
+func TestInstanceApplyLoadNav(t *testing.T) {
 	app := &counterApp{}
-	s := newTestSession[int](app)
+	s := newTestInstance[int](app)
 	defer s.cancel()
 	var changed int
 	s.sv.onURLChange = func(*url.URL) int { changed++; return 0 }
@@ -887,8 +887,8 @@ func TestSessionApplyLoadNav(t *testing.T) {
 // apply orders the effects so the client snapshots the outgoing page
 // before it mutates: PushURL leads, the DOM Patch follows, and SetTitle
 // trails (so the outgoing snapshot still captures the old title).
-func TestSessionApplyEffectOrder(t *testing.T) {
-	s := newTestSession[int](&titledApp{})
+func TestInstanceApplyEffectOrder(t *testing.T) {
+	s := newTestInstance[int](&titledApp{})
 	defer s.cancel()
 	s.apply(s.ctx, []int{1}, &nav{push: "/about"})
 
@@ -912,8 +912,8 @@ func TestSessionApplyEffectOrder(t *testing.T) {
 // the ver naming the preview tree. The outgoing (current) page becomes a
 // candidate in the preview log under its own ver — the same name the
 // client computes locally.
-func TestSessionPrefetchEmitsSetPreview(t *testing.T) {
-	s := newTestSession[int](&previewApp{route: "/"})
+func TestInstancePrefetchEmitsSetPreview(t *testing.T) {
+	s := newTestInstance[int](&previewApp{route: "/"})
 	defer s.cancel()
 	u, _ := url.Parse("/next")
 	s.prefetch(s.ctx, u)
@@ -953,8 +953,8 @@ func TestSessionPrefetchEmitsSetPreview(t *testing.T) {
 
 // A denied prefetch emits a lone DeletePreview effect and holds no
 // preview, so the click falls back to a normal request.
-func TestSessionPrefetchDenyEmitsDeletePreview(t *testing.T) {
-	s := newTestSession[int](&previewApp{route: "/"})
+func TestInstancePrefetchDenyEmitsDeletePreview(t *testing.T) {
+	s := newTestInstance[int](&previewApp{route: "/"})
 	defer s.cancel()
 	u, _ := url.Parse("/deny")
 	s.prefetch(s.ctx, u)
@@ -978,8 +978,8 @@ func TestSessionPrefetchDenyEmitsDeletePreview(t *testing.T) {
 // client's match key but carries the destination in Dest, so committing
 // the preview navigates to — and later routes on — the page actually
 // rendered rather than the URL the user hovered.
-func TestSessionPrefetchRedirectCarriesDest(t *testing.T) {
-	s := newTestSession[int](&previewApp{route: "/"})
+func TestInstancePrefetchRedirectCarriesDest(t *testing.T) {
+	s := newTestInstance[int](&previewApp{route: "/"})
 	defer s.cancel()
 	u, _ := url.Parse("/redirect")
 	s.prefetch(s.ctx, u)
@@ -1004,8 +1004,8 @@ func TestSessionPrefetchRedirectCarriesDest(t *testing.T) {
 // A non-relative dest violates the Preview contract — the same rule
 // PushURL enforces — so prefetch panics rather than letting a bad URL
 // slip through where it would be easy to miss.
-func TestSessionPrefetchBadDestPanics(t *testing.T) {
-	s := newTestSession[int](&previewApp{route: "/"})
+func TestInstancePrefetchBadDestPanics(t *testing.T) {
+	s := newTestInstance[int](&previewApp{route: "/"})
 	defer s.cancel()
 	u, _ := url.Parse("/bad")
 	defer func() {
@@ -1020,8 +1020,8 @@ func TestSessionPrefetchBadDestPanics(t *testing.T) {
 // SetPreview that rebases the preview onto the new view (so the client
 // always holds a clean patchset from its current DOM to the preview), and
 // stores that view as a fresh candidate outgoing snapshot.
-func TestSessionPreviewRebasedOnApply(t *testing.T) {
-	s := newTestSession[int](&previewApp{route: "/"})
+func TestInstancePreviewRebasedOnApply(t *testing.T) {
+	s := newTestInstance[int](&previewApp{route: "/"})
 	defer s.cancel()
 	u, _ := url.Parse("/next")
 	s.prefetch(s.ctx, u)
@@ -1065,8 +1065,8 @@ func TestSessionPreviewRebasedOnApply(t *testing.T) {
 // new patch lineage at the outgoing candidate's ver, and clears the
 // outstanding preview. The apply that follows a real commit then diffs
 // against the installed view.
-func TestSessionCommitPreviewInstallsView(t *testing.T) {
-	s := newTestSession[int](&previewApp{route: "/"})
+func TestInstanceCommitPreviewInstallsView(t *testing.T) {
+	s := newTestInstance[int](&previewApp{route: "/"})
 	defer s.cancel()
 	u, _ := url.Parse("/next")
 	s.prefetch(s.ctx, u)
@@ -1104,9 +1104,9 @@ func TestSessionCommitPreviewInstallsView(t *testing.T) {
 }
 
 // commitPreview ignores a commit when no preview is held — a malformed or
-// malicious client message must not mutate session state.
-func TestSessionCommitPreviewWithoutHeldPreview(t *testing.T) {
-	s := newTestSession[int](&previewApp{route: "/"})
+// malicious client message must not mutate instance state.
+func TestInstanceCommitPreviewWithoutHeldPreview(t *testing.T) {
+	s := newTestInstance[int](&previewApp{route: "/"})
 	defer s.cancel()
 	origView := s.view
 
@@ -1129,9 +1129,9 @@ func TestSessionCommitPreviewWithoutHeldPreview(t *testing.T) {
 // frame carries a DeletePreview instead of a SetPreview and stops
 // rebasing, but the retained candidates stay so an in-flight click still
 // commits.
-func TestSessionPreviewFreezesAtLimit(t *testing.T) {
+func TestInstancePreviewFreezesAtLimit(t *testing.T) {
 	const limit = 128 // preview.addView's internal cap
-	s := newTestSession[int](&previewApp{route: "/"})
+	s := newTestInstance[int](&previewApp{route: "/"})
 	defer s.cancel()
 	u, _ := url.Parse("/next")
 	s.prefetch(s.ctx, u) // candidate 1
@@ -1166,8 +1166,8 @@ func TestSessionPreviewFreezesAtLimit(t *testing.T) {
 // it wholesale, dropping the previous one's candidate log. The client
 // drops its preview at the same moment (when it requests the new one), so
 // nothing is left to claim the discarded candidates.
-func TestSessionPrefetchSupersedes(t *testing.T) {
-	s := newTestSession[int](&previewApp{route: "/"})
+func TestInstancePrefetchSupersedes(t *testing.T) {
+	s := newTestInstance[int](&previewApp{route: "/"})
 	defer s.cancel()
 
 	first, _ := url.Parse("/a")
@@ -1193,8 +1193,8 @@ func TestSessionPrefetchSupersedes(t *testing.T) {
 
 // restoreSnapshot swaps s.view and s.title to the stored values
 // and updates the epoch.
-func TestSessionSnapshotRestore(t *testing.T) {
-	s := newTestSession(&counterApp{})
+func TestInstanceSnapshotRestore(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	origView := s.view
 	origTitle := s.title
@@ -1237,8 +1237,8 @@ func TestSessionSnapshotRestore(t *testing.T) {
 // their version, and restoring one resets s.pathSets to that set — so a
 // set added after the snapshot (in a frame the rebase drops) is forgotten
 // and re-sent, while sets the snapshot captured survive.
-func TestSessionSnapshotRestoreResetsPathSets(t *testing.T) {
-	s := newTestSession(&counterApp{})
+func TestInstanceSnapshotRestoreResetsPathSets(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 
 	known := pathSet{{"currentTarget", "value"}}
@@ -1270,8 +1270,8 @@ func TestSessionSnapshotRestoreResetsPathSets(t *testing.T) {
 // commitPreview rebases onto the preview and resets s.pathSets to the
 // preview's prefetch baseline, so a set stranded in a frame the client
 // dropped at the rebase is re-delivered rather than withheld.
-func TestSessionCommitPreviewResetsPathSets(t *testing.T) {
-	s := newTestSession[int](&previewApp{route: "/"})
+func TestInstanceCommitPreviewResetsPathSets(t *testing.T) {
+	s := newTestInstance[int](&previewApp{route: "/"})
 	defer s.cancel()
 	u, _ := url.Parse("/next")
 	s.prefetch(s.ctx, u)
@@ -1298,8 +1298,8 @@ func TestSessionCommitPreviewResetsPathSets(t *testing.T) {
 }
 
 // The snapshot history evicts the oldest entries when full.
-func TestSessionSnapshotEviction(t *testing.T) {
-	s := newTestSession(&counterApp{})
+func TestInstanceSnapshotEviction(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	view, _ := lower(0, Tag("div")(Text("x")))
 	for i := range snapshotRingSize + 5 {
@@ -1326,8 +1326,8 @@ func TestSessionSnapshotEviction(t *testing.T) {
 // eviction slot: a tree put again moves to the young end of the ring
 // instead of aging out at its first put's position, and the hole it
 // leaves behind doesn't evict an innocent neighbor.
-func TestSessionSnapshotRePutRefreshesAge(t *testing.T) {
-	s := newTestSession(&counterApp{})
+func TestInstanceSnapshotRePutRefreshesAge(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	view, _ := lower(0, Tag("div")(Text("x")))
 	s.snapshots.put("a", tree{view: view, title: "t"})
@@ -1351,9 +1351,9 @@ func TestSessionSnapshotRePutRefreshesAge(t *testing.T) {
 	}
 }
 
-// Frames carry the session's base so the client can drop stale frames.
-func TestSessionFrameBase(t *testing.T) {
-	s := newTestSession(&counterApp{})
+// Frames carry the instance's base so the client can drop stale frames.
+func TestInstanceFrameBase(t *testing.T) {
+	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	s.apply(s.ctx, []int{1}, nil) // base "11111..."
 	s.mu.Lock()
@@ -1405,7 +1405,7 @@ func (a *captureApp) Preview(ctx context.Context, u *url.URL) (string, string, N
 }
 
 // soleKey returns the only handler key in the table for ver.
-func soleKey[Msg any](t *testing.T, s *session[Msg], ver string) string {
+func soleKey[Msg any](t *testing.T, s *instance[Msg], ver string) string {
 	t.Helper()
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1423,7 +1423,7 @@ func soleKey[Msg any](t *testing.T, s *session[Msg], ver string) string {
 // Must run inside a synctest bubble: Wait returns once every goroutine
 // is durably blocked, so a dispatched Msg has either landed or provably
 // never will — which lets the negative tests assert inaction outright.
-func waitGot(t *testing.T, s *session[int], a *captureApp, want []int) {
+func waitGot(t *testing.T, s *instance[int], a *captureApp, want []int) {
 	t.Helper()
 	synctest.Wait()
 	s.mu.Lock()
@@ -1442,7 +1442,7 @@ func waitGot(t *testing.T, s *session[int], a *captureApp, want []int) {
 func TestDispatchIsVersionExact(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &captureApp{body: func(n int) Node { return Textf("%d", n) }}
-		s := newTestSession[int](app)
+		s := newTestInstance[int](app)
 		defer s.cancel()
 
 		ver0 := s.ver
@@ -1470,7 +1470,7 @@ func TestDispatchIsVersionExact(t *testing.T) {
 func TestDispatchRefreshesUnchangedTree(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &captureApp{body: func(int) Node { return Text("retry") }}
-		s := newTestSession[int](app)
+		s := newTestInstance[int](app)
 		defer s.cancel()
 
 		ver0 := s.ver
@@ -1483,11 +1483,11 @@ func TestDispatchRefreshesUnchangedTree(t *testing.T) {
 	})
 }
 
-// An event naming a version the session never produced is dropped.
+// An event naming a version the instance never produced is dropped.
 func TestDispatchUnknownVerDropped(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &captureApp{body: func(int) Node { return Text("x") }}
-		s := newTestSession[int](app)
+		s := newTestInstance[int](app)
 		defer s.cancel()
 
 		s.apply(s.ctx, s.resolve(s.ctx, "nonexistent", soleKey(t, s, s.ver), nil), nil)
@@ -1516,7 +1516,7 @@ func TestTypedMismatchPanics(t *testing.T) {
 func TestDispatchUnmarshalErrorSkips(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &captureApp{body: func(int) Node { return Text("x") }}
-		s := newTestSession[int](app)
+		s := newTestInstance[int](app)
 		defer s.cancel()
 
 		s.tables[s.ver] = table[int]{"bad": func(jsontext.Value) (int, error) {
@@ -1569,7 +1569,7 @@ func TestHandleRootSeedsPathSets(t *testing.T) {
 }
 
 // The initial render mounts the view in a <domi-root> wrapper just
-// inside body, with the session markers riding on the wrapper. Body
+// inside body, with the instance markers riding on the wrapper. Body
 // itself carries nothing and is never patched, so nodes that browser
 // extensions and other scripts add to it stay outside the managed
 // tree; display:contents keeps the wrapper itself out of layout.
@@ -1591,7 +1591,7 @@ func TestHandleRootMountsWrapperInsideBody(t *testing.T) {
 		t.Fatalf("mount lacks display:contents:\n%s", html)
 	}
 	if !regexp.MustCompile(`<domi-root [^>]* prefix="`).MatchString(html) {
-		t.Fatalf("session marker not on the mount:\n%s", html)
+		t.Fatalf("instance marker not on the mount:\n%s", html)
 	}
 	if !strings.Contains(html, "<div>0</div></domi-root></body>") {
 		t.Fatalf("view not mounted inside the wrapper:\n%s", html)
@@ -1657,7 +1657,7 @@ func keyedUL(keys ...string) Node {
 	return Tag("ul")(rows...)
 }
 
-func lastFrame[Msg any](s *session[Msg]) frame {
+func lastFrame[Msg any](s *instance[Msg]) frame {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.log[s.head%uint64(len(s.log))]
@@ -1683,7 +1683,7 @@ func topMove(key, before string) []vdom.ClientMutation {
 // handleEvent does — replay the mutations, then apply the resolved
 // msgs — then settles the bubble so callers can assert on the
 // finished apply. Must run inside a synctest bubble.
-func optimistic[Msg any](s *session[Msg], ver, handler string, muts []vdom.ClientMutation) {
+func optimistic[Msg any](s *instance[Msg], ver, handler string, muts []vdom.ClientMutation) {
 	s.applyClientMutations(s.ctx, ver, muts)
 	s.apply(s.ctx, s.resolve(s.ctx, ver, handler, nil), nil)
 	synctest.Wait()
@@ -1692,8 +1692,8 @@ func optimistic[Msg any](s *session[Msg], ver, handler string, muts []vdom.Clien
 // reconstruct replays a reported move onto the acted-on tree, rebuilding
 // what the client is showing — the same tree a fresh render of the moved
 // order produces (minus the handler the move carries along).
-func TestSessionReconstructReplaysMove(t *testing.T) {
-	s := newTestSession[moveMsg](&sortApp{order: []string{"a", "b", "c"}})
+func TestInstanceReconstructReplaysMove(t *testing.T) {
+	s := newTestInstance[moveMsg](&sortApp{order: []string{"a", "b", "c"}})
 	defer s.cancel()
 
 	s.mu.Lock()
@@ -1709,10 +1709,10 @@ func TestSessionReconstructReplaysMove(t *testing.T) {
 	}
 }
 
-// reconstruct fails for a version the session no longer holds, so the
+// reconstruct fails for a version the instance no longer holds, so the
 // caller can fall back to a reset rather than trust a bad replay.
-func TestSessionReconstructUnknownVersion(t *testing.T) {
-	s := newTestSession[moveMsg](&sortApp{order: []string{"a", "b"}})
+func TestInstanceReconstructUnknownVersion(t *testing.T) {
+	s := newTestInstance[moveMsg](&sortApp{order: []string{"a", "b"}})
 	defer s.cancel()
 	s.mu.Lock()
 	_, err := s.reconstruct("gone", topMove("a", ""))
@@ -1728,7 +1728,7 @@ func TestSessionReconstructUnknownVersion(t *testing.T) {
 func TestDispatchOptimisticAgreementPaintsOnce(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
-		s := newTestSession[moveMsg](app)
+		s := newTestInstance[moveMsg](app)
 		defer s.cancel()
 		v0 := s.ver
 		key := soleKey(t, s, v0)
@@ -1756,7 +1756,7 @@ func TestDispatchOptimisticAgreementPaintsOnce(t *testing.T) {
 func TestDispatchOptimisticRejectionReverts(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}, reject: true}
-		s := newTestSession[moveMsg](app)
+		s := newTestInstance[moveMsg](app)
 		defer s.cancel()
 		v0 := s.ver
 		key := soleKey(t, s, v0)
@@ -1783,7 +1783,7 @@ func TestDispatchOptimisticRejectionReverts(t *testing.T) {
 func TestDispatchOptimisticChains(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
-		s := newTestSession[moveMsg](app)
+		s := newTestInstance[moveMsg](app)
 		defer s.cancel()
 		v0 := s.ver
 		key := soleKey(t, s, v0)
@@ -1815,7 +1815,7 @@ func TestDispatchOptimisticChains(t *testing.T) {
 func TestDispatchOptimisticSurvivesRacedUpdate(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
-		s := newTestSession[moveMsg](app)
+		s := newTestInstance[moveMsg](app)
 		defer s.cancel()
 		v0 := s.ver
 		key := soleKey(t, s, v0)
@@ -1850,7 +1850,7 @@ func TestDispatchOptimisticSurvivesRacedUpdate(t *testing.T) {
 func TestDispatchOptimisticResetsWhenTreeGone(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &sortApp{order: []string{"a", "b", "c"}, move: moveMsg{Key: "c", Before: "a"}}
-		s := newTestSession[moveMsg](app)
+		s := newTestInstance[moveMsg](app)
 		defer s.cancel()
 		v0 := s.ver
 		key := soleKey(t, s, v0)
@@ -1884,7 +1884,7 @@ func TestDispatchOptimisticResetsWhenTreeGone(t *testing.T) {
 func TestDispatchMutatedUndecodedRerenders(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &sortApp{order: []string{"a", "b", "c"}}
-		s := newTestSession[moveMsg](app)
+		s := newTestInstance[moveMsg](app)
 		defer s.cancel()
 		v0 := s.ver
 		s.mu.Lock()
@@ -1921,7 +1921,7 @@ func TestDispatchMutatedUndecodedRerenders(t *testing.T) {
 func TestDispatchCoalescesHandlers(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &captureApp{body: func(n int) Node { return Textf("%d", n) }}
-		s := newTestSession[int](app)
+		s := newTestInstance[int](app)
 		defer s.cancel()
 		s.tables[s.ver] = table[int]{"k1": msgInt(1), "k2": msgInt(2)}
 
@@ -1946,7 +1946,7 @@ func TestDispatchUnresolvedSkipsApply(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		var views int
 		app := &captureApp{body: func(n int) Node { views++; return Textf("%d", n) }}
-		s := newTestSession[int](app)
+		s := newTestInstance[int](app)
 		defer s.cancel()
 		before := views
 
@@ -2004,7 +2004,7 @@ func setValue(path []vdom.Step, v string) []vdom.ClientMutation {
 func TestDispatchCommitAgreement(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &fieldApp{value: "old", commit: "new"}
-		s := newTestSession[string](app)
+		s := newTestInstance[string](app)
 		defer s.cancel()
 		v0 := s.ver
 		key := soleKey(t, s, v0)
@@ -2030,7 +2030,7 @@ func TestDispatchCommitAgreement(t *testing.T) {
 func TestDispatchCommitRejectionCorrects(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &fieldApp{value: "old", commit: "new", reject: true}
-		s := newTestSession[string](app)
+		s := newTestInstance[string](app)
 		defer s.cancel()
 		v0 := s.ver
 		key := soleKey(t, s, v0)
@@ -2060,7 +2060,7 @@ func TestDispatchCommitRejectionCorrects(t *testing.T) {
 func TestDispatchCommitUndecodedCorrects(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		app := &fieldApp{value: "old", commit: "new"}
-		s := newTestSession[string](app)
+		s := newTestInstance[string](app)
 		defer s.cancel()
 		v0 := s.ver
 		s.mu.Lock()

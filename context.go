@@ -2,13 +2,13 @@ package domi
 
 import "context"
 
-type sessionIDKey struct{}
+type instanceIDKey struct{}
 
-// SessionID returns the session ID if present in ctx.
-// A session ID is present in [App] methods
+// InstanceID returns the instance ID if present in ctx.
+// An instance ID is present in [App] methods
 // and the constructor given to [Handler].
-func SessionID(ctx context.Context) string {
-	v, _ := ctx.Value(sessionIDKey{}).(string)
+func InstanceID(ctx context.Context) string {
+	v, _ := ctx.Value(instanceIDKey{}).(string)
 	return v
 }
 

@@ -13,7 +13,7 @@ func (internalURLPrefixOption) isOption() {}
 func (keepaliveOption) isOption()         {}
 func (loggerOption) isOption()            {}
 func (replayWindowOption) isOption()      {}
-func (sessionTimeoutOption) isOption()    {}
+func (instanceTimeoutOption) isOption()   {}
 
 type (
 	documentOption struct {
@@ -23,11 +23,11 @@ type (
 	keepaliveOption         struct{ d time.Duration }
 	loggerOption            struct{ l *slog.Logger }
 	replayWindowOption      struct{ n int }
-	sessionTimeoutOption    struct{ d time.Duration }
+	instanceTimeoutOption   struct{ d time.Duration }
 )
 
 // Document supplies a custom builder for the initial HTML shell.
-// The builder is called once per session
+// The builder is called once per browser page load
 // with the initial document title and the body element.
 // It is responsible for returning a complete html element.
 // Domi unconditionally writes the HTML5 doctype declaration
@@ -69,7 +69,7 @@ func Keepalive(d time.Duration) Option { return keepaliveOption{d} }
 // The default logger is [slog.Default].
 func Logger(l *slog.Logger) Option { return loggerOption{l} }
 
-// ReplayWindow sets the number of recent patch frames a session retains
+// ReplayWindow sets the number of recent patch frames an instance retains
 // for SSE clients to resume from after a transient disconnection.
 // Clients reconnecting within this window
 // receive the patches they missed.
@@ -77,7 +77,7 @@ func Logger(l *slog.Logger) Option { return loggerOption{l} }
 // The default window is 128 frames.
 func ReplayWindow(n int) Option { return replayWindowOption{n} }
 
-// SessionTimeout sets how long a session can remain idle
+// InstanceTimeout sets how long an instance can remain idle
 // before domi considers it garbage and deletes it.
 // The default timeout is 48 hours.
-func SessionTimeout(d time.Duration) Option { return sessionTimeoutOption{d} }
+func InstanceTimeout(d time.Duration) Option { return instanceTimeoutOption{d} }

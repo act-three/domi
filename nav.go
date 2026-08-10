@@ -15,7 +15,7 @@ func PushURL[Msg any](url string) Cmd[Msg] {
 	u := mustParseRelativeURL("domi.PushURL", url)
 	href := u.String()
 	return batch[Msg](slices.Values([]cmd[Msg]{
-		func(s *session[Msg]) (Msg, *nav) {
+		func(s *instance[Msg]) (Msg, *nav) {
 			return s.sv.onURLChange(u), &nav{push: href}
 		},
 	}))
@@ -30,14 +30,14 @@ func ReplaceURL[Msg any](url string) Cmd[Msg] {
 	u := mustParseRelativeURL("domi.ReplaceURL", url)
 	href := u.String()
 	return batch[Msg](slices.Values([]cmd[Msg]{
-		func(s *session[Msg]) (Msg, *nav) {
+		func(s *instance[Msg]) (Msg, *nav) {
 			return s.sv.onURLChange(u), &nav{replace: href}
 		},
 	}))
 }
 
 // Load causes a full-page browser navigation to url,
-// leaving the domi session behind.
+// leaving the domi instance behind.
 //
 // The url can be any valid URL,
 // including cross-scheme and cross-origin.
@@ -48,7 +48,7 @@ func ReplaceURL[Msg any](url string) Cmd[Msg] {
 func Load[Msg any](url string) Cmd[Msg] {
 	mustParseURL("domi.Load", url)
 	return batch[Msg](slices.Values([]cmd[Msg]{
-		func(s *session[Msg]) (Msg, *nav) {
+		func(s *instance[Msg]) (Msg, *nav) {
 			var zero Msg
 			return zero, &nav{load: url}
 		},
