@@ -394,6 +394,22 @@ func TestCombineClassEmptyGuard(t *testing.T) {
 	}
 }
 
+func TestCombineClassAllEmptyOmitted(t *testing.T) {
+	got := vdom.Render(lowerOneNode(Tag("div", Name("class", "", ""))()))
+	want := `<div></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestCombineClassLoneEmptyOmitted(t *testing.T) {
+	got := vdom.Render(lowerOneNode(Tag("div", Name("class"))()))
+	want := `<div></div>`
+	if got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
 func TestRegisterCombining(t *testing.T) {
 	RegisterCombining("data-x", ":")
 	got := vdom.Render(lowerOneNode(Tag("div", Name("data-x", "a"), Name("data-x", "b"), Name("data-x", "c"))()))

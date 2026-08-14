@@ -23,6 +23,32 @@ func TestRegisterCombining(t *testing.T) {
 	}
 }
 
+// A combining attribute whose value ends up empty is omitted entirely,
+// whether it was declared once or left empty by all-empty duplicates.
+// Name-only non-combining attributes are untouched: name-only is how
+// boolean attributes render.
+func TestCombineEmptyOmitted(t *testing.T) {
+	tests := []struct {
+		name string
+		in   []Attr
+		want []Attr
+	}{
+		{"lone empty class dropped", []Attr{{Name: "class"}}, nil},
+		{"all-empty duplicates dropped", []Attr{{Name: "class"}, {Name: "class"}}, nil},
+		{"empty plus value combines", []Attr{{Name: "class"}, {Name: "class", Value: "a"}}, []Attr{{Name: "class", Value: "a"}}},
+		{"name-only non-combining kept", []Attr{{Name: "disabled"}}, []Attr{{Name: "disabled"}}},
+		{"neighbors survive", []Attr{{Name: "class"}, {Name: "id", Value: "x"}}, []Attr{{Name: "id", Value: "x"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := combineAttrs(tt.in)
+			if !slices.Equal(got, tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 // nodeSummary renders a child list into a compact, comparable form so a
 // table test can assert the post-coalesce shape: a text node shows as
 // "t:" + its content, an element as "e:" + its tag.

@@ -184,24 +184,31 @@ type Attr struct {
 	Value string
 }
 
-// combineAttrs resolves duplicate attribute names.
+// combineAttrs resolves duplicate attribute names and drops combining
+// attributes whose combined value is empty.
 // attrs must be sorted.
 func combineAttrs(attrs []Attr) []Attr {
-	if len(attrs) < 2 {
+	if len(attrs) == 0 {
 		return attrs
 	}
-	// Fast path: with sorted input, duplicates are adjacent.
-	hasDup := false
-	for i := 1; i < len(attrs); i++ {
-		if attrs[i].Name == attrs[i-1].Name {
-			hasDup = true
+	// Fast path: with sorted input, duplicates are adjacent, and an
+	// empty combining attribute is visible directly.
+	changed := false
+	for i, a := range attrs {
+		if i > 0 && a.Name == attrs[i-1].Name {
+			changed = true
+			break
+		}
+		if _, isComb := combineSep(a.Name); isComb && a.Value == "" {
+			changed = true
 			break
 		}
 	}
-	if !hasDup {
+	if !changed {
 		return attrs
 	}
-	// Slow path: linear scan merging adjacent duplicates.
+	// Slow path: linear scan merging adjacent duplicates, then a
+	// sweep dropping combining attributes left empty.
 	out := make([]Attr, 0, len(attrs))
 	out = append(out, attrs[0])
 	for _, a := range attrs[1:] {
@@ -222,7 +229,10 @@ func combineAttrs(attrs []Attr) []Attr {
 			}
 		}
 	}
-	return out
+	return slices.DeleteFunc(out, func(a Attr) bool {
+		_, isComb := combineSep(a.Name)
+		return isComb && a.Value == ""
+	})
 }
 
 var combining = map[string]string{
@@ -233,7 +243,8 @@ var combining = map[string]string{
 // RegisterCombining registers name as a combining attribute with the
 // given separator. When a combining attribute appears more than once
 // on an element, the values are joined with sep into a single
-// attribute.
+// attribute. A combining attribute whose value is empty is omitted
+// from the element entirely.
 //
 // RegisterCombining must be called before any call to [NewElement],
 // typically from a package init function.
