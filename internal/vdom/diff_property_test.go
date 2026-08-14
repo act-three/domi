@@ -311,14 +311,21 @@ func renderList(nodes []Node) string {
 // nullish-coalescing on the JS side the applier passed `undefined` to
 // setAttribute and the DOM ended up with attr="undefined". The property
 // test exercises this randomly now that genAttrs emits ""; this fixture
-// pins the specific shape down so it can't silently regress.
+// pins the specific shape down so it can't silently regress. The
+// attribute must be non-combining: an empty combining attribute is
+// omitted at construction and diffs to no patch at all.
 func TestSetAttrEmptyValueAppliesAsEmptyString(t *testing.T) {
 	a := startBunApplier(t)
 
 	old := []Node{NewElement("div", attrs(), nil)}
-	new := []Node{NewElement("div", attrs(Attr{Name: "class", Value: ""}), nil)}
+	new := []Node{NewElement("div", attrs(Attr{Name: "title", Value: ""}), nil)}
 
-	gotHTML, err := a.apply(renderList(old), diffList(old, new))
+	patches := diffList(old, new)
+	if len(patches) != 1 || patches[0].Op != "SetAttr" || patches[0].Name != "title" || patches[0].Value != "" {
+		t.Fatalf("expected one empty-value SetAttr, got %+v", patches)
+	}
+
+	gotHTML, err := a.apply(renderList(old), patches)
 	if err != nil {
 		t.Fatalf("bun apply: %v", err)
 	}

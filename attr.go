@@ -51,23 +51,29 @@ func isReservedAttr(name string) bool {
 // Name returns an HTML attribute with the given name and value.
 // Helpers for common attributes can be found in [ily.dev/domi/attr].
 //
-// Providing no value arguments or the empty string
-// produces a name-only attribute.
-// Name(s) is equivalent to Name(s, "").
-//
-//	Name("value")      // value
-//	Name("value", "")  // value
-//	Name("value", "a") // value="a"
-//
 // Providing multiple value arguments produces multiple attribute declarations.
 // Name(s, a, b, ...) is equivalent to Group(Name(s, a), Name(s, b), ...).
 // These combine using the same rules described on [Attr] and [RegisterCombining].
-// In particular, for most attributes, only the first value will be used.
+// In particular, for most attributes, only the first value is used.
 //
 //	Name("value", "a")      // value="a"
 //	Name("value", "a", "b") // value="a"
 //	Name("class", "a")      // class="a"
 //	Name("class", "a", "b") // class="a b"
+//
+// Providing no value arguments or the empty string
+// produces a name-only attribute.
+// Name(s) is equivalent to Name(s, "").
+// A combining attribute with an empty value
+// is instead omitted from the rendered output.
+// See [RegisterCombining].
+//
+//	Name("value")      // value
+//	Name("value", "")  // value
+//	Name("value", "a") // value="a"
+//	Name("class")      // (no output)
+//	Name("class", "")  // (no output)
+//	Name("class", "a") // class="a"
 //
 // The given name must be lowercase,
 // except for foreign-content (SVG and MathML) mixed-case names
@@ -130,6 +136,9 @@ func Group(a ...Attr) Attr {
 // When a combining attribute appears more than once in an HTML node,
 // the values are combined, separated by sep,
 // into a single attribute in the rendered output.
+//
+// A combining attribute whose combined value is empty
+// is omitted from the rendered output entirely.
 //
 // RegisterCombining must be called before Handler.
 // This is typically done in an init function in packages
