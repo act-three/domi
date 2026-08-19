@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // Patch is a single mutation op the client applies to its DOM. The
@@ -23,6 +25,9 @@ import (
 // rather than a serialized Node — the client parses it via a
 // <template> element. `SetText` carries the new text content in
 // `Value`, which the client writes to the target text node in place.
+// `SpliceText` is its incremental form: the client replaces `Len`
+// UTF-16 code units of the target's text at offset `At` with `Value`,
+// sparing the wire a large text's unchanged prefix and suffix.
 //
 // InsertChild / RemoveChild / MoveChild come in two flavours, chosen
 // by whether the child they act on is keyed:
@@ -54,6 +59,8 @@ type patch struct {
 	Index  *int   `json:",omitempty"`
 	From   *int   `json:",omitempty"`
 	To     *int   `json:",omitempty"`
+	At     *int   `json:",omitempty"`
+	Len    *int   `json:",omitempty"`
 	Key    string `json:",omitempty"`
 	Before string `json:",omitempty"`
 	ID     string `json:",omitempty"`
@@ -88,7 +95,7 @@ func diffNode(old, new Node, path []int, out []patch) []patch {
 		// node type changed, so replace the whole subtree.
 		if n, isText := new.(Text); isText {
 			if o != n {
-				out = append(out, patch{Op: "SetText", Path: slices.Clone(path), Value: string(n)})
+				out = append(out, diffText(o, n, path))
 			}
 			return out
 		}
@@ -110,6 +117,85 @@ func diffNode(old, new Node, path []int, out []patch) []patch {
 		out = diffChildren(o.children, n.children, path, out)
 	}
 	return out
+}
+
+// spliceMin is the least shared prefix+suffix, in bytes, worth a
+// SpliceText: below it the offsets cost about what the shared text
+// saves, and SetText's absolute value is the simpler op.
+const spliceMin = 32
+
+// diffText emits the in-place update for a changed text node:
+// a SpliceText replacing only the changed middle
+// when old and new share enough prefix and suffix to pay for its offsets,
+// else a SetText carrying the whole value.
+// At and Len count UTF-16 code units,
+// the unit of the DOM's CharacterData API the client splices through,
+// and the shared regions are trimmed to rune boundaries
+// so the splice never lands inside a surrogate pair.
+// A splice is relative — it edits whatever the client holds — so it is
+// emitted only when the client provably holds old verbatim (see
+// domSafe); a SetText is absolute and converges regardless.
+// Invalid UTF-8 likewise rides SetText:
+// mangled by JSON encoding on its way over,
+// it leaves no agreed-on offsets to splice at.
+func diffText(old, new Text, path []int) patch {
+	o, n := string(old), string(new)
+	set := patch{Op: "SetText", Path: slices.Clone(path), Value: n}
+	if !domSafe(o) || !utf8.ValidString(o) || !utf8.ValidString(n) {
+		return set
+	}
+	p := 0
+	for p < len(o) && p < len(n) && o[p] == n[p] {
+		p++
+	}
+	for p > 0 && !(runeBoundary(o, p) && runeBoundary(n, p)) {
+		p--
+	}
+	s := 0
+	for s < min(len(o), len(n))-p && o[len(o)-1-s] == n[len(n)-1-s] {
+		s++
+	}
+	// The suffix bytes are equal, so a boundary in old is one in new.
+	for s > 0 && !utf8.RuneStart(o[len(o)-s]) {
+		s--
+	}
+	if p+s < spliceMin {
+		return set
+	}
+	at := utf16Len(o[:p])
+	length := utf16Len(o[p : len(o)-s])
+	return patch{Op: "SpliceText", Path: slices.Clone(path), Value: n[p : len(n)-s], At: &at, Len: &length}
+}
+
+// domSafe reports whether the client's DOM is guaranteed to hold the
+// text s exactly as the vdom does. Text delivered as HTML — the
+// initial render, an InsertChild or Replace fragment, a Reset — passes
+// through the HTML parser, which rewrites some content on the way in:
+// CR and CRLF become LF, U+0000 becomes U+FFFD, and a newline
+// immediately after a <pre> or <textarea> start tag is dropped. Splice
+// offsets computed from a rewritten text would edit the wrong range,
+// so such text is not spliced. Like CheckRawText, domSafe is
+// conservative: everything it accepts round-trips verbatim, and some
+// safe strings — a CR the client received through an earlier absolute
+// write, a leading newline outside <pre> and <textarea> — are not
+// accepted.
+func domSafe(s string) bool {
+	return !strings.HasPrefix(s, "\n") && !strings.ContainsAny(s, "\r\x00")
+}
+
+// runeBoundary reports whether i is a rune boundary of the valid
+// UTF-8 string s.
+func runeBoundary(s string, i int) bool {
+	return i == len(s) || utf8.RuneStart(s[i])
+}
+
+// utf16Len returns the length of s in UTF-16 code units.
+func utf16Len(s string) int {
+	l := 0
+	for _, r := range s {
+		l += utf16.RuneLen(r)
+	}
+	return l
 }
 
 // diffAttrs emits SetAttr and RemoveAttr patches for changes

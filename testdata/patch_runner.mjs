@@ -166,6 +166,17 @@ function fresh(html) {
   check(ta.textContent === 'C', 'dirty textarea SetText: text content not written');
 }
 
+// Dirty textarea, SpliceText: the same sync duty as SetText — the
+// spliced text content is only the default value, so the applier must
+// copy it into the value property.
+{
+  const ta = fresh('<textarea>AxB</textarea>');
+  ta.value = 'C'; // user typed
+  applyPatch(root, { Op: 'SpliceText', Path: [0, 0], At: 1, Len: 1, Value: 'y' });
+  check(ta.value === 'AyB', `dirty textarea SpliceText: value = ${JSON.stringify(ta.value)}, want "AyB"`);
+  check(ta.textContent === 'AyB', 'dirty textarea SpliceText: text content not written');
+}
+
 // A blanked-out textarea arrives as RemoveChild (empty text is
 // canonicalized away on the Go side), a filled-in one as
 // InsertChild; both must reach the display of a dirty textarea.

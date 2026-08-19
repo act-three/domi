@@ -369,6 +369,12 @@ function applyPatch(root, p) {
       syncTextareaValue(text.parentNode);
       break;
     }
+    case 'SpliceText': {
+      const text = walk(root, p.Path);
+      text.replaceData(p.At, p.Len, p.Value ?? '');
+      syncTextareaValue(text.parentNode);
+      break;
+    }
     case 'SetAttr': {
       // Coerce undefined → "" so name-only / empty-valued attrs land as
       // present-with-empty-string. The encoder omits `Value` when it's
