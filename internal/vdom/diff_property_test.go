@@ -108,8 +108,19 @@ var (
 
 	genAttrNames  = []string{"class", "id", "data-x", "title"}
 	genAttrValues = []string{"x", "y", "z", ""}
-	genTexts      = []string{"hi", "bye", "x", "y", "a < b & c"}
-	genKeys       = []string{"a", "b", "c", "d", "e", "f"}
+	// The long texts share prefixes and suffixes past the splice
+	// threshold, so text changes among them take the SpliceText path;
+	// the astral runes cross-check its UTF-16 offsets against a real
+	// DOM.
+	genTexts = []string{
+		"hi", "bye", "x", "y", "a < b & c",
+		"body{margin:0;font:16px sans-serif}.a{color:red}",
+		"body{margin:0;font:16px sans-serif}.a{color:red}.b{color:blue}",
+		"body{margin:0;font:16px sans-serif}.z{flex:1}.b{color:blue}",
+		"🎼𝄞🎼𝄞🎼𝄞🎼𝄞 middle 🎼𝄞🎼𝄞🎼𝄞🎼𝄞",
+		"🎼𝄞🎼𝄞🎼𝄞🎼𝄞 mid 𝄞 dle 🎼𝄞🎼𝄞🎼𝄞🎼𝄞",
+	}
+	genKeys = []string{"a", "b", "c", "d", "e", "f"}
 )
 
 const (
@@ -359,6 +370,62 @@ func TestTextToEmptyRemovesTextNode(t *testing.T) {
 	got := canonicalize(t, gotHTML)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %s, want %s (raw html: %s)", jsonStr(got), jsonStr(want), gotHTML)
+	}
+}
+
+// TestSpliceTextRoundTrip drives each SpliceText shape through the
+// real client applier: append, deletion, and middle replacement, in
+// ASCII and across astral runes whose UTF-16 offsets differ from both
+// byte and rune counts. The property iterations pair independently
+// generated trees, so position-matched text changes — and splices
+// among them especially — are rare there; these fixtures pin the op
+// deterministically.
+func TestSpliceTextRoundTrip(t *testing.T) {
+	a := startBunApplier(t)
+	sheet := strings.Repeat(".a{color:red}", 4)
+	astral := strings.Repeat("🎼𝄞", 8)
+	cases := []struct{ name, old, new string }{
+		{"append", sheet, sheet + ".b{color:blue}"},
+		{"delete", sheet + ".b{color:blue}", sheet},
+		{"middle", sheet + "old" + sheet, sheet + "new!" + sheet},
+		{"astral-append", astral, astral + "𝄞"},
+		{"astral-middle", astral + "old" + astral, astral + "𝄞" + astral},
+		{"mid-rune", sheet + "é" + sheet, sheet + "è" + sheet},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			old := []Node{el("div", tx(c.old))}
+			new := []Node{el("div", tx(c.new))}
+			patches := diffList(old, new)
+			if len(patches) != 1 || patches[0].Op != "SpliceText" {
+				t.Fatalf("expected one SpliceText, got %s", patchDebug(patches))
+			}
+			roundTrip(t, a, old, new)
+		})
+	}
+}
+
+// TestParserRewrittenTextRoundTrip drives text the HTML parser
+// rewrites on delivery through the real client applier: parsing the
+// initial HTML collapses CRLF to LF and drops the newline after a
+// <textarea> start tag, so the client's text differs from the vdom
+// and a splice would edit the wrong range. These fixtures pin the
+// corruptions byte-offset splices produced — "\nxy" from a CRLF text,
+// an off-by-one edit in a leading-newline textarea — which the domSafe
+// fallback to SetText prevents.
+func TestParserRewrittenTextRoundTrip(t *testing.T) {
+	a := startBunApplier(t)
+	pad := strings.Repeat("a", spliceMin)
+	cases := []struct{ name, tag, old, new string }{
+		{"crlf", "div", pad + "\r\nx", pad + "\r\ny"},
+		{"textarea-leading-newline", "textarea", "\n" + pad + "x", "\n" + pad + "y"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			old := []Node{NewElement(c.tag, attrs(), []Node{tx(c.old)})}
+			new := []Node{NewElement(c.tag, attrs(), []Node{tx(c.new)})}
+			roundTrip(t, a, old, new)
+		})
 	}
 }
 

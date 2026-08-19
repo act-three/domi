@@ -3,6 +3,7 @@ package vdom
 import (
 	"iter"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -87,6 +88,126 @@ func TestCoalescedTextChangeIsSetText(t *testing.T) {
 	b := el("div", tx("Count: "), tx("6"))
 	got := diffOne(a, b)
 	if len(got) != 1 || got[0].Op != "SetText" || got[0].Value != "Count: 6" {
+		t.Fatalf("unexpected: %+v", got)
+	}
+}
+
+// splice asserts that patches is a single SpliceText replacing length
+// units at the offset at with value.
+func splice(t *testing.T, patches []patch, at, length int, value string) {
+	t.Helper()
+	if len(patches) != 1 || patches[0].Op != "SpliceText" {
+		t.Fatalf("expected one SpliceText, got %+v", patches)
+	}
+	p := patches[0]
+	if p.At == nil || p.Len == nil || *p.At != at || *p.Len != length || p.Value != value {
+		t.Fatalf("got splice %v+%v %q, want %d+%d %q", ptrDebug(p.At), ptrDebug(p.Len), p.Value, at, length, value)
+	}
+}
+
+func ptrDebug(p *int) any {
+	if p == nil {
+		return "<nil>"
+	}
+	return *p
+}
+
+// A long text sharing its prefix with the successor — the growing
+// stylesheet — rides a SpliceText carrying only the appended tail.
+func TestSharedPrefixSplicesAppend(t *testing.T) {
+	sheet := strings.Repeat(".a{color:red}", 4)
+	a := el("style", tx(sheet))
+	b := el("style", tx(sheet+".b{color:blue}"))
+	splice(t, diffOne(a, b), len(sheet), 0, ".b{color:blue}")
+}
+
+// Deleting from the end splices out the tail; the omitted Value is the
+// empty replacement.
+func TestSharedPrefixSplicesDeletion(t *testing.T) {
+	sheet := strings.Repeat(".a{color:red}", 4)
+	a := el("style", tx(sheet+".b{color:blue}"))
+	b := el("style", tx(sheet))
+	splice(t, diffOne(a, b), len(sheet), len(".b{color:blue}"), "")
+}
+
+// A change in the middle keeps both the shared prefix and suffix off
+// the wire.
+func TestSharedPrefixAndSuffixSplicesMiddle(t *testing.T) {
+	pre, post := strings.Repeat("p", 20), strings.Repeat("s", 20)
+	a := el("div", tx(pre+"old"+post))
+	b := el("div", tx(pre+"new!"+post))
+	splice(t, diffOne(a, b), 20, 3, "new!")
+}
+
+// Below spliceMin the shared text is not worth the offsets: the change
+// stays a SetText.
+func TestShortSharedTextStaysSetText(t *testing.T) {
+	pre := strings.Repeat("p", spliceMin-1)
+	a := el("div", tx(pre+"x"))
+	b := el("div", tx(pre+"y"))
+	got := diffOne(a, b)
+	if len(got) != 1 || got[0].Op != "SetText" || got[0].Value != pre+"y" {
+		t.Fatalf("unexpected: %+v", got)
+	}
+}
+
+// Splice offsets count UTF-16 code units, not bytes or runes: each
+// astral rune in the shared prefix is four bytes but two units.
+func TestSpliceOffsetsAreUTF16(t *testing.T) {
+	pre := strings.Repeat("🎼", 10) // 40 bytes, 10 runes, 20 UTF-16 units
+	a := el("div", tx(pre+"old"))
+	b := el("div", tx(pre+"𝄞"))
+	splice(t, diffOne(a, b), 20, 3, "𝄞")
+}
+
+// A shared prefix ending inside a rune backs off to the rune boundary,
+// so the replacement carries whole characters: é (C3 A9) and è (C3 A8)
+// share a byte but must not be split.
+func TestSpliceBacksOffMidRunePrefix(t *testing.T) {
+	pre := strings.Repeat("p", spliceMin)
+	a := el("div", tx(pre+"éz"))
+	b := el("div", tx(pre+"èz"))
+	splice(t, diffOne(a, b), spliceMin, 1, "è")
+}
+
+// When one text extends the other, the shared suffix is capped so it
+// cannot overlap the prefix: "aa…a" → "aa…aa" is a pure insertion, not
+// an overlapping prefix+suffix claiming more than the old text holds.
+func TestSpliceSharedRegionsDoNotOverlap(t *testing.T) {
+	base := strings.Repeat("a", 2*spliceMin)
+	a := el("div", tx(base))
+	b := el("div", tx(base+"aaa"))
+	splice(t, diffOne(a, b), len(base), 0, "aaa")
+}
+
+// Text the HTML parser rewrites on delivery — a CR that parsing
+// collapses to LF, a NUL it replaces, a leading newline that <pre> and
+// <textarea> drop — need not match the client's DOM byte for byte, so
+// it stays a SetText, whose absolute value converges regardless.
+func TestParserRewrittenTextStaysSetText(t *testing.T) {
+	pad := strings.Repeat("p", 2*spliceMin)
+	for _, c := range []struct{ name, old, new string }{
+		{"cr", pad + "\r\nx", pad + "\r\ny"},
+		{"nul", pad + "\x00x", pad + "\x00y"},
+		{"leading-newline", "\n" + pad + "x", "\n" + pad + "y"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := diffOne(el("div", tx(c.old)), el("div", tx(c.new)))
+			if len(got) != 1 || got[0].Op != "SetText" || got[0].Value != c.new {
+				t.Fatalf("unexpected: %+v", got)
+			}
+		})
+	}
+}
+
+// Invalid UTF-8 has no client-side length the offsets could agree
+// with, so it falls back to SetText no matter how much text is shared.
+func TestInvalidUTF8StaysSetText(t *testing.T) {
+	pre := strings.Repeat("p", 2*spliceMin)
+	a := el("div", tx(pre+"\xffx"))
+	b := el("div", tx(pre+"\xffy"))
+	got := diffOne(a, b)
+	if len(got) != 1 || got[0].Op != "SetText" {
 		t.Fatalf("unexpected: %+v", got)
 	}
 }
