@@ -15,6 +15,17 @@ func msgFn(tag string) func(jsontext.Value) (string, error) {
 	return func(jsontext.Value) (string, error) { return tag, nil }
 }
 
+// erased builds the handler On would for f: its Msg type erased, with
+// the zero values an instance recovers it from.
+func erased[Msg any](event string, f func(jsontext.Value) (Msg, error)) handler {
+	return handler{
+		fn:    func(v jsontext.Value) (any, error) { return f(v) },
+		vzero: *new(Msg),
+		pzero: (*Msg)(nil),
+		event: event,
+	}
+}
+
 // A handler's key derives from its element's address alone, so two
 // renders of the same view shape — with brand-new functions — produce
 // byte-identical trees: the diff is quiet and the client keeps its
