@@ -1508,8 +1508,119 @@ func TestTypedMismatchPanics(t *testing.T) {
 			t.Fatalf("panic should name the event and the wanted Msg type, got %q", msg)
 		}
 	}()
-	typed[int](handlers{"k": {fn: msgFn("oops"), event: "click"}})
+	typed[int](handlers{"k": erased("click", msgFn("oops"))})
 }
+
+// A handler's Msg need only implement the instance's: a concrete type
+// dispatches into an interface-typed app.
+func TestTypedAssignable(t *testing.T) {
+	hit := func(jsontext.Value) (hitMsg, error) { return hitMsg{7}, nil }
+	tbl := typed[taggedMsg](handlers{"k": erased("click", hit)})
+	got, err := tbl["k"](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (hitMsg{7}); got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// An interface-typed handler's zero values can't settle by assertion
+// alone whether it implements the instance's Msg; typed falls back to reflection, which admits a
+// handler interface that implements the instance's.
+func TestTypedInterfaceImplements(t *testing.T) {
+	hit := func(jsontext.Value) (namedMsg, error) { return hitMsg{7}, nil }
+	tbl := typed[taggedMsg](handlers{"k": erased("click", hit)})
+	got, err := tbl["k"](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (hitMsg{7}); got != want {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// An interface-typed handler can only implement an interface Msg, so
+// against a concrete one it panics at render time like any other
+// mismatch, naming both types.
+func TestTypedInterfaceHandlerConcreteMsgPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for an interface-typed handler")
+		}
+		if msg := fmt.Sprint(r); !strings.Contains(msg, "domi.taggedMsg") || !strings.Contains(msg, "want int") {
+			t.Fatalf("panic should name the handler's and the wanted Msg types, got %q", msg)
+		}
+	}()
+	typed[int](handlers{"k": erased("click", func(jsontext.Value) (taggedMsg, error) { return nil, nil })})
+}
+
+// An interface-typed handler conventionally returns (nil, err) on
+// failure; the nil has no dynamic type to assert, so the error passes
+// through for resolve to discard rather than panicking.
+func TestTypedNilInterfaceResult(t *testing.T) {
+	fail := func(jsontext.Value) (taggedMsg, error) { return nil, fmt.Errorf("no thanks") }
+	tbl := typed[taggedMsg](handlers{"k": erased("click", fail)})
+	got, err := tbl["k"](nil)
+	if err == nil {
+		t.Fatal("expected the handler's error")
+	}
+	if got != nil {
+		t.Fatalf("got %v, want nil", got)
+	}
+}
+
+// The public use case end to end: an App whose Msg is an interface
+// renders a handler built from a concrete type — as event.Click does
+// with its argument's inferred type — and Update receives that value
+// through the interface.
+func TestDispatchConcreteIntoInterfaceApp(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		app := &taggedApp{}
+		s := newTestInstance[taggedMsg](app)
+		defer s.cancel()
+
+		s.apply(s.ctx, s.resolve(s.ctx, s.ver, soleKey(t, s, s.ver), nil), nil)
+		synctest.Wait()
+		s.mu.Lock()
+		got := slices.Clone(app.got)
+		s.mu.Unlock()
+		if want := []taggedMsg{hitMsg{7}}; !slices.Equal(got, want) {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	})
+}
+
+// taggedApp is an App over the taggedMsg interface whose one handler
+// produces the concrete hitMsg; Update records what it receives.
+type taggedApp struct{ got []taggedMsg }
+
+func (a *taggedApp) Update(_ context.Context, m taggedMsg) Cmd[taggedMsg] {
+	a.got = append(a.got, m)
+	return Batch[taggedMsg]()
+}
+func (a *taggedApp) View(context.Context) (string, Node) {
+	hit := func(jsontext.Value) (hitMsg, error) { return hitMsg{7}, nil }
+	return "", Tag("button", On("click", hit))(Text("x"))
+}
+func (a *taggedApp) Subscriptions(context.Context) Sub[taggedMsg]             { return nil }
+func (a *taggedApp) Preview(context.Context, *url.URL) (string, string, Node) { return "", "", nil }
+
+// taggedMsg and hitMsg model an interface-typed app Msg and one of its
+// concrete implementations; namedMsg is a wider interface that
+// implements taggedMsg.
+type taggedMsg interface{ tag() string }
+
+type namedMsg interface {
+	taggedMsg
+	name() string
+}
+
+type hitMsg struct{ n int }
+
+func (hitMsg) tag() string  { return "hit" }
+func (hitMsg) name() string { return "hit" }
 
 // An error from the app's unmarshal function skips the event, like a
 // failing decoder in Elm.

@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -433,16 +434,37 @@ func (s *instance[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 // form of a lowering harvest; see typed.
 type table[Msg any] map[string]func(jsontext.Value) (Msg, error)
 
-// typed asserts that each handler returns Msg.
-// If a function fails the type assertion, typed panics.
+// typed adapts each handler to return Msg, the instance's type.
+// A handler's own Msg type must be identical to it, or implement it
+// when it is an interface — the condition for a type assertion
+// to Msg to succeed, which the adapter relies on — else typed panics.
+// The condition is itself settled by type assertion where it can be:
+// vzero asserts to Msg when the handler's type is concrete,
+// and pzero to *Msg when the two types are identical.
+// Only when both fail is the handler's type recovered by reflection
+// from pzero, to rule on an interface handler type
+// that implements an interface Msg.
+// The adapter asserts each event's result to Msg;
+// a nil result from an interface handler type
+// has no dynamic type to assert and is already the zero Msg.
 func typed[Msg any](h handlers) table[Msg] {
 	t := make(table[Msg], len(h))
 	for key, hd := range h {
-		fn, ok := hd.fn.(func(jsontext.Value) (Msg, error))
-		if !ok {
-			panic(fmt.Sprintf("domi: On(%q) handler is %T, want %T", hd.event, hd.fn, fn))
+		_, vok := hd.vzero.(Msg)
+		_, pok := hd.pzero.(*Msg)
+		if !vok && !pok {
+			got, want := reflect.TypeOf(hd.pzero).Elem(), reflect.TypeFor[Msg]()
+			if want.Kind() != reflect.Interface || !got.Implements(want) {
+				panic(fmt.Sprintf("domi: On(%q) handler returns %v, want %v", hd.event, got, want))
+			}
 		}
-		t[key] = fn
+		t[key] = func(v jsontext.Value) (msg Msg, err error) {
+			r, err := hd.fn(v)
+			if r != nil {
+				msg = r.(Msg)
+			}
+			return msg, err
+		}
 	}
 	return t
 }

@@ -18,11 +18,15 @@ type handlers map[string]handler
 
 // A handler is an unmarshal function (to construct a Msg when the
 // event happens) and a path set (the fields to read from the browser's
-// event object). fn has type func(jsontext.Value) (Msg, error),
-// stored as any so that Node types and HTML constructors don't
-// all have to be generic.
+// event object). fn boxes its Msg as any so that Node types and HTML
+// constructors don't all have to be generic. vzero and pzero are a
+// zero value and a nil pointer of the handler's Msg type, from which
+// an instance recovers that type to check at render time that it is
+// identical to, or implements, the instance's own Msg. See typed.
 type handler struct {
-	fn    any
+	fn    func(jsontext.Value) (any, error)
+	vzero any
+	pzero any
 	ps    pathSet
 	event string
 }
@@ -61,6 +65,8 @@ func (dst handlers) merge(src handlers) handlers {
 // then calls Update with the resulting Msg value.
 // Helpers for common events can be found in [ily.dev/domi/event].
 //
+// Msg must be the App's Msg type or a type that implements it.
+//
 // Each field value
 // is a path of JavaScript property names rooted at the event object.
 // The client reads the value at each path
@@ -87,7 +93,13 @@ func On[Msg any](event string, f func(jsontext.Value) (Msg, error), field ...[]s
 	ps := pathSet(field)
 	slices.SortFunc(ps, slices.Compare)
 	return attr{
-		attr:    vdom.Attr{Name: "domi-msg-" + event},
-		handler: &handler{fn: f, ps: ps, event: event},
+		attr: vdom.Attr{Name: "domi-msg-" + event},
+		handler: &handler{
+			fn:    func(v jsontext.Value) (any, error) { return f(v) },
+			vzero: *new(Msg),
+			pzero: (*Msg)(nil),
+			ps:    ps,
+			event: event,
+		},
 	}
 }
