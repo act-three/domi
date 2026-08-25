@@ -155,15 +155,52 @@ func TestWithKeyEmptyKeyPanics(t *testing.T) {
 	_ = keyedLis("")
 }
 
-// A Fragment has no single identity to key; WithKey panics at
-// construction.
-func TestWithKeyFragmentPanics(t *testing.T) {
+// A Fragment consisting of one element is that element for keying
+// purposes, so a keyed view assembled through Fragment (or Map) keys
+// identically to the bare element.
+func TestWithKeySingleElementFragment(t *testing.T) {
+	a := vdom.Render(lowerOneNode(Tag("ul")(WithKey("a", Fragment(nil, Tag("li")(Text("x")), Fragment())))))
+	b := vdom.Render(lowerOneNode(Tag("ul")(WithKey("a", Tag("li")(Text("x"))))))
+	if a != b {
+		t.Fatalf("fragment and element should key identically: %q vs %q", a, b)
+	}
+}
+
+// Keying a Map keeps its handler rewriting: the key names the element
+// and the mapper still applies to its harvest.
+func TestWithKeyMap(t *testing.T) {
+	li := Map(func(s string) int { return len(s) }, Tag("li", On("click", msgFn("go"))))
+	_, h := lower(0, Tag("ul")(WithKey("a", li)))
+	for _, fn := range typed[int](h) {
+		got, err := fn(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != 2 {
+			t.Fatalf("got %d, want 2", got)
+		}
+	}
+}
+
+// A Fragment of several nodes has no single identity to key; WithKey
+// panics at construction.
+func TestWithKeySeveralNodesPanics(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {
-			t.Fatal("expected panic for a keyed Fragment")
+			t.Fatal("expected panic for a keyed Fragment of several nodes")
 		}
 	}()
-	_ = WithKey("a", Fragment(Tag("li")(Text("x"))))
+	_ = WithKey("a", Fragment(Tag("li")(Text("x")), Tag("li")(Text("y"))))
+}
+
+// Only elements carry keys; a text node panics at construction.
+func TestWithKeyTextPanics(t *testing.T) {
+	defer func() {
+		if r := recover(); r == nil {
+			t.Fatal("expected panic for a keyed text node")
+		}
+	}()
+	_ = WithKey("a", Text("x"))
 }
 
 // Re-keying a keyed node is a construction error, not a silent

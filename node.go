@@ -176,17 +176,21 @@ func hasNode(nodes []Node) bool {
 // stable (any given element should be assigned the same key every time),
 // and unique within the enclosing element.
 //
-// If n is not an element or already has a key, WithKey panics.
+// If n already has a key or is not a single element, WithKey panics.
 func WithKey(key string, n Node) Node {
 	if key == "" {
 		panic("domi: key must be nonempty")
 	}
-	if b, ok := n.(Element); ok {
-		n = b()
+	var only node
+	for c := range Fragment(n).(fragment) {
+		if only != nil {
+			panic(fmt.Sprintf("domi: keyed node %q must be a single element", key))
+		}
+		only = c
 	}
-	e, ok := n.(element)
+	e, ok := only.(element)
 	if !ok {
-		panic(fmt.Sprintf("domi: keyed node %q must be an element, got %T", key, n))
+		panic(fmt.Sprintf("domi: keyed node %q must be an element, got %T", key, only))
 	}
 	if e.key != "" {
 		panic(fmt.Sprintf("domi: keyed node %q already has key %q", key, e.key))
@@ -217,7 +221,7 @@ func WithKey(key string, n Node) Node {
 // stable (any given element should be assigned the same key every time),
 // and unique within the enclosing element.
 //
-// If n is not an element or already has a key, WithKeyOpaque panics.
+// If n already has a key or is not a single element, WithKeyOpaque panics.
 func WithKeyOpaque(key string, n Node) Node {
 	e := WithKey(key, n).(element)
 	e.opaque = true
@@ -232,6 +236,8 @@ type fragment iter.Seq[node]
 func (fragment) isNode() {}
 
 // A Fragment is a sequence of HTML nodes.
+//
+// Fragment(n) is equivalent to n.
 func Fragment(n ...Node) Node {
 	return fragment(func(yield func(node) bool) {
 		for _, c := range n {
