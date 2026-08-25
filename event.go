@@ -5,7 +5,9 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"hash/fnv"
+	"iter"
 	"maps"
+	"reflect"
 	"slices"
 	"strconv"
 
@@ -22,7 +24,7 @@ type handlers map[string]handler
 // constructors don't all have to be generic. vzero and pzero are a
 // zero value and a nil pointer of the handler's Msg type, from which
 // an instance recovers that type to check at render time that it is
-// identical to, or implements, the instance's own Msg. See typed.
+// identical to, or implements, the instance's own Msg. See adapt.
 type handler struct {
 	fn    func(jsontext.Value) (any, error)
 	vzero any
@@ -59,6 +61,92 @@ func (dst handlers) merge(src handlers) handlers {
 	}
 	maps.Copy(dst, src)
 	return dst
+}
+
+// adapt returns hd's unmarshal function typed to produce Msg.
+// hd's own Msg type must be identical to Msg, or implement it
+// when it is an interface — the condition for a type assertion
+// to Msg to succeed, which the adapter relies on — else adapt panics.
+// The condition is itself settled by type assertion where it can be:
+// vzero asserts to Msg when the handler's type is concrete,
+// and pzero to *Msg when the two types are identical.
+// Only when both fail is the handler's type recovered by reflection
+// from pzero, to rule on an interface handler type
+// that implements an interface Msg.
+// The adapter asserts each event's result to Msg;
+// a nil result from an interface handler type
+// has no dynamic type to assert and is already the zero Msg.
+func adapt[Msg any](hd handler) func(jsontext.Value) (Msg, error) {
+	_, vok := hd.vzero.(Msg)
+	_, pok := hd.pzero.(*Msg)
+	if !vok && !pok {
+		got, want := reflect.TypeOf(hd.pzero).Elem(), reflect.TypeFor[Msg]()
+		if want.Kind() != reflect.Interface || !got.Implements(want) {
+			panic(fmt.Sprintf("domi: On(%q) handler returns %v, want %v", hd.event, got, want))
+		}
+	}
+	return func(v jsontext.Value) (msg Msg, err error) {
+		r, err := hd.fn(v)
+		if r != nil {
+			msg = r.(Msg)
+		}
+		return msg, err
+	}
+}
+
+// Map transforms the messages produced by n.
+// It calls f to convert each message of type T
+// to a message of type Msg.
+//
+// Msg must be the App's Msg type or a type that implements it.
+// Handlers in n must produce T, or a type that implements it.
+//
+// Map lets an app embed a view with a different message type:
+//
+//	Map(func(m widget.Msg) Msg { return widgetMsg{m} }, widget.View(ctx))
+func Map[T, Msg any](f func(T) Msg, n Node) Node {
+	if f == nil {
+		panic("domi: Map called with a nil function")
+	}
+	mapper := func(hd handler) handler {
+		unmarshal := adapt[T](hd)
+		return handler{
+			fn: func(v jsontext.Value) (any, error) {
+				m, err := unmarshal(v)
+				if err != nil {
+					return nil, err
+				}
+				return f(m), nil
+			},
+			vzero: *new(Msg),
+			pzero: (*Msg)(nil),
+			ps:    hd.ps,
+			event: hd.event,
+		}
+	}
+	return fragment(iterMap(iter.Seq[node](Fragment(n).(fragment)), func(c node) node {
+		e, ok := c.(element)
+		if !ok {
+			return c
+		}
+		if inner := e.mapper; inner != nil {
+			e.mapper = func(hd handler) handler { return mapper(inner(hd)) }
+		} else {
+			e.mapper = mapper
+		}
+		return e
+	}))
+}
+
+// iterMap returns the sequence of f applied to each element of seq.
+func iterMap[V, U any](seq iter.Seq[V], f func(V) U) iter.Seq[U] {
+	return func(yield func(U) bool) {
+		for v := range seq {
+			if !yield(f(v)) {
+				break
+			}
+		}
+	}
 }
 
 // On calls f when the named browser event occurs,

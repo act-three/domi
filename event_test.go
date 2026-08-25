@@ -2,6 +2,7 @@ package domi
 
 import (
 	"encoding/json/jsontext"
+	"fmt"
 	"maps"
 	"strings"
 	"testing"
@@ -211,4 +212,138 @@ func TestOnInvalidEventPanics(t *testing.T) {
 			On(event, msgFn("m"))
 		}()
 	}
+}
+
+// Map rewrites the handlers in its subtree to produce To: the harvest
+// types as To for the instance, and each event's From passes through f.
+func TestMapRewritesHandlers(t *testing.T) {
+	btn := Tag("button", On("click", msgFn("go")))(Text("go"))
+	_, h := lower(0, Map(func(s string) int { return len(s) }, Tag("div")(btn)))
+	tbl := typed[int](h)
+	if len(tbl) != 1 {
+		t.Fatalf("expected 1 handler, got %d", len(tbl))
+	}
+	for _, fn := range tbl {
+		got, err := fn(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != 2 {
+			t.Fatalf("got %d, want 2", got)
+		}
+	}
+}
+
+// Map applies the same rule as an instance: a handler's Msg need only
+// implement From.
+func TestMapAcceptsImplementing(t *testing.T) {
+	hit := func(jsontext.Value) (hitMsg, error) { return hitMsg{7}, nil }
+	_, h := lower(0, Map(func(m taggedMsg) string { return m.tag() }, Tag("button", On("click", hit))))
+	for _, fn := range typed[string](h) {
+		got, err := fn(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "hit" {
+			t.Fatalf("got %q, want %q", got, "hit")
+		}
+	}
+}
+
+// A handler that produces neither From nor a type implementing it is a
+// coding error, reported at render time as for an instance's own Msg.
+func TestMapMismatchPanics(t *testing.T) {
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected panic for a mistyped handler")
+		}
+		if msg := fmt.Sprint(r); !strings.Contains(msg, `On("click")`) || !strings.Contains(msg, "want int") {
+			t.Fatalf("panic should name the event and From, got %q", msg)
+		}
+	}()
+	lower(0, Map(func(int) string { return "" }, Tag("button", On("click", msgFn("oops")))))
+}
+
+// Nested Maps compose inside out: the inner f sees the handler's
+// message and the outer f sees the inner's result.
+func TestMapNests(t *testing.T) {
+	inner := Map(func(s string) int { return len(s) }, Tag("button", On("click", msgFn("go"))))
+	_, h := lower(0, Map(func(n int) string { return strings.Repeat("x", n) }, inner))
+	for _, fn := range typed[string](h) {
+		got, err := fn(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != "xx" {
+			t.Fatalf("got %q, want %q", got, "xx")
+		}
+	}
+}
+
+// Map is transparent to addressing: handler keys and element keys are
+// those the subtree has on its own, so wrapping a view in Map changes
+// nothing the client sees.
+func TestMapTransparentToAddresses(t *testing.T) {
+	build := func() Node {
+		return Tag("ul")(
+			WithKey("a", Tag("li", On("click", msgFn("a")))),
+			WithKey("b", Tag("li", On("click", msgFn("b")))),
+			Tag("li", On("click", msgFn("c"))),
+		)
+	}
+	plain, hp := lowerOne(0, build())
+	mapped, hm := lowerOne(0, Map(func(s string) string { return s }, build()))
+	if !maps.Equal(keysOf(hp), keysOf(hm)) {
+		t.Fatalf("handler keys diverged under Map: %v vs %v", keysOf(hp), keysOf(hm))
+	}
+	if got, want := vdom.Render(mapped), vdom.Render(plain); got != want {
+		t.Fatalf("rendered tree diverged under Map:\n got %s\nwant %s", got, want)
+	}
+}
+
+// Map covers every node of a fragment, not just a single element.
+func TestMapFragment(t *testing.T) {
+	frag := Fragment(
+		Tag("button", On("click", msgFn("a"))),
+		Text("between"),
+		Tag("button", On("click", msgFn("b"))),
+	)
+	_, h := lower(0, Map(func(s string) int { return len(s) }, frag))
+	tbl := typed[int](h)
+	if len(tbl) != 2 {
+		t.Fatalf("expected 2 handlers, got %d", len(tbl))
+	}
+	for _, fn := range tbl {
+		got, err := fn(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != 1 {
+			t.Fatalf("got %d, want 1", got)
+		}
+	}
+}
+
+// A handler's error discards the event before f is called, as it
+// would for an unmapped handler.
+func TestMapErrorSkipsF(t *testing.T) {
+	fail := func(jsontext.Value) (string, error) { return "", fmt.Errorf("no thanks") }
+	_, h := lower(0, Map(func(string) int { t.Fatal("f called on error"); return 0 }, Tag("button", On("click", fail))))
+	for _, fn := range typed[int](h) {
+		if _, err := fn(nil); err == nil {
+			t.Fatal("expected the handler's error")
+		}
+	}
+}
+
+// Map panics on a nil function, at construction, where the caller is
+// on the stack.
+func TestMapNilFuncPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for a nil function")
+		}
+	}()
+	Map[string, string](nil, Text("x"))
 }
