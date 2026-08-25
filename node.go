@@ -89,6 +89,10 @@ type element struct {
 	attrs    []Attr
 	children []Node
 	opaque   bool
+
+	// mapper rewrites each handler harvested from this tree.
+	// See Map. Can be nil.
+	mapper func(handler) handler
 }
 
 func (element) isNode() {}
@@ -110,7 +114,13 @@ func (e element) lowered(a addr) (vdom.Node, handlers) {
 		attrs = append(attrs, va)
 	}
 	children, ch := lower(a, e.children...)
-	return vdom.NewElement(e.tag, slices.Values(attrs), children), h.merge(ch)
+	h = h.merge(ch)
+	if e.mapper != nil {
+		for key, hd := range h {
+			h[key] = e.mapper(hd)
+		}
+	}
+	return vdom.NewElement(e.tag, slices.Values(attrs), children), h
 }
 
 // isReservedTag returns whether name is reserved for internal use only.
