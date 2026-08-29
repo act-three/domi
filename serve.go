@@ -23,49 +23,11 @@ var clientJSPath = func() string {
 	return fmt.Sprintf("/domi.%x.js", h[:4])
 }()
 
-// Handler serves an [App].
-//
-// On each initial page load, Handler calls f with the request URL.
-// The callback f is responsible for constructing an App instance
-// and returning any initial [Cmd] to be run.
-// The context carries the instance ID (see [InstanceID])
-// and is cancelled when the instance ends.
-//
-// When the user clicks a link,
-// domi intercepts the navigation
-// and calls onURLRequest to produce a Msg.
-// Param internal indicates whether the link target
-// is to the same origin as the current page.
-// Method Update decides how to handle the request,
-// typically by returning a [PushURL] or [ReplaceURL] command.
-//
-// When the URL changes
-// (from a navigation command or the browser's back and forward buttons),
-// domi calls onURLChange to produce a Msg.
-// The app's Update method then updates its state accordingly.
-//
-// Option values provide further control over Handler's behavior.
-func Handler[Msg any, A App[Msg]](
-	f func(context.Context, *url.URL) (A, Cmd[Msg]),
-	onURLRequest func(u *url.URL, internal bool) Msg,
-	onURLChange func(*url.URL) Msg,
-	o ...Option,
-) http.Handler {
-	sv := newServer(f, onURLRequest, onURLChange, o)
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET "+path.Join("/", sv.prefix, "{id}/events"), sv.handleSSE)
-	mux.HandleFunc("POST "+path.Join("/", sv.prefix, "{id}/event"), sv.handleEvent)
-	mux.HandleFunc("GET "+sv.clientPath, func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "max-age=31536000, immutable")
-		http.ServeContent(w, req, "domi.js", time.Time{}, bytes.NewReader(clientJS))
-	})
-	mux.HandleFunc("GET /", sv.handleRoot)
-	return mux
-}
-
-type server[Msg any] struct {
+// A Server serves an [App].
+// It implements [http.Handler].
+type Server[Msg any] struct {
 	// Config. Never changed after init. Safe to read concurrently.
+	mux             http.ServeMux
 	document        func(clientPath, title string, body Node) Node
 	logger          *slog.Logger
 	instanceTimeout time.Duration
@@ -82,13 +44,35 @@ type server[Msg any] struct {
 	m  map[string]*instance[Msg]
 }
 
-func newServer[Msg any, A App[Msg]](
+// NewServer returns a Server that serves an [App].
+//
+// On initial page load, the Server calls f
+// with the request URL
+// to obtain an instance of the App and an initial Cmd.
+// The context contains the instance ID (see [InstanceID])
+// and is cancelled when the instance ends.
+//
+// When the user clicks a link,
+// domi intercepts the navigation
+// and calls onURLRequest to produce a Msg.
+// Param internal indicates whether the link target
+// is to the same origin as the current page.
+// Method Update decides how to handle the request,
+// typically by returning a [PushURL] or [ReplaceURL] command.
+//
+// When the URL changes
+// (from a navigation command or the browser's back and forward buttons),
+// domi calls onURLChange to produce a Msg.
+// The app's Update method then updates its state accordingly.
+//
+// Option values provide further control over the Server's behavior.
+func NewServer[Msg any, A App[Msg]](
 	f func(context.Context, *url.URL) (A, Cmd[Msg]),
-	onURLRequest func(*url.URL, bool) Msg,
+	onURLRequest func(u *url.URL, internal bool) Msg,
 	onURLChange func(*url.URL) Msg,
-	opts []Option,
-) *server[Msg] {
-	sv := &server[Msg]{
+	o ...Option,
+) *Server[Msg] {
+	sv := &Server[Msg]{
 		document:        defaultDocument,
 		logger:          slog.Default(),
 		instanceTimeout: 48 * time.Hour,
@@ -100,7 +84,7 @@ func newServer[Msg any, A App[Msg]](
 		onURLChange:  onURLChange,
 		m:            make(map[string]*instance[Msg]),
 	}
-	for _, o := range opts {
+	for _, o := range o {
 		switch o := o.(type) {
 		case documentOption:
 			sv.document = func(_, title string, body Node) Node {
@@ -119,10 +103,22 @@ func newServer[Msg any, A App[Msg]](
 		}
 	}
 	sv.clientPath = path.Join("/", sv.prefix, clientJSPath)
+	sv.mux.HandleFunc("GET "+path.Join("/", sv.prefix, "{id}/events"), sv.handleSSE)
+	sv.mux.HandleFunc("POST "+path.Join("/", sv.prefix, "{id}/event"), sv.handleEvent)
+	sv.mux.HandleFunc("GET "+sv.clientPath, func(w http.ResponseWriter, req *http.Request) {
+		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+		w.Header().Set("Cache-Control", "max-age=31536000, immutable")
+		http.ServeContent(w, req, "domi.js", time.Time{}, bytes.NewReader(clientJS))
+	})
+	sv.mux.HandleFunc("GET /", sv.handleRoot)
 	return sv
 }
 
-func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
+func (sv *Server[Msg]) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	sv.mux.ServeHTTP(w, req)
+}
+
+func (sv *Server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	id := rand.Text()
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = context.WithValue(ctx, instanceIDKey{}, id)
@@ -149,7 +145,7 @@ func (sv *server[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	s.handleRoot(w, req)
 }
 
-func (sv *server[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
+func (sv *Server[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 	s, ok := sv.get(req.PathValue("id"))
 	if !ok {
 		http.Error(w, "instance not found", http.StatusNotFound)
@@ -158,7 +154,7 @@ func (sv *server[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 	s.handleEvent(w, req)
 }
 
-func (sv *server[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
+func (sv *Server[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 	s, ok := sv.get(req.PathValue("id"))
 	if !ok {
 		http.Error(w, "instance not found", http.StatusNotFound)
@@ -167,20 +163,20 @@ func (sv *server[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 	s.handleSSE(w, req)
 }
 
-func (sv *server[Msg]) put(id string, s *instance[Msg]) {
+func (sv *Server[Msg]) put(id string, s *instance[Msg]) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	sv.m[id] = s
 }
 
-func (sv *server[Msg]) get(id string) (*instance[Msg], bool) {
+func (sv *Server[Msg]) get(id string) (*instance[Msg], bool) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	s, ok := sv.m[id]
 	return s, ok
 }
 
-func (sv *server[Msg]) delete(id string) {
+func (sv *Server[Msg]) delete(id string) {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	delete(sv.m, id)

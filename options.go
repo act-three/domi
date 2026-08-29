@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// An Option configures a [Handler].
+// An Option configures a [Server].
 type Option interface{ isOption() }
 
 func (documentOption) isOption()          {}
@@ -34,7 +34,7 @@ type (
 // to its HTTP response
 // before the html element.
 //
-//	domi.Handler(newApp, domi.Document(func(title string, body domi.Node) domi.Node {
+//	domi.NewServer(newApp, domi.Document(func(title string, body domi.Node) domi.Node {
 //	    return html.HTML()(
 //	        html.Head()(
 //	            html.Meta(attr.Charset("utf-8")),

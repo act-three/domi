@@ -61,7 +61,7 @@
 //
 // The client-side runtime for domi lives in file client.js
 // at the module root.
-// Apps using the default [Handler] without further customization
+// Apps using [NewServer] without further customization
 // don't need to access this file directly.
 // Domi includes it in the default document head.
 //

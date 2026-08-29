@@ -178,12 +178,12 @@ func navbar() N {
 }
 
 func main() {
-	h := domi.Handler(
+	sv := domi.NewServer(
 		newApp,
 		func(u *url.URL, internal bool) Msg { return Msg{URLRequest: u, Internal: internal} },
 		func(u *url.URL) Msg { return Msg{URLChange: u} },
 	)
 	addr := "127.0.0.1:3012"
 	log.Printf("nav listening on http://%s", addr)
-	log.Fatal(http.ListenAndServe(addr, h))
+	log.Fatal(http.ListenAndServe(addr, sv))
 }
