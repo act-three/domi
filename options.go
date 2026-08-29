@@ -34,7 +34,7 @@ type (
 // to its HTTP response
 // before the html element.
 //
-//	domi.NewServer(newApp, domi.Document(func(title string, body domi.Node) domi.Node {
+//	domi.Document(func(title string, body domi.Node) domi.Node {
 //	    return html.HTML()(
 //	        html.Head()(
 //	            html.Meta(attr.Charset("utf-8")),
@@ -43,10 +43,10 @@ type (
 //	        ),
 //	        body,
 //	    )
-//	}))
+//	})
 //
 // Apps using Document are responsible for loading the Domi client JavaScript.
-// See Bundling the Client in the package documentation for details.
+// See Serving the Client JavaScript Module in the package documentation for details.
 func Document(f func(title string, body Node) Node) Option { return documentOption{f} }
 
 // InternalURLPrefix specifies the prefix p

@@ -1,12 +1,8 @@
 package domi
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
-	_ "embed"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -14,14 +10,6 @@ import (
 	"sync"
 	"time"
 )
-
-//go:embed client.js
-var clientJS []byte
-
-var clientJSPath = func() string {
-	h := sha256.Sum256(clientJS)
-	return fmt.Sprintf("/domi.%x.js", h[:4])
-}()
 
 // A Server serves an [App].
 // It implements [http.Handler].
@@ -102,14 +90,10 @@ func NewServer[Msg any, A App[Msg]](
 			sv.logger = o.l
 		}
 	}
-	sv.clientPath = path.Join("/", sv.prefix, clientJSPath)
+	sv.clientPath = path.Join("/", sv.prefix, "domi."+clientJSDigest+".js")
 	sv.mux.HandleFunc("GET "+path.Join("/", sv.prefix, "{id}/events"), sv.handleSSE)
 	sv.mux.HandleFunc("POST "+path.Join("/", sv.prefix, "{id}/event"), sv.handleEvent)
-	sv.mux.HandleFunc("GET "+sv.clientPath, func(w http.ResponseWriter, req *http.Request) {
-		w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "max-age=31536000, immutable")
-		http.ServeContent(w, req, "domi.js", time.Time{}, bytes.NewReader(clientJS))
-	})
+	sv.mux.HandleFunc("GET "+sv.clientPath, clientJSHandler)
 	sv.mux.HandleFunc("GET /", sv.handleRoot)
 	return sv
 }
@@ -187,9 +171,7 @@ func defaultDocument(clientPath, title string, body Node) Node {
 		Tag("head")(
 			Tag("meta", Name("charset", "utf-8")),
 			Tag("title")(Text(title)),
-			Tag("script", Name("type", "module"))(
-				Text(fmt.Sprintf(`import * as Domi from %q; Domi.run();`, clientPath)),
-			),
+			Tag("script", Name("type", "module"), Name("src", clientPath)),
 		),
 		body,
 	)
