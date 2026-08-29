@@ -1,6 +1,5 @@
 // domi client — ES module. Importing it has no side effects; a caller
-// boots an instance by invoking [run] explicitly, as the framework's HTML
-// renderer does from an inline module script.
+// boots an instance by invoking [run] explicitly.
 
 // fragmentFromHTML parses an HTML string into a DocumentFragment using a
 // <template> element. Template parsing context is permissive — <tr>, <td>,

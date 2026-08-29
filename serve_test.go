@@ -204,15 +204,15 @@ func TestHandlerDocumentOption(t *testing.T) {
 	if !strings.Contains(body, ` prefix="`) {
 		t.Fatalf("instance marker not attached to domi-root; got: %s", body)
 	}
-	// The default bootstrap script must not appear when Document is set —
+	// The default client script tag must not appear when Document is set —
 	// the App is responsible for loading the client itself.
-	if strings.Contains(body, "Domi.run()") {
-		t.Fatalf("default bootstrap leaked into custom Document; got: %s", body)
+	if strings.Contains(body, clientJSDigest) {
+		t.Fatalf("default client script leaked into custom Document; got: %s", body)
 	}
 }
 
 // InternalURLPrefix moves every framework-served URL beneath the chosen
-// path: the rendered instance prefix, the client bootstrap import, the
+// path: the rendered instance prefix, the client script tag, the
 // path the client runtime is served at, and the event routes the client
 // posts back to. The site root stays the app's. A trailing slash in the
 // option is tolerated; path.Join folds the variants together.
@@ -242,11 +242,11 @@ func TestHandlerInternalURLPrefix(t *testing.T) {
 		t.Fatalf("instance prefix not cleanly under /-/domi/: %q", base)
 	}
 
-	// The bootstrap imports the client runtime from under the prefix, and
+	// The script tag loads the client runtime from under the prefix, and
 	// that path actually serves the script.
-	src := regexp.MustCompile(`import \* as Domi from "(/-/domi/domi\.[0-9a-f]+\.js)"`).FindStringSubmatch(body)
+	src := regexp.MustCompile(`<script src="(/-/domi/domi\.[0-9a-f]+\.js)" type="module">`).FindStringSubmatch(body)
 	if src == nil {
-		t.Fatalf("client import not under prefix; body: %s", body)
+		t.Fatalf("client script not under prefix; body: %s", body)
 	}
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", src[1], nil))

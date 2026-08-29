@@ -57,17 +57,27 @@
 // are never updated by domi,
 // like all opaque DOM content.
 //
-// # Bundling the Client
+// # Serving the Client JavaScript Module
 //
-// The client-side runtime for domi lives in file client.js
-// at the module root.
-// Apps using [NewServer] without further customization
-// don't need to access this file directly.
-// Domi includes it in the default document head.
+// Domi provides a JavaScript module to run in the browser.
+// This module is required for domi to function.
+// The default behavior of a [Server] includes this
+// module in the document head.
 //
-// Apps that provide their own document shell
-// (see [Document])
-// should use the following command in build automation
+// Apps that provide their own document shell (see [Document])
+// must also serve the JavaScript module.
+// There are two ways to do it.
+//
+//   - Serve it directly using [ClientModule].
+//   - Bundle it with additional JavaScript code.
+//
+// Apps that provide their own JavaScript code
+// might wish to bundle the domi module with it
+// into one file.
+//
+// The client-side JavaScript runtime for domi
+// lives in file client.js at the module root.
+// Apps can use the following command in build automation
 // to add client.js into their JavaScript bundle.
 // Obtain the filesystem path of client.js by running:
 //
