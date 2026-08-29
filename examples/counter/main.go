@@ -64,12 +64,12 @@ func (c *Counter) Preview(ctx context.Context, _ *url.URL) (string, string, N) {
 }
 
 func main() {
-	h := domi.Handler(
+	sv := domi.NewServer(
 		newCounter,
 		func(*url.URL, bool) Msg { return Msg{} },
 		func(*url.URL) Msg { return Msg{} },
 	)
 	addr := "127.0.0.1:3010"
 	log.Printf("counter listening on http://%s", addr)
-	log.Fatal(http.ListenAndServe(addr, h))
+	log.Fatal(http.ListenAndServe(addr, sv))
 }

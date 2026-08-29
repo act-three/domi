@@ -10,7 +10,7 @@ import (
 
 // App is the state machine provided by a domi application.
 // One instance holds the state for a single browser page load.
-// See [Handler] for instance lifecycle.
+// See [NewServer] for instance lifecycle.
 //
 // The context given to each method contains the instance ID (see [InstanceID])
 // as well as values from the HTTP request context, if any.

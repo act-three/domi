@@ -6,7 +6,7 @@ type instanceIDKey struct{}
 
 // InstanceID returns the instance ID if present in ctx.
 // An instance ID is present in [App] methods
-// and the constructor given to [Handler].
+// and the constructor given to [NewServer].
 func InstanceID(ctx context.Context) string {
 	v, _ := ctx.Value(instanceIDKey{}).(string)
 	return v

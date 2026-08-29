@@ -127,7 +127,7 @@ func newTestInstance[Msg any](app App[Msg]) *instance[Msg] {
 		cancel: cancel,
 		app:    app,
 		logger: slog.New(slog.DiscardHandler),
-		sv: &server[Msg]{
+		sv: &Server[Msg]{
 			replayWindow: replayWindow,
 			keepalive:    25 * time.Second,
 
@@ -182,7 +182,7 @@ func TestHandlerDocumentOption(t *testing.T) {
 			body,
 		)
 	}
-	h := Handler(
+	h := NewServer(
 		func(context.Context, *url.URL) (*counterApp, Cmd[int]) {
 			return &counterApp{}, Batch[int]()
 		},
@@ -217,7 +217,7 @@ func TestHandlerDocumentOption(t *testing.T) {
 // posts back to. The site root stays the app's. A trailing slash in the
 // option is tolerated; path.Join folds the variants together.
 func TestHandlerInternalURLPrefix(t *testing.T) {
-	h := Handler(
+	h := NewServer(
 		func(context.Context, *url.URL) (*counterApp, Cmd[int]) {
 			return &counterApp{}, Batch[int]()
 		},
@@ -383,11 +383,11 @@ func TestInstanceIdleWatchTouchDefers(t *testing.T) {
 // from the live-instance map.
 func TestServerInstanceTimeoutNeverAttached(t *testing.T) {
 	const d = 50 * time.Millisecond
-	sv := newServer(
+	sv := NewServer(
 		func(context.Context, *url.URL) (*counterApp, Cmd[int]) { return &counterApp{}, Batch[int]() },
 		func(*url.URL, bool) int { return 0 },
 		func(*url.URL) int { return 0 },
-		[]Option{InstanceTimeout(d)},
+		InstanceTimeout(d),
 	)
 	sv.handleRoot(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
 
@@ -1653,11 +1653,10 @@ func (pathSetApp) Preview(context.Context, *url.URL) (string, string, Node) { re
 // instead of waiting for a resync. The body attribute and s.pathSets are
 // built from one harvest; this guards their ordering in handleRoot.
 func TestHandleRootSeedsPathSets(t *testing.T) {
-	sv := newServer(
+	sv := NewServer(
 		func(context.Context, *url.URL) (pathSetApp, Cmd[int]) { return pathSetApp{}, Batch[int]() },
 		func(*url.URL, bool) int { return 0 },
 		func(*url.URL) int { return 0 },
-		nil,
 	)
 	rec := httptest.NewRecorder()
 	sv.handleRoot(rec, httptest.NewRequest("GET", "/", nil))
@@ -1685,11 +1684,10 @@ func TestHandleRootSeedsPathSets(t *testing.T) {
 // extensions and other scripts add to it stay outside the managed
 // tree; display:contents keeps the wrapper itself out of layout.
 func TestHandleRootMountsWrapperInsideBody(t *testing.T) {
-	sv := newServer(
+	sv := NewServer(
 		func(context.Context, *url.URL) (*counterApp, Cmd[int]) { return &counterApp{}, Batch[int]() },
 		func(*url.URL, bool) int { return 0 },
 		func(*url.URL) int { return 0 },
-		nil,
 	)
 	rec := httptest.NewRecorder()
 	sv.handleRoot(rec, httptest.NewRequest("GET", "/", nil))

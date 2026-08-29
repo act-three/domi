@@ -38,7 +38,7 @@ type instance[Msg any] struct {
 
 	id     string
 	app    App[Msg]
-	sv     *server[Msg]
+	sv     *Server[Msg]
 	logger *slog.Logger
 
 	mu        sync.Mutex // protects the following fields

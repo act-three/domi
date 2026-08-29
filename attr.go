@@ -140,7 +140,7 @@ func Group(a ...Attr) Attr {
 // A combining attribute whose combined value is empty
 // is omitted from the rendered output entirely.
 //
-// RegisterCombining must be called before Handler.
+// RegisterCombining must be called before NewServer.
 // This is typically done in an init function in packages
 // that define custom attributes.
 //
