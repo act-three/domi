@@ -578,7 +578,7 @@ func TestTagReservedPanics(t *testing.T) {
 }
 
 // The domi- attribute namespace is owned by domi: apart from the
-// attributes domi defines for app use, like domi-bypass, every domi-
+// attributes domi defines for app use, like domi-handle, every domi-
 // name is reserved — the client trusts them as framework state, and
 // an app-supplied domi-key, for one, would let an unkeyed
 // element masquerade as keyed. Name panics at construction, where the
@@ -594,7 +594,23 @@ func TestNameReservedAttrPanics(t *testing.T) {
 			Name(name)
 		}()
 	}
-	Name("domi-bypass") // defined for app use, not reserved; must not panic
+	Name("domi-handle", "yes") // defined for app use, not reserved; must not panic
+}
+
+func TestHandleLink(t *testing.T) {
+	for _, policy := range []string{"yes", "same-origin", "no"} {
+		got := renderTree(t, Tag("a", HandleLink(policy))(Text("go")))
+		want := `<a domi-handle="` + policy + `">go</a>`
+		if got != want {
+			t.Errorf("HandleLink(%q) = %q, want %q", policy, got, want)
+		}
+	}
+	defer func() {
+		if recover() == nil {
+			t.Fatal("HandleLink accepted an unsupported policy")
+		}
+	}()
+	HandleLink("sometimes")
 }
 
 // ---- UnsafeParseRaw tests ----
@@ -783,7 +799,7 @@ func TestUnsafeParseRawSVG(t *testing.T) {
 // carry any other forged framework state. The empty-valued spelling
 // is rejected too — the client tests keyedness by the attribute's
 // presence. The attributes domi defines for app use, like
-// domi-bypass, parse as ordinary attributes.
+// domi-handle, parse as an ordinary attribute.
 func TestUnsafeParseRawRejectsReservedAttr(t *testing.T) {
 	for _, src := range []string{
 		`<li domi-key="a">a</li>`,
@@ -794,8 +810,8 @@ func TestUnsafeParseRawRejectsReservedAttr(t *testing.T) {
 			t.Fatalf("UnsafeParseRaw(%q): expected error for a reserved attribute", src)
 		}
 	}
-	if got := renderParsed(t, `<a domi-bypass href="/x">out</a>`); got != `<a domi-bypass href="/x">out</a>` {
-		t.Fatalf("domi-bypass should parse: got %q", got)
+	if got := renderParsed(t, `<a domi-handle="yes" href="/x">out</a>`); got != `<a domi-handle="yes" href="/x">out</a>` {
+		t.Fatalf("domi-handle should parse: got %q", got)
 	}
 }
 

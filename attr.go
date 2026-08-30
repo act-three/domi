@@ -8,10 +8,6 @@ import (
 	"ily.dev/domi/internal/vdom"
 )
 
-// Bypass annotates a link to use the browser's built-in navigation,
-// rather than being intercepted by domi.
-var Bypass Attr = Name("domi-bypass")
-
 // An Attr is an HTML attribute.
 //
 // A given attribute name does not appear more than once
@@ -45,7 +41,7 @@ func (attr) isAttr() {}
 
 // isReservedAttr returns whether name is reserved for internal use only.
 func isReservedAttr(name string) bool {
-	return strings.HasPrefix(name, "domi-") && name != "domi-bypass"
+	return strings.HasPrefix(name, "domi-") && name != "domi-handle"
 }
 
 // Name returns an HTML attribute with the given name and value.
@@ -79,7 +75,7 @@ func isReservedAttr(name string) bool {
 // except for foreign-content (SVG and MathML) mixed-case names
 // like viewBox.
 //
-// This package defines a custom attribute ([Bypass]) for use by applications.
+// This package defines a custom attribute ([HandleLink]) for use by applications.
 // Its name has the prefix "domi-".
 // Other attribute names with that prefix are reserved.
 //
@@ -130,6 +126,28 @@ func Group(a ...Attr) Attr {
 			}
 		}
 	})
+}
+
+// HandleLink annotates a link ("a") element
+// to configure whether domi handles its navigation.
+// It has no effect on other elements.
+//
+// The policy must be one of these values:
+//
+//   - "yes" handles the navigation regardless of origin.
+//   - "same-origin" handles it only when its target is same-origin.
+//   - "no" leaves it to the browser.
+//
+// The default policy is same-origin.
+//
+// If policy is invalid, HandleLink panics.
+func HandleLink(policy string) Attr {
+	switch policy {
+	case "yes", "same-origin", "no":
+	default:
+		panic(fmt.Sprintf("domi: invalid link policy %q", policy))
+	}
+	return Name("domi-handle", policy)
 }
 
 // RegisterCombining registers name as a "combining" attribute.

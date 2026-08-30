@@ -370,7 +370,6 @@ func (s *instance[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		Handler     string         `json:",omitempty"`
 		Event       jsontext.Value `json:",omitempty"`
 		URL         string         `json:",omitempty"`
-		Internal    bool           `json:",omitempty"`
 		SnapshotVer string         `json:",omitempty"`
 		ToPreview   bool           `json:",omitempty"`
 		// Ver echoes the version id of the tree the client displayed
@@ -405,7 +404,12 @@ func (s *instance[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 			s.logger.WarnContext(ctx, "bad URLRequest URL", "url", envelope.URL, "error", err)
 			break
 		}
-		msg := s.sv.onURLRequest(u, envelope.Internal)
+		// The client sends same-origin targets as origin-relative URLs
+		// and all other targets as absolute URLs. Preserve that distinction
+		// in the callback without requiring the server to know its public
+		// origin.
+		internal := u.Scheme == "" && u.Host == ""
+		msg := s.sv.onURLRequest(u, internal)
 		go s.apply(mergedContext{s.ctx, ctx}, []Msg{msg}, nil)
 	case msgPrefetch:
 		u, err := url.Parse(envelope.URL)
