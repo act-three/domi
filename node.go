@@ -91,7 +91,7 @@ type element struct {
 	opaque   bool
 
 	// mapper rewrites each handler harvested from this tree.
-	// See Map. Can be nil.
+	// See MapNode. Can be nil.
 	mapper func(handler) handler
 }
 

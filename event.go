@@ -94,19 +94,19 @@ func adapt[Msg any](hd handler) func(jsontext.Value) (Msg, error) {
 	}
 }
 
-// Map transforms the messages produced by n.
+// MapNode transforms the messages produced by n.
 // It calls f to convert each message of type T
 // to a message of type Msg.
 //
 // Msg must be the App's Msg type or a type that implements it.
 // Handlers in n must produce T, or a type that implements it.
 //
-// Map lets an app embed a view with a different message type:
+// MapNode lets an app embed a view with a different message type:
 //
-//	Map(func(m widget.Msg) Msg { return widgetMsg{m} }, widget.View(ctx))
-func Map[T, Msg any](f func(T) Msg, n Node) Node {
+//	MapNode(func(m widget.Msg) Msg { return widgetMsg{m} }, widget.View(ctx))
+func MapNode[T, Msg any](f func(T) Msg, n Node) Node {
 	if f == nil {
-		panic("domi: Map called with a nil function")
+		panic("domi: MapNode called with a nil function")
 	}
 	mapper := func(hd handler) handler {
 		unmarshal := adapt[T](hd)

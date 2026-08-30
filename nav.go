@@ -13,12 +13,7 @@ import (
 // with no scheme or host.
 func PushURL[Msg any](url string) Cmd[Msg] {
 	u := mustParseRelativeURL("domi.PushURL", url)
-	href := u.String()
-	return batch[Msg](slices.Values([]cmd[Msg]{
-		func(s *instance[Msg]) (Msg, *nav) {
-			return s.sv.onURLChange(u), &nav{push: href}
-		},
-	}))
+	return batch[Msg](slices.Values([]cmd[Msg]{{nav: &nav{push: u}}}))
 }
 
 // ReplaceURL changes the browser URL
@@ -28,12 +23,7 @@ func PushURL[Msg any](url string) Cmd[Msg] {
 // with no scheme or host.
 func ReplaceURL[Msg any](url string) Cmd[Msg] {
 	u := mustParseRelativeURL("domi.ReplaceURL", url)
-	href := u.String()
-	return batch[Msg](slices.Values([]cmd[Msg]{
-		func(s *instance[Msg]) (Msg, *nav) {
-			return s.sv.onURLChange(u), &nav{replace: href}
-		},
-	}))
+	return batch[Msg](slices.Values([]cmd[Msg]{{nav: &nav{replace: u}}}))
 }
 
 // Load causes a full-page browser navigation to url,
@@ -47,12 +37,7 @@ func ReplaceURL[Msg any](url string) Cmd[Msg] {
 // use [Bypass] instead.
 func Load[Msg any](url string) Cmd[Msg] {
 	mustParseURL("domi.Load", url)
-	return batch[Msg](slices.Values([]cmd[Msg]{
-		func(s *instance[Msg]) (Msg, *nav) {
-			var zero Msg
-			return zero, &nav{load: url}
-		},
-	}))
+	return batch[Msg](slices.Values([]cmd[Msg]{{nav: &nav{load: url}}}))
 }
 
 // mustParseURL parses url and panics if it is malformed. Unlike
