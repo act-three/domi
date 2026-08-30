@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"iter"
 	"net/url"
-	"slices"
 )
 
 // App is the state machine provided by a domi application.
@@ -65,9 +64,9 @@ type Cmd[Msg any] interface {
 	isCmd()
 }
 
-// batch is the lowered form of a [Cmd]: a sequence of commands
+// batch is the lowered form of a [Cmd]: a list of commands
 // that domi spawns concurrently.
-type batch[Msg any] iter.Seq[cmd[Msg]]
+type batch[Msg any] []cmd[Msg]
 
 func (batch[Msg]) isCmd() {}
 
@@ -80,27 +79,23 @@ type cmd[Msg any] struct {
 
 // Func returns a Cmd that calls f.
 func Func[Msg any](f func() Msg) Cmd[Msg] {
-	return batch[Msg](slices.Values([]cmd[Msg]{{f: f}}))
+	return batch[Msg]{{f: f}}
 }
 
 // Batch returns a Cmd that runs all the given Cmd values concurrently.
 func Batch[Msg any](c ...Cmd[Msg]) Cmd[Msg] {
-	return batch[Msg](func(yield func(cmd[Msg]) bool) {
-		for _, c := range c {
-			switch v := c.(type) {
-			case nil:
-				// A nil Cmd contributes nothing, like an empty Batch.
-			case batch[Msg]:
-				for f := range v {
-					if !yield(f) {
-						return
-					}
-				}
-			default:
-				panic(fmt.Sprintf("domi: cannot lower %T", c))
-			}
+	var all batch[Msg]
+	for _, c := range c {
+		switch v := c.(type) {
+		case nil:
+			// A nil Cmd contributes nothing, like an empty Batch.
+		case batch[Msg]:
+			all = append(all, v...)
+		default:
+			panic(fmt.Sprintf("domi: cannot lower %T", c))
 		}
-	})
+	}
+	return all
 }
 
 // MapCmd converts a Cmd[T] into a Cmd[Msg].
@@ -111,12 +106,16 @@ func MapCmd[T, Msg any](f func(T) Msg, c Cmd[T]) Cmd[Msg] {
 	if f == nil {
 		panic("domi: MapCmd called with a nil function")
 	}
-	return batch[Msg](iterMap(iter.Seq[cmd[T]](Batch[T](c).(batch[T])), func(c cmd[T]) cmd[Msg] {
+	all := Batch[T](c).(batch[T])
+	mapped := make(batch[Msg], len(all))
+	for i, c := range all {
 		if c.f == nil {
-			return cmd[Msg]{nav: c.nav}
+			mapped[i] = cmd[Msg]{nav: c.nav}
+		} else {
+			mapped[i] = cmd[Msg]{f: func() Msg { return f(c.f()) }}
 		}
-		return cmd[Msg]{f: func() Msg { return f(c.f()) }}
-	}))
+	}
+	return mapped
 }
 
 // A Sub produces a sequence of Msg values,
