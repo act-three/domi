@@ -33,7 +33,6 @@ import (
 
 type Msg struct {
 	URLRequest *url.URL
-	Internal   bool
 	URLChange  *url.URL
 	Tick       bool
 }
@@ -91,10 +90,11 @@ func (app *App) applyRoute(u *url.URL) {
 func (app *App) Update(_ context.Context, msg Msg) domi.Cmd[Msg] {
 	switch {
 	case msg.URLRequest != nil:
-		if msg.Internal {
-			return domi.PushURL[Msg](msg.URLRequest.String())
+		u := msg.URLRequest
+		if u.Host == "" {
+			return domi.PushURL[Msg](u.String())
 		}
-		return domi.Load[Msg](msg.URLRequest.String())
+		return domi.Load[Msg](u.String())
 	case msg.URLChange != nil:
 		app.applyRoute(msg.URLChange)
 	case msg.Tick:
@@ -238,7 +238,7 @@ func detail(app *App) N {
 func main() {
 	sv := domi.NewServer(
 		newApp,
-		func(u *url.URL, internal bool) Msg { return Msg{URLRequest: u, Internal: internal} },
+		func(u *url.URL) Msg { return Msg{URLRequest: u} },
 		func(u *url.URL) Msg { return Msg{URLChange: u} },
 	)
 	addr := "127.0.0.1:3013"

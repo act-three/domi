@@ -132,7 +132,7 @@ func newTestInstance[Msg any](app App[Msg]) *instance[Msg] {
 			keepalive:    25 * time.Second,
 
 			onURLChange:  func(*url.URL) Msg { var zero Msg; return zero },
-			onURLRequest: func(*url.URL, bool) Msg { var zero Msg; return zero },
+			onURLRequest: func(*url.URL) Msg { var zero Msg; return zero },
 		},
 		log:       make([]frame, replayWindow),
 		base:      verInitial,
@@ -186,7 +186,7 @@ func TestHandlerDocumentOption(t *testing.T) {
 		func(context.Context, *url.URL) (*counterApp, Cmd[int]) {
 			return &counterApp{}, Batch[int]()
 		},
-		func(*url.URL, bool) int { return 0 },
+		func(*url.URL) int { return 0 },
 		func(*url.URL) int { return 0 },
 		Document(custom),
 	)
@@ -221,7 +221,7 @@ func TestHandlerInternalURLPrefix(t *testing.T) {
 		func(context.Context, *url.URL) (*counterApp, Cmd[int]) {
 			return &counterApp{}, Batch[int]()
 		},
-		func(*url.URL, bool) int { return 0 },
+		func(*url.URL) int { return 0 },
 		func(*url.URL) int { return 0 },
 		InternalURLPrefix("/-/domi/"),
 		Logger(slog.New(slog.DiscardHandler)),
@@ -299,30 +299,26 @@ func TestHandleEventDispatch(t *testing.T) {
 
 // URLRequest targets use their wire representation to communicate origin:
 // same-origin targets are relative, while cross-origin targets are absolute.
-// The server derives internal from that distinction before calling the app.
-func TestHandleEventURLRequestDerivesInternal(t *testing.T) {
-	for _, tt := range []struct {
-		url      string
-		internal bool
-	}{
-		{"/next?q=1#part", true},
-		{"next", true},
-		{"https://elsewhere.example/next?q=1#part", false},
-		{"//elsewhere.example/next", false},
-		{"mailto:person@example.com", false},
+// The server hands the URL to the app unmodified.
+func TestHandleEventURLRequest(t *testing.T) {
+	for _, tt := range []string{
+		"/next?q=1#part",
+		"next",
+		"https://elsewhere.example/next?q=1#part",
+		"//elsewhere.example/next",
+		"mailto:person@example.com",
 	} {
-		t.Run(tt.url, func(t *testing.T) {
+		t.Run(tt, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
 				s := newTestInstance(&counterApp{})
 				defer s.cancel()
 				var gotURL string
-				var gotInternal bool
-				s.sv.onURLRequest = func(u *url.URL, internal bool) int {
-					gotURL, gotInternal = u.String(), internal
+				s.sv.onURLRequest = func(u *url.URL) int {
+					gotURL = u.String()
 					return 0
 				}
 
-				body := fmt.Sprintf(`{"Type":"URLRequest","URL":%q}`, tt.url)
+				body := fmt.Sprintf(`{"Type":"URLRequest","URL":%q}`, tt)
 				rec := httptest.NewRecorder()
 				s.handleEvent(rec, httptest.NewRequest("POST", "/x/event", strings.NewReader(body)))
 				synctest.Wait()
@@ -330,8 +326,8 @@ func TestHandleEventURLRequestDerivesInternal(t *testing.T) {
 				if rec.Code != http.StatusNoContent {
 					t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
 				}
-				if gotURL != tt.url || gotInternal != tt.internal {
-					t.Fatalf("onURLRequest = (%q, %v), want (%q, %v)", gotURL, gotInternal, tt.url, tt.internal)
+				if gotURL != tt {
+					t.Fatalf("onURLRequest = %q, want %q", gotURL, tt)
 				}
 			})
 		})
@@ -426,7 +422,7 @@ func TestServerInstanceTimeoutNeverAttached(t *testing.T) {
 	const d = 50 * time.Millisecond
 	sv := NewServer(
 		func(context.Context, *url.URL) (*counterApp, Cmd[int]) { return &counterApp{}, Batch[int]() },
-		func(*url.URL, bool) int { return 0 },
+		func(*url.URL) int { return 0 },
 		func(*url.URL) int { return 0 },
 		InstanceTimeout(d),
 	)
@@ -1801,7 +1797,7 @@ func (pathSetApp) Preview(context.Context, *url.URL) (string, string, Node) { re
 func TestHandleRootSeedsPathSets(t *testing.T) {
 	sv := NewServer(
 		func(context.Context, *url.URL) (pathSetApp, Cmd[int]) { return pathSetApp{}, Batch[int]() },
-		func(*url.URL, bool) int { return 0 },
+		func(*url.URL) int { return 0 },
 		func(*url.URL) int { return 0 },
 	)
 	rec := httptest.NewRecorder()
@@ -1832,7 +1828,7 @@ func TestHandleRootSeedsPathSets(t *testing.T) {
 func TestHandleRootMountsWrapperInsideBody(t *testing.T) {
 	sv := NewServer(
 		func(context.Context, *url.URL) (*counterApp, Cmd[int]) { return &counterApp{}, Batch[int]() },
-		func(*url.URL, bool) int { return 0 },
+		func(*url.URL) int { return 0 },
 		func(*url.URL) int { return 0 },
 	)
 	rec := httptest.NewRecorder()

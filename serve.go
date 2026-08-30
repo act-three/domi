@@ -25,7 +25,7 @@ type Server[Msg any] struct {
 	clientPath      string // full path the client runtime is served at, prefix included
 
 	appf         func(context.Context, *url.URL) (App[Msg], Cmd[Msg])
-	onURLRequest func(*url.URL, bool) Msg
+	onURLRequest func(*url.URL) Msg
 	onURLChange  func(*url.URL) Msg
 
 	mu sync.Mutex
@@ -45,8 +45,6 @@ type Server[Msg any] struct {
 // as configured by [HandleLink].
 // It then calls onURLRequest to produce a Msg.
 // Same-origin links omit the URL origin.
-// The target URL is origin-relative when internal is true
-// and absolute otherwise.
 // Method Update decides how to handle the request,
 // typically by returning a [PushURL] or [ReplaceURL] command.
 //
@@ -58,7 +56,7 @@ type Server[Msg any] struct {
 // Option values provide further control over the Server's behavior.
 func NewServer[Msg any, A App[Msg]](
 	f func(context.Context, *url.URL) (A, Cmd[Msg]),
-	onURLRequest func(u *url.URL, internal bool) Msg,
+	onURLRequest func(u *url.URL) Msg,
 	onURLChange func(*url.URL) Msg,
 	o ...Option,
 ) *Server[Msg] {
