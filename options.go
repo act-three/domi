@@ -2,6 +2,7 @@ package domi
 
 import (
 	"log/slog"
+	"path"
 	"time"
 )
 
@@ -54,8 +55,10 @@ func Document(f func(title string, body Node) Node) Option { return documentOpti
 // This lets the application guarantee that domi's
 // internal URL paths don't overlap with paths the app uses.
 //
-// The default prefix is the empty string.
-func InternalURLPrefix(p string) Option { return internalURLPrefixOption{p} }
+// The default prefix is "/".
+func InternalURLPrefix(p string) Option {
+	return internalURLPrefixOption{path.Clean("/" + p)}
+}
 
 // Keepalive sets how long an SSE connection is left idle
 // before the server sends an SSE comment line to the client.
