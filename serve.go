@@ -41,10 +41,12 @@ type Server[Msg any] struct {
 // and is cancelled when the instance ends.
 //
 // When the user clicks a link,
-// domi intercepts the navigation
-// and calls onURLRequest to produce a Msg.
-// Param internal indicates whether the link target
-// is to the same origin as the current page.
+// domi may intercept the navigation,
+// as configured by [HandleLink].
+// It then calls onURLRequest to produce a Msg.
+// Same-origin links omit the URL origin.
+// The target URL is origin-relative when internal is true
+// and absolute otherwise.
 // Method Update decides how to handle the request,
 // typically by returning a [PushURL] or [ReplaceURL] command.
 //

@@ -297,6 +297,47 @@ func TestHandleEventDispatch(t *testing.T) {
 	})
 }
 
+// URLRequest targets use their wire representation to communicate origin:
+// same-origin targets are relative, while cross-origin targets are absolute.
+// The server derives internal from that distinction before calling the app.
+func TestHandleEventURLRequestDerivesInternal(t *testing.T) {
+	for _, tt := range []struct {
+		url      string
+		internal bool
+	}{
+		{"/next?q=1#part", true},
+		{"next", true},
+		{"https://elsewhere.example/next?q=1#part", false},
+		{"//elsewhere.example/next", false},
+		{"mailto:person@example.com", false},
+	} {
+		t.Run(tt.url, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				s := newTestInstance(&counterApp{})
+				defer s.cancel()
+				var gotURL string
+				var gotInternal bool
+				s.sv.onURLRequest = func(u *url.URL, internal bool) int {
+					gotURL, gotInternal = u.String(), internal
+					return 0
+				}
+
+				body := fmt.Sprintf(`{"Type":"URLRequest","URL":%q}`, tt.url)
+				rec := httptest.NewRecorder()
+				s.handleEvent(rec, httptest.NewRequest("POST", "/x/event", strings.NewReader(body)))
+				synctest.Wait()
+
+				if rec.Code != http.StatusNoContent {
+					t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+				}
+				if gotURL != tt.url || gotInternal != tt.internal {
+					t.Fatalf("onURLRequest = (%q, %v), want (%q, %v)", gotURL, gotInternal, tt.url, tt.internal)
+				}
+			})
+		})
+	}
+}
+
 // A frame that changes the tree carries a fresh version id naming the
 // new tree, so the client learns the name along with the change.
 func TestApplyMintsVerOnTreeChange(t *testing.T) {
@@ -1032,6 +1073,27 @@ func TestInstancePrefetchEmitsSetPreview(t *testing.T) {
 	// A speculative preview must not touch the navigation snapshot history.
 	if _, ok := s.snapshots.get(s.ver); ok {
 		t.Fatalf("candidate %q leaked into the snapshot history", s.ver)
+	}
+}
+
+// A cross-origin anchor handled by domi sends its absolute target to
+// Preview. The requested URL stays absolute as the client's match key,
+// while a successful preview still lands on an origin-relative destination.
+func TestInstancePrefetchExternalURL(t *testing.T) {
+	s := newTestInstance[int](&previewApp{route: "/"})
+	defer s.cancel()
+	u, _ := url.Parse("https://elsewhere.example/next?q=1#part")
+	s.prefetch(s.ctx, u)
+
+	e := s.log[1%uint64(len(s.log))].Effects[0]
+	if e.Type != effectSetPreview {
+		t.Fatalf("expected SetPreview, got %+v", e)
+	}
+	if e.URL != u.String() {
+		t.Fatalf("SetPreview URL = %q, want %q", e.URL, u)
+	}
+	if e.Dest != "/next" {
+		t.Fatalf("SetPreview Dest = %q, want %q", e.Dest, "/next")
 	}
 }
 

@@ -494,6 +494,38 @@ function postEnvelope(eventURL, h, e, ver, mutations) {
   }).catch((err) => console.error('domi: event POST failed', err));
 }
 
+// handledAnchorURL returns the target to send to the server when domi
+// should handle a's navigation. Same-origin targets are represented as
+// origin-relative URLs; other targets are absolute. The server can derive
+// the same-origin bit from that representation without knowing the
+// browser-facing origin. A null result leaves navigation to the browser.
+//
+//
+function handledAnchorURL(a) {
+  const href = a.getAttribute('href');
+  if (!href) return null;
+  const target = a.getAttribute('target');
+  if (target && target !== '_self') return null;
+  if (a.hasAttribute('download')) return null;
+
+  const policy = a.getAttribute('domi-handle') || 'same-origin';
+  if (policy === 'no') return null;
+  if (policy !== 'yes' && policy !== 'same-origin') return null;
+
+  let url;
+  try { url = new URL(href, location.href); } catch { return null; }
+  const internal = url.origin === location.origin;
+  if (!internal && policy !== 'yes') return null;
+  if (!internal) return url.href;
+  // Canonicalize a run of leading slashes to one before putting the path
+  // on the wire, so a same-origin path like //admin cannot be mistaken
+  // for a scheme-relative URL. That is safe because Go's ServeMux also
+  // does this canonicalization (plus more), so //admin will be treated
+  // the same way both here and on initial page load.
+  const pathname = url.pathname.replace(/^\/+/, '/');
+  return pathname + url.search + url.hash;
+}
+
 // run wires up the domi instance on the <domi-root> mount element just
 // inside document.body and starts the SSE patch stream. Reads the URL
 // prefix from domi-root[prefix=…] (which the server emits on initial
@@ -663,13 +695,12 @@ export function run() {
     });
   }
 
-  // Link interception for SPA navigation. Intercepts clicks on <a>
-  // elements with same-origin hrefs and routes them through the
-  // server's onURLRequest callback instead of navigating. Skips
+  // Link interception for application navigation. Routes eligible <a>
+  // clicks through the server's onURLRequest callback. By default only
+  // same-origin targets are eligible; domi-handle expands or disables
+  // handling for an anchor. Skips
   // modified clicks (ctrl/shift/alt/meta), non-left-button clicks,
-  // links with target attributes, download links, links carrying the
-  // domi-bypass attribute (the app opted out of interception so
-  // the browser navigates normally), and links where an ancestor
+  // links with target attributes, download links, and links where an ancestor
   // already has a domi-msg-click handler (the app opted into explicit
   // handling).
   root.addEventListener('click', (e) => {
@@ -690,20 +721,10 @@ export function run() {
       el = el.parentNode;
     }
 
-    const href = a.getAttribute('href');
-    if (!href) return;
-    const target = a.getAttribute('target');
-    if (target && target !== '_self') return;
-    if (a.hasAttribute('download')) return;
-    if (a.hasAttribute('domi-bypass')) return;
-
-    let url;
-    try { url = new URL(href, location.href); } catch { return; }
-    const internal = url.origin === location.origin;
-    if (!internal) return; // let external links navigate normally
+    const urlStr = handledAnchorURL(a);
+    if (urlStr == null) return;
 
     e.preventDefault();
-    const urlStr = url.pathname + url.search + url.hash;
     if (pv && pv.url === urlStr) {
       if (pv.isReady) {
         navigateToPreview();
@@ -716,7 +737,7 @@ export function run() {
     fetch(eventURL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ Type: 'URLRequest', URL: urlStr, Internal: true }),
+      body: JSON.stringify({ Type: 'URLRequest', URL: urlStr }),
     }).catch((err) => console.error('domi: urlRequest POST failed', err));
   });
 
@@ -730,16 +751,8 @@ export function run() {
       a = a.parentNode;
     }
     if (!a || a.tagName !== 'A') return;
-    const href = a.getAttribute('href');
-    if (!href) return;
-    const target = a.getAttribute('target');
-    if (target && target !== '_self') return;
-    if (a.hasAttribute('download')) return;
-    if (a.hasAttribute('domi-bypass')) return;
-    let url;
-    try { url = new URL(href, location.href); } catch { return; }
-    if (url.origin !== location.origin) return;
-    const urlStr = url.pathname + url.search + url.hash;
+    const urlStr = handledAnchorURL(a);
+    if (urlStr == null) return;
     if (pv && pv.isClicked) return; // a click is committed; don't supersede it
     if (pv && pv.url === urlStr) return; // already requested or holding it
     pv = { url: urlStr, isReady: false, isClicked: false };
@@ -831,7 +844,7 @@ export function run() {
               fetch(eventURL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ Type: 'URLRequest', URL: url, Internal: true }),
+                body: JSON.stringify({ Type: 'URLRequest', URL: url }),
               }).catch((err) => console.error('domi: urlRequest POST failed', err));
             }
           }

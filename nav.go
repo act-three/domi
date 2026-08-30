@@ -33,7 +33,7 @@ func ReplaceURL[Msg any](url string) Cmd[Msg] {
 //
 // To obtain this behavior from a link
 // without a server round trip,
-// use [Bypass] instead.
+// use [HandleLink] with policy "no".
 func Load[Msg any](url string) Cmd[Msg] {
 	mustParseURL("domi.Load", url)
 	return batch[Msg]{{nav: &nav{load: url}}}

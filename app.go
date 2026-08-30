@@ -35,11 +35,14 @@ type App[Msg any] interface {
 	// Preview must not modify the App state.
 	//
 	// The call to Preview represents a hypothetical
-	// onURLRequest call from the browser. If Preview returns
-	// a nonempty dest value, it must equal the value the app
-	// would use for the PushURL command it issues in response
-	// to the URL request. The value for n should be the same as
-	// that returned by View after a navigation to dest.
+	// onURLRequest call from the browser. Same-origin links
+	// omit the URL origin.
+	//
+	// If Preview returns a nonempty dest value, it must equal
+	// the value the app would use for the PushURL command it
+	// issues in response to the URL request. The value for n
+	// should be the same as that returned by View after a
+	// navigation to dest.
 	//
 	// An empty dest denotes that there is no preview available.
 	// It is always safe to decline to provide a preview.
