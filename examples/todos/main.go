@@ -128,7 +128,7 @@ func itemRow(it Item) N {
 func main() {
 	sv := domi.NewServer(
 		newTodos,
-		func(*url.URL, bool) Msg { return Msg{} },
+		func(*url.URL) Msg { return Msg{} },
 		func(*url.URL) Msg { return Msg{} },
 	)
 	addr := "127.0.0.1:3011"

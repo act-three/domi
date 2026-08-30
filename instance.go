@@ -404,12 +404,7 @@ func (s *instance[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 			s.logger.WarnContext(ctx, "bad URLRequest URL", "url", envelope.URL, "error", err)
 			break
 		}
-		// The client sends same-origin targets as origin-relative URLs
-		// and all other targets as absolute URLs. Preserve that distinction
-		// in the callback without requiring the server to know its public
-		// origin.
-		internal := u.Scheme == "" && u.Host == ""
-		msg := s.sv.onURLRequest(u, internal)
+		msg := s.sv.onURLRequest(u)
 		go s.apply(mergedContext{s.ctx, ctx}, []Msg{msg}, nil)
 	case msgPrefetch:
 		u, err := url.Parse(envelope.URL)
