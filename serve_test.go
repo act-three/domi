@@ -665,7 +665,7 @@ func TestBatchNilCmdContributesNothing(t *testing.T) {
 
 // MapCmd passes each command's message through f.
 func TestMapCmdMapsMsg(t *testing.T) {
-	cmds := slices.Collect(iter.Seq[cmd[int]](MapCmd(func(s string) int { return len(s) }, Func(func() string { return "go" })).(batch[int])))
+	cmds := MapCmd(func(s string) int { return len(s) }, Func(func() string { return "go" })).(batch[int])
 	if len(cmds) != 1 {
 		t.Fatalf("expected 1 command, got %d", len(cmds))
 	}
@@ -688,7 +688,7 @@ func TestMapCmdNavigationUnchanged(t *testing.T) {
 		{"replace", ReplaceURL[string]("/about"), cmd[int]{nav: &nav{replace: &url.URL{Path: "/about"}}}},
 		{"load", Load[string]("https://example.com/"), cmd[int]{nav: &nav{load: "https://example.com/"}}},
 	} {
-		cmds := slices.Collect(iter.Seq[cmd[int]](MapCmd(f, tc.c).(batch[int])))
+		cmds := MapCmd(f, tc.c).(batch[int])
 		if len(cmds) != 1 {
 			t.Fatalf("%s: expected 1 command, got %d", tc.name, len(cmds))
 		}
@@ -700,7 +700,7 @@ func TestMapCmdNavigationUnchanged(t *testing.T) {
 
 // MapCmd treats a nil Cmd as Batch does: it lowers to nothing.
 func TestMapCmdNilCmd(t *testing.T) {
-	cmds := slices.Collect(iter.Seq[cmd[int]](MapCmd(func(string) int { return 0 }, nil).(batch[int])))
+	cmds := MapCmd(func(string) int { return 0 }, nil).(batch[int])
 	if len(cmds) != 0 {
 		t.Fatalf("expected no commands, got %d", len(cmds))
 	}
@@ -929,10 +929,7 @@ func TestInstanceSnapshotStoredOnApply(t *testing.T) {
 // PushURL/ReplaceURL.
 func TestLoadCmdProducesLoadNav(t *testing.T) {
 	const target = "https://example.com/logout"
-	var got []cmd[int]
-	for c := range Load[int](target).(batch[int]) {
-		got = append(got, c)
-	}
+	got := Load[int](target).(batch[int])
 	if len(got) != 1 {
 		t.Fatalf("Load produced %d commands, want 1", len(got))
 	}

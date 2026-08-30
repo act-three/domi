@@ -3,7 +3,6 @@ package domi
 import (
 	"fmt"
 	"net/url"
-	"slices"
 )
 
 // PushURL changes the browser URL
@@ -13,7 +12,7 @@ import (
 // with no scheme or host.
 func PushURL[Msg any](url string) Cmd[Msg] {
 	u := mustParseRelativeURL("domi.PushURL", url)
-	return batch[Msg](slices.Values([]cmd[Msg]{{nav: &nav{push: u}}}))
+	return batch[Msg]{{nav: &nav{push: u}}}
 }
 
 // ReplaceURL changes the browser URL
@@ -23,7 +22,7 @@ func PushURL[Msg any](url string) Cmd[Msg] {
 // with no scheme or host.
 func ReplaceURL[Msg any](url string) Cmd[Msg] {
 	u := mustParseRelativeURL("domi.ReplaceURL", url)
-	return batch[Msg](slices.Values([]cmd[Msg]{{nav: &nav{replace: u}}}))
+	return batch[Msg]{{nav: &nav{replace: u}}}
 }
 
 // Load causes a full-page browser navigation to url,
@@ -37,7 +36,7 @@ func ReplaceURL[Msg any](url string) Cmd[Msg] {
 // use [Bypass] instead.
 func Load[Msg any](url string) Cmd[Msg] {
 	mustParseURL("domi.Load", url)
-	return batch[Msg](slices.Values([]cmd[Msg]{{nav: &nav{load: url}}}))
+	return batch[Msg]{{nav: &nav{load: url}}}
 }
 
 // mustParseURL parses url and panics if it is malformed. Unlike

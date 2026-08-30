@@ -212,7 +212,7 @@ func (s *instance[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 // spawn runs each command in its own goroutine and feeds the
 // resulting Msg and optional nav back into apply.
 func (s *instance[Msg]) spawn(cmd Cmd[Msg]) {
-	for c := range Batch[Msg](cmd).(batch[Msg]) {
+	for _, c := range Batch[Msg](cmd).(batch[Msg]) {
 		go func() {
 			var m []Msg
 			switch {
