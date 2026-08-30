@@ -102,16 +102,16 @@ const (
 	effectAddPathSets   effectType = "AddPathSets"
 )
 
-// nav is the optional navigation side-effect attached to a [cmd]
-// return value. apply turns push into a PushURL effect or replace
+// nav is the navigation side-effect of a cmd.
+// apply turns push into a PushURL effect or replace
 // into a ReplaceURL effect, ordered ahead of the DOM patches in the
 // next frame. A load is handled separately: it replaces the whole
 // document, so apply emits a lone LoadURL effect without an
 // Update/View cycle.
 type nav struct {
-	push    string // PushURL target URL, or empty
-	replace string // ReplaceURL target URL, or empty
-	load    string // Load target URL (full-page navigation), or empty
+	push    *url.URL // PushURL target, or nil
+	replace *url.URL // ReplaceURL target, or nil
+	load    string   // Load target URL (full-page navigation), or empty
 }
 
 const snapshotRingSize = 30
@@ -209,13 +209,21 @@ func (s *instance[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-// spawn runs each Cmd body in its own goroutine and feeds the
+// spawn runs each command in its own goroutine and feeds the
 // resulting Msg and optional nav back into apply.
 func (s *instance[Msg]) spawn(cmd Cmd[Msg]) {
-	for f := range Batch[Msg](cmd).(batch[Msg]) {
+	for c := range Batch[Msg](cmd).(batch[Msg]) {
 		go func() {
-			msg, n := f(s)
-			s.apply(s.ctx, []Msg{msg}, n)
+			var m []Msg
+			switch {
+			case c.f != nil:
+				m = []Msg{c.f()}
+			case c.nav.push != nil:
+				m = []Msg{s.sv.onURLChange(c.nav.push.Clone())}
+			case c.nav.replace != nil:
+				m = []Msg{s.sv.onURLChange(c.nav.replace.Clone())}
+			}
+			s.apply(s.ctx, m, c.nav)
 		}()
 	}
 }
@@ -269,11 +277,11 @@ func (s *instance[Msg]) apply(ctx context.Context, msgs []Msg, n *nav) {
 	if n != nil {
 		// Goes before ApplyPatches+SetTitle to snapshot outgoing state.
 		switch {
-		case n.push != "":
+		case n.push != nil:
 			s.snapshots.put(oldVer, tree{view: s.view, title: s.title, pathSets: maps.Clone(s.pathSets)})
-			effects = append(effects, effect{Type: effectPushURL, URL: n.push})
-		case n.replace != "":
-			effects = append(effects, effect{Type: effectReplaceURL, URL: n.replace})
+			effects = append(effects, effect{Type: effectPushURL, URL: n.push.String()})
+		case n.replace != nil:
+			effects = append(effects, effect{Type: effectReplaceURL, URL: n.replace.String()})
 		}
 	}
 	// ApplyPatches and SetTitle go together.

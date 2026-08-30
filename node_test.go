@@ -156,7 +156,7 @@ func TestWithKeyEmptyKeyPanics(t *testing.T) {
 }
 
 // A Fragment consisting of one element is that element for keying
-// purposes, so a keyed view assembled through Fragment (or Map) keys
+// purposes, so a keyed view assembled through Fragment (or MapNode) keys
 // identically to the bare element.
 func TestWithKeySingleElementFragment(t *testing.T) {
 	a := vdom.Render(lowerOneNode(Tag("ul")(WithKey("a", Fragment(nil, Tag("li")(Text("x")), Fragment())))))
@@ -166,10 +166,10 @@ func TestWithKeySingleElementFragment(t *testing.T) {
 	}
 }
 
-// Keying a Map keeps its handler rewriting: the key names the element
+// Keying a MapNode keeps its handler rewriting: the key names the element
 // and the mapper still applies to its harvest.
-func TestWithKeyMap(t *testing.T) {
-	li := Map(func(s string) int { return len(s) }, Tag("li", On("click", msgFn("go"))))
+func TestWithKeyMapNode(t *testing.T) {
+	li := MapNode(func(s string) int { return len(s) }, Tag("li", On("click", msgFn("go"))))
 	_, h := lower(0, Tag("ul")(WithKey("a", li)))
 	for _, fn := range typed[int](h) {
 		got, err := fn(nil)

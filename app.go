@@ -65,27 +65,22 @@ type Cmd[Msg any] interface {
 	isCmd()
 }
 
-// batch is the lowered form of a [Cmd]: a sequence of command
-// functions that domi spawns concurrently.
+// batch is the lowered form of a [Cmd]: a sequence of commands
+// that domi spawns concurrently.
 type batch[Msg any] iter.Seq[cmd[Msg]]
 
 func (batch[Msg]) isCmd() {}
 
-// cmd is the internal function type of a [Cmd].
-// It receives the instance for access to framework state
-// (e.g. the onURLChange callback for navigation commands)
-// and returns a Msg to dispatch through Update
-// and an optional [nav] describing a navigation side-effect
-// domi should apply alongside the Msg.
-type cmd[Msg any] func(*instance[Msg]) (Msg, *nav)
+// cmd is the lowered form of a single command:
+// a Msg-producing function, or a navigation.
+type cmd[Msg any] struct {
+	f   func() Msg
+	nav *nav
+}
 
 // Func returns a Cmd that calls f.
 func Func[Msg any](f func() Msg) Cmd[Msg] {
-	return batch[Msg](slices.Values([]cmd[Msg]{
-		func(*instance[Msg]) (Msg, *nav) {
-			return f(), nil
-		},
-	}))
+	return batch[Msg](slices.Values([]cmd[Msg]{{f: f}}))
 }
 
 // Batch returns a Cmd that runs all the given Cmd values concurrently.
@@ -106,6 +101,22 @@ func Batch[Msg any](c ...Cmd[Msg]) Cmd[Msg] {
 			}
 		}
 	})
+}
+
+// MapCmd converts a Cmd[T] into a Cmd[Msg].
+//
+// It calls f to convert each message of type T
+// to a message of type Msg.
+func MapCmd[T, Msg any](f func(T) Msg, c Cmd[T]) Cmd[Msg] {
+	if f == nil {
+		panic("domi: MapCmd called with a nil function")
+	}
+	return batch[Msg](iterMap(iter.Seq[cmd[T]](Batch[T](c).(batch[T])), func(c cmd[T]) cmd[Msg] {
+		if c.f == nil {
+			return cmd[Msg]{nav: c.nav}
+		}
+		return cmd[Msg]{f: func() Msg { return f(c.f()) }}
+	}))
 }
 
 // A Sub produces a sequence of Msg values,
@@ -157,4 +168,25 @@ func Subs[Msg any](s ...Sub[Msg]) Sub[Msg] {
 		}
 	}
 	return all
+}
+
+// MapSub converts a Sub[T] to a Sub[Msg].
+//
+// It calls f to convert each message of type T
+// to a message of type Msg.
+func MapSub[T, Msg any](f func(T) Msg, s Sub[T]) Sub[Msg] {
+	if f == nil {
+		panic("domi: MapSub called with a nil function")
+	}
+	all := Subs[T](s).(subs[T])
+	mapped := make(subs[Msg], len(all))
+	for i, s := range all {
+		mapped[i] = sub[Msg]{
+			key: s.key,
+			events: func(ctx context.Context) iter.Seq[Msg] {
+				return iterMap(s.events(ctx), f)
+			},
+		}
+	}
+	return mapped
 }

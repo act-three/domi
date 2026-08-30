@@ -663,6 +663,98 @@ func TestBatchNilCmdContributesNothing(t *testing.T) {
 	}
 }
 
+// MapCmd passes each command's message through f.
+func TestMapCmdMapsMsg(t *testing.T) {
+	cmds := slices.Collect(iter.Seq[cmd[int]](MapCmd(func(s string) int { return len(s) }, Func(func() string { return "go" })).(batch[int])))
+	if len(cmds) != 1 {
+		t.Fatalf("expected 1 command, got %d", len(cmds))
+	}
+	if got := cmds[0].f(); got != 2 {
+		t.Fatalf("got %d, want 2", got)
+	}
+}
+
+// A navigation command has no message of its own to map — the
+// instance derives one from the URL change — so MapCmd carries its
+// target across unchanged.
+func TestMapCmdNavigationUnchanged(t *testing.T) {
+	f := func(string) int { t.Fatal("f called for a navigation"); return 0 }
+	for _, tc := range []struct {
+		name string
+		c    Cmd[string]
+		want cmd[int]
+	}{
+		{"push", PushURL[string]("/about"), cmd[int]{nav: &nav{push: &url.URL{Path: "/about"}}}},
+		{"replace", ReplaceURL[string]("/about"), cmd[int]{nav: &nav{replace: &url.URL{Path: "/about"}}}},
+		{"load", Load[string]("https://example.com/"), cmd[int]{nav: &nav{load: "https://example.com/"}}},
+	} {
+		cmds := slices.Collect(iter.Seq[cmd[int]](MapCmd(f, tc.c).(batch[int])))
+		if len(cmds) != 1 {
+			t.Fatalf("%s: expected 1 command, got %d", tc.name, len(cmds))
+		}
+		if got := cmds[0]; !reflect.DeepEqual(got, tc.want) {
+			t.Fatalf("%s: got %+v, want %+v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// MapCmd treats a nil Cmd as Batch does: it lowers to nothing.
+func TestMapCmdNilCmd(t *testing.T) {
+	cmds := slices.Collect(iter.Seq[cmd[int]](MapCmd(func(string) int { return 0 }, nil).(batch[int])))
+	if len(cmds) != 0 {
+		t.Fatalf("expected no commands, got %d", len(cmds))
+	}
+}
+
+// MapCmd panics on a nil function, at construction, where the caller
+// is on the stack.
+func TestMapCmdNilFuncPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for a nil function")
+		}
+	}()
+	MapCmd[string, int](nil, Func(func() string { return "" }))
+}
+
+// MapSub passes each event through f and keeps the subscription's key,
+// so the instance identifies the mapped subscription as it would the
+// original.
+func TestMapSubMapsMsgs(t *testing.T) {
+	sub := Subscription(tickKey{"a"}, func(context.Context) iter.Seq[string] {
+		return slices.Values([]string{"go", "gogo"})
+	})
+	all := MapSub(func(s string) int { return len(s) }, sub).(subs[int])
+	if len(all) != 1 {
+		t.Fatalf("expected 1 subscription, got %d", len(all))
+	}
+	if all[0].key != (tickKey{"a"}) {
+		t.Fatalf("key = %v, want %v", all[0].key, tickKey{"a"})
+	}
+	got := slices.Collect(all[0].events(t.Context()))
+	if want := []int{2, 4}; !slices.Equal(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+// MapSub treats a nil Sub as Subs does: it lowers to nothing.
+func TestMapSubNilSub(t *testing.T) {
+	if all := MapSub(func(string) int { return 0 }, nil).(subs[int]); len(all) != 0 {
+		t.Fatalf("expected no subscriptions, got %d", len(all))
+	}
+}
+
+// MapSub panics on a nil function, at construction, where the caller
+// is on the stack.
+func TestMapSubNilFuncPanics(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic for a nil function")
+		}
+	}()
+	MapSub[string, int](nil, nil)
+}
+
 // subApp lets tests control the subscription set dynamically.
 // Subscriptions returns whatever sub is set to at the time.
 type subApp struct {
@@ -819,7 +911,7 @@ func TestInstanceSnapshotStoredOnApply(t *testing.T) {
 	defer s.cancel()
 	origView := s.view
 	origVer := s.ver
-	s.apply(s.ctx, []int{1}, &nav{push: "/about"})
+	s.apply(s.ctx, []int{1}, &nav{push: &url.URL{Path: "/about"}})
 	s.mu.Lock()
 	sn, ok := s.snapshots.get(origVer)
 	s.mu.Unlock()
@@ -832,25 +924,20 @@ func TestInstanceSnapshotStoredOnApply(t *testing.T) {
 	}
 }
 
-// Load wires up a nav whose load target is the requested URL, leaving
-// the dispatched Msg as the zero value. The url may be absolute and
-// cross-origin, unlike PushURL/ReplaceURL.
+// Load lowers to a nav whose load target is the requested URL, with
+// no Msg function. The url may be absolute and cross-origin, unlike
+// PushURL/ReplaceURL.
 func TestLoadCmdProducesLoadNav(t *testing.T) {
-	s := newTestInstance(&counterApp{})
-	defer s.cancel()
 	const target = "https://example.com/logout"
-	var got *nav
-	for f := range Load[int](target).(batch[int]) {
-		_, got = f(s)
+	var got []cmd[int]
+	for c := range Load[int](target).(batch[int]) {
+		got = append(got, c)
 	}
-	if got == nil {
-		t.Fatal("Load produced no nav")
+	if len(got) != 1 {
+		t.Fatalf("Load produced %d commands, want 1", len(got))
 	}
-	if got.load != target {
-		t.Fatalf("nav.load = %q, want %q", got.load, target)
-	}
-	if got.push != "" || got.replace != "" {
-		t.Fatalf("Load nav set push/replace: %+v", got)
+	if want := (cmd[int]{nav: &nav{load: target}}); !reflect.DeepEqual(got[0], want) {
+		t.Fatalf("got %+v, want %+v", got[0], want)
 	}
 }
 
@@ -890,7 +977,7 @@ func TestInstanceApplyLoadNav(t *testing.T) {
 func TestInstanceApplyEffectOrder(t *testing.T) {
 	s := newTestInstance[int](&titledApp{})
 	defer s.cancel()
-	s.apply(s.ctx, []int{1}, &nav{push: "/about"})
+	s.apply(s.ctx, []int{1}, &nav{push: &url.URL{Path: "/about"}})
 
 	f := s.log[1%uint64(len(s.log))]
 	if len(f.Effects) != 3 {
