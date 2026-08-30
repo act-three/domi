@@ -267,6 +267,45 @@ func TestHandlerInternalURLPrefix(t *testing.T) {
 	}
 }
 
+// The accessor reports the configured prefix, cleaned and rooted.
+// Unconfigured — or configured with an empty prefix — it is the site root.
+func TestServerInternalURLPrefix(t *testing.T) {
+	def := NewServer(
+		func(context.Context, *url.URL) (*counterApp, Cmd[int]) {
+			return &counterApp{}, Batch[int]()
+		},
+		func(*url.URL) int { return 0 },
+		func(*url.URL) int { return 0 },
+	)
+	if got := def.InternalURLPrefix(); got != "/" {
+		t.Fatalf("default InternalURLPrefix = %q, want the site root", got)
+	}
+
+	empty := NewServer(
+		func(context.Context, *url.URL) (*counterApp, Cmd[int]) {
+			return &counterApp{}, Batch[int]()
+		},
+		func(*url.URL) int { return 0 },
+		func(*url.URL) int { return 0 },
+		InternalURLPrefix(""),
+	)
+	if got := empty.InternalURLPrefix(); got != "/" {
+		t.Fatalf("empty InternalURLPrefix = %q, want the site root", got)
+	}
+
+	set := NewServer(
+		func(context.Context, *url.URL) (*counterApp, Cmd[int]) {
+			return &counterApp{}, Batch[int]()
+		},
+		func(*url.URL) int { return 0 },
+		func(*url.URL) int { return 0 },
+		InternalURLPrefix("/-/domi/"),
+	)
+	if got := set.InternalURLPrefix(); got != "/-/domi" {
+		t.Fatalf("InternalURLPrefix = %q, want the cleaned value", got)
+	}
+}
+
 // A Dispatch message routes to the handler named by its key, rebuilds
 // that handler's Msg, and applies it — landing as a frame.
 func TestHandleEventDispatch(t *testing.T) {

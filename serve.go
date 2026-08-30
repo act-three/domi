@@ -21,7 +21,7 @@ type Server[Msg any] struct {
 	instanceTimeout time.Duration
 	replayWindow    int
 	keepalive       time.Duration
-	prefix          string // namespace for internal URLs, e.g. "/-/domi"; "" for the site root
+	prefix          string // namespace for internal URLs, e.g. "/-/domi"; "/" for the site root
 	clientPath      string // full path the client runtime is served at, prefix included
 
 	appf         func(context.Context, *url.URL) (App[Msg], Cmd[Msg])
@@ -66,6 +66,7 @@ func NewServer[Msg any, A App[Msg]](
 		instanceTimeout: 48 * time.Hour,
 		replayWindow:    128,
 		keepalive:       25 * time.Second,
+		prefix:          "/",
 
 		appf:         func(ctx context.Context, u *url.URL) (App[Msg], Cmd[Msg]) { return f(ctx, u) },
 		onURLRequest: onURLRequest,
@@ -97,6 +98,12 @@ func NewServer[Msg any, A App[Msg]](
 	sv.mux.HandleFunc("GET /", sv.handleRoot)
 	return sv
 }
+
+// InternalURLPrefix returns the prefix
+// used for internal URL paths in sv.
+//
+// Use [InternalURLPrefix] to configure the prefix.
+func (sv *Server[Msg]) InternalURLPrefix() string { return sv.prefix }
 
 func (sv *Server[Msg]) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	sv.mux.ServeHTTP(w, req)
