@@ -292,12 +292,12 @@ func TestMapNodeTransparentToAddresses(t *testing.T) {
 			Tag("li", On("click", msgFn("c"))),
 		)
 	}
-	plain, hp := lowerOne(0, build())
-	mapped, hm := lowerOne(0, MapNode(func(s string) string { return s }, build()))
+	plain, hp := lower(0, build())
+	mapped, hm := lower(0, MapNode(func(s string) string { return s }, build()))
 	if !maps.Equal(keysOf(hp), keysOf(hm)) {
 		t.Fatalf("handler keys diverged under MapNode: %v vs %v", keysOf(hp), keysOf(hm))
 	}
-	if got, want := vdom.Render(mapped), vdom.Render(plain); got != want {
+	if got, want := vdom.Render(mapped[0]), vdom.Render(plain[0]); got != want {
 		t.Fatalf("rendered tree diverged under MapNode:\n got %s\nwant %s", got, want)
 	}
 }

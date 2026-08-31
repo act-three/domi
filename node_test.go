@@ -13,8 +13,7 @@ import (
 // exercise. They keep the call sites reading the way they did before
 // lowering grew an address parameter and a second return value.
 func lowerOneNode(n Node) vdom.Node {
-	v, _ := lowerOne(0, n)
-	return v
+	return lowerNodes(n)[0]
 }
 
 func lowerNodes(nodes ...Node) []vdom.Node {
@@ -291,18 +290,6 @@ func TestNilKeyedChildPanics(t *testing.T) {
 		}
 	}()
 	_ = WithKey("a", nil)
-}
-
-// lowerOne needs exactly one node; a nil Node lowers to zero, so it
-// panics rather than inventing one.
-func TestLowerOneNilPanics(t *testing.T) {
-	defer func() {
-		if r := recover(); r == nil {
-			t.Fatalf("expected panic for lowerOneNode(nil), got none")
-		}
-	}()
-	var n Node // nil
-	_ = lowerOneNode(n)
 }
 
 // Group is the attr-side mirror of Fragment. The tests below pin the

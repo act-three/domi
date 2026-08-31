@@ -300,17 +300,6 @@ func lower(a addr, nodes ...Node) (n []vdom.Node, h handlers) {
 	return n, h
 }
 
-// lowerOne narrows a single Node to its lowered vdom.Node form,
-// panicking if n materializes to anything other than exactly one node
-// (e.g. a Fragment with zero or multiple children).
-func lowerOne(a addr, n Node) (vdom.Node, handlers) {
-	ns, h := lower(a, n)
-	if len(ns) != 1 {
-		panic(fmt.Sprintf("domi: expected 1 node, got %d", len(ns)))
-	}
-	return ns[0], h
-}
-
 // prelowered wraps an already-lowered vdom.Node as a [Node]. Its
 // handlers were harvested when it was first lowered.
 type prelowered struct{ n vdom.Node }
