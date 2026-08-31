@@ -16,7 +16,7 @@ import (
 type Server[Msg any] struct {
 	// Config. Never changed after init. Safe to read concurrently.
 	mux             http.ServeMux
-	document        func(clientPath, title string, body Node) Node
+	document        func(clientPath, title string, body Node) Node // or nil
 	logger          *slog.Logger
 	instanceTimeout time.Duration
 	replayWindow    int
@@ -61,7 +61,6 @@ func NewServer[Msg any, A App[Msg]](
 	o ...Option,
 ) *Server[Msg] {
 	sv := &Server[Msg]{
-		document:        defaultDocument,
 		logger:          slog.Default(),
 		instanceTimeout: 48 * time.Hour,
 		replayWindow:    128,
@@ -104,6 +103,11 @@ func NewServer[Msg any, A App[Msg]](
 //
 // Use [InternalURLPrefix] to configure the prefix.
 func (sv *Server[Msg]) InternalURLPrefix() string { return sv.prefix }
+
+// HasCustomDocument reports whether [Document] was used to configure sv.
+func (sv *Server[Msg]) HasCustomDocument() bool {
+	return sv.document != nil
+}
 
 func (sv *Server[Msg]) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	sv.mux.ServeHTTP(w, req)
