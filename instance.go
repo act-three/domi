@@ -197,7 +197,7 @@ func (s *instance[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 		document = defaultDocument
 	}
 	// The document shell cannot contain event handlers.
-	root, _ := lowerOne(0, document(s.sv.clientPath, title, body))
+	roots, _ := lower(0, document(s.sv.clientPath, title, body))
 
 	s.updateSubs(app.Subscriptions(appCtx))
 	s.spawn(cmd)
@@ -207,9 +207,11 @@ func (s *instance[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 		s.logger.DebugContext(ctx, "response", "error", err)
 		return
 	}
-	if err := vdom.RenderTo(w, root); err != nil {
-		s.logger.DebugContext(ctx, "response", "error", err)
-		return
+	for _, root := range roots {
+		if err := vdom.RenderTo(w, root); err != nil {
+			s.logger.DebugContext(ctx, "response", "error", err)
+			return
+		}
 	}
 }
 
