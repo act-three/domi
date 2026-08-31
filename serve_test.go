@@ -306,6 +306,32 @@ func TestServerInternalURLPrefix(t *testing.T) {
 	}
 }
 
+// The accessor reports whether the Document option was used.
+func TestServerHasCustomDocument(t *testing.T) {
+	def := NewServer(
+		func(context.Context, *url.URL) (*counterApp, Cmd[int]) {
+			return &counterApp{}, Batch[int]()
+		},
+		func(*url.URL) int { return 0 },
+		func(*url.URL) int { return 0 },
+	)
+	if def.HasCustomDocument() {
+		t.Fatalf("default HasCustomDocument = true, want false")
+	}
+
+	set := NewServer(
+		func(context.Context, *url.URL) (*counterApp, Cmd[int]) {
+			return &counterApp{}, Batch[int]()
+		},
+		func(*url.URL) int { return 0 },
+		func(*url.URL) int { return 0 },
+		Document(func(title string, body Node) Node { return body }),
+	)
+	if !set.HasCustomDocument() {
+		t.Fatalf("HasCustomDocument = false, want true")
+	}
+}
+
 // A Dispatch message routes to the handler named by its key, rebuilds
 // that handler's Msg, and applies it — landing as a frame.
 func TestHandleEventDispatch(t *testing.T) {
