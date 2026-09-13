@@ -67,7 +67,7 @@ func (a *fragmentApp) Preview(ctx context.Context, u *url.URL) (string, string, 
 }
 
 // titledApp changes both its body and its document title each Update, so
-// frames carry a SetTitle effect alongside the DOM patches.
+// frames carry a SetTitle step alongside the DOM patches.
 type titledApp struct{ n int }
 
 func (a *titledApp) Update(context.Context, int) Cmd[int] { a.n++; return Batch[int]() }
@@ -157,15 +157,15 @@ func TestInstanceApplyFragmentAtRoot(t *testing.T) {
 		t.Fatalf("expected head=1 after one apply, got %d", s.head)
 	}
 	// Each <div> child's text changes (a0→a1, b0→b1), producing two
-	// patches inside the frame's single ApplyPatch effect. The exact
+	// patches inside the frame's single ApplyPatch step. The exact
 	// shape isn't the contract — what matters is that *both* top-level
 	// siblings were diffed, not just one.
 	f := s.log[1%uint64(len(s.log))]
-	if len(f.Effects) != 1 || f.Effects[0].Type != effectApplyPatch {
-		t.Fatalf("expected one ApplyPatch effect, got %+v", f.Effects)
+	if len(f.Steps) != 1 || f.Steps[0].Type != stepApplyPatch {
+		t.Fatalf("expected one ApplyPatch step, got %+v", f.Steps)
 	}
-	if n := len(f.Effects[0].Patches); n < 2 {
-		t.Fatalf("expected patches for both Fragment siblings, got %d: %+v", n, f.Effects[0].Patches)
+	if n := len(f.Steps[0].Patches); n < 2 {
+		t.Fatalf("expected patches for both Fragment siblings, got %d: %+v", n, f.Steps[0].Patches)
 	}
 }
 
@@ -412,8 +412,8 @@ func TestApplyMintsVerOnTreeChange(t *testing.T) {
 	}
 	f := s.log[s.head%uint64(len(s.log))]
 	var got string
-	for _, e := range f.Effects {
-		if e.Type == effectApplyPatch {
+	for _, e := range f.Steps {
+		if e.Type == stepApplyPatch {
 			got = e.Ver
 		}
 	}
@@ -434,7 +434,7 @@ func TestApplyKeepsVerWithoutPatches(t *testing.T) {
 		t.Fatalf("apply without patches changed ver from %q to %q", old, s.ver)
 	}
 	if s.head != 0 {
-		t.Fatalf("apply without effects appended a frame (head = %d)", s.head)
+		t.Fatalf("apply without steps appended a frame (head = %d)", s.head)
 	}
 }
 
@@ -578,8 +578,8 @@ func TestInstanceSSEFreshClient(t *testing.T) {
 	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	out := runSSE(t, s, "", 30*time.Millisecond)
-	if strings.Contains(out, "event: effect") {
-		t.Fatalf("expected no effect frames for fresh empty instance, got: %s", out)
+	if strings.Contains(out, "event: update") {
+		t.Fatalf("expected no update events for fresh empty instance, got: %s", out)
 	}
 }
 
@@ -1040,7 +1040,7 @@ func TestLoadCmdProducesLoadNav(t *testing.T) {
 	}
 }
 
-// apply with a load nav emits a lone LoadURL effect and, because the
+// apply with a load nav emits a lone LoadURL step and, because the
 // document is replaced wholesale, runs neither Update nor onURLChange.
 func TestInstanceApplyLoadNav(t *testing.T) {
 	app := &counterApp{}
@@ -1062,38 +1062,38 @@ func TestInstanceApplyLoadNav(t *testing.T) {
 		t.Fatalf("expected one frame after load nav, got head=%d", s.head)
 	}
 	f := s.log[1%uint64(len(s.log))]
-	if len(f.Effects) != 1 || f.Effects[0].Type != effectLoadURL {
-		t.Fatalf("expected a lone LoadURL effect, got %+v", f.Effects)
+	if len(f.Steps) != 1 || f.Steps[0].Type != stepLoadURL {
+		t.Fatalf("expected a lone LoadURL step, got %+v", f.Steps)
 	}
-	if f.Effects[0].URL != target {
-		t.Fatalf("LoadURL effect URL = %q, want %q", f.Effects[0].URL, target)
+	if f.Steps[0].URL != target {
+		t.Fatalf("LoadURL step URL = %q, want %q", f.Steps[0].URL, target)
 	}
 }
 
-// apply orders the effects so the client snapshots the outgoing page
+// apply orders the steps so the client snapshots the outgoing page
 // before it mutates: PushURL leads, the DOM Patch follows, and SetTitle
 // trails (so the outgoing snapshot still captures the old title).
-func TestInstanceApplyEffectOrder(t *testing.T) {
+func TestInstanceApplyStepOrder(t *testing.T) {
 	s := newTestInstance[int](&titledApp{})
 	defer s.cancel()
 	s.apply(s.ctx, []int{1}, &nav{push: &url.URL{Path: "/about"}})
 
 	f := s.log[1%uint64(len(s.log))]
-	if len(f.Effects) != 3 {
-		t.Fatalf("expected PushURL, Patch, SetTitle effects, got %+v", f.Effects)
+	if len(f.Steps) != 3 {
+		t.Fatalf("expected PushURL, Patch, SetTitle steps, got %+v", f.Steps)
 	}
-	if e := f.Effects[0]; e.Type != effectPushURL || e.URL != "/about" {
-		t.Fatalf("effect[0] should be PushURL{/about}, got %+v", e)
+	if e := f.Steps[0]; e.Type != stepPushURL || e.URL != "/about" {
+		t.Fatalf("step[0] should be PushURL{/about}, got %+v", e)
 	}
-	if e := f.Effects[1]; e.Type != effectApplyPatch || len(e.Patches) == 0 {
-		t.Fatalf("effect[1] should be a non-empty ApplyPatch, got %+v", e)
+	if e := f.Steps[1]; e.Type != stepApplyPatch || len(e.Patches) == 0 {
+		t.Fatalf("step[1] should be a non-empty ApplyPatch, got %+v", e)
 	}
-	if e := f.Effects[2]; e.Type != effectSetTitle || e.Title != "title-1" {
-		t.Fatalf("effect[2] should be SetTitle{title-1}, got %+v", e)
+	if e := f.Steps[2]; e.Type != stepSetTitle || e.Title != "title-1" {
+		t.Fatalf("step[2] should be SetTitle{title-1}, got %+v", e)
 	}
 }
 
-// prefetch holds the preview and emits a lone SetPreview effect carrying
+// prefetch holds the preview and emits a lone SetPreview step carrying
 // the previewed page's title and url as data, the rebasing patchset, and
 // the ver naming the preview tree. The outgoing (current) page becomes a
 // candidate in the preview log under its own ver — the same name the
@@ -1105,10 +1105,10 @@ func TestInstancePrefetchEmitsSetPreview(t *testing.T) {
 	s.prefetch(s.ctx, u)
 
 	f := s.log[1%uint64(len(s.log))]
-	if len(f.Effects) != 1 || f.Effects[0].Type != effectSetPreview {
-		t.Fatalf("expected a lone SetPreview effect, got %+v", f.Effects)
+	if len(f.Steps) != 1 || f.Steps[0].Type != stepSetPreview {
+		t.Fatalf("expected a lone SetPreview step, got %+v", f.Steps)
 	}
-	e := f.Effects[0]
+	e := f.Steps[0]
 	if e.Title != "/next" || e.URL != "/next" {
 		t.Fatalf("SetPreview = %+v, want title and url %q", e, "/next")
 	}
@@ -1146,8 +1146,8 @@ func TestInstancePrefetchExternalURL(t *testing.T) {
 	u, _ := url.Parse("https://elsewhere.example/next?q=1#part")
 	s.prefetch(s.ctx, u)
 
-	e := s.log[1%uint64(len(s.log))].Effects[0]
-	if e.Type != effectSetPreview {
+	e := s.log[1%uint64(len(s.log))].Steps[0]
+	if e.Type != stepSetPreview {
 		t.Fatalf("expected SetPreview, got %+v", e)
 	}
 	if e.URL != u.String() {
@@ -1158,7 +1158,7 @@ func TestInstancePrefetchExternalURL(t *testing.T) {
 	}
 }
 
-// A denied prefetch emits a lone DeletePreview effect and holds no
+// A denied prefetch emits a lone DeletePreview step and holds no
 // preview, so the click falls back to a normal request.
 func TestInstancePrefetchDenyEmitsDeletePreview(t *testing.T) {
 	s := newTestInstance[int](&previewApp{route: "/"})
@@ -1167,11 +1167,11 @@ func TestInstancePrefetchDenyEmitsDeletePreview(t *testing.T) {
 	s.prefetch(s.ctx, u)
 
 	f := s.log[1%uint64(len(s.log))]
-	if len(f.Effects) != 1 || f.Effects[0].Type != effectDeletePreview {
-		t.Fatalf("expected a lone DeletePreview effect, got %+v", f.Effects)
+	if len(f.Steps) != 1 || f.Steps[0].Type != stepDeletePreview {
+		t.Fatalf("expected a lone DeletePreview step, got %+v", f.Steps)
 	}
-	if f.Effects[0].URL != "/deny" {
-		t.Fatalf("DeletePreview URL = %q, want %q", f.Effects[0].URL, "/deny")
+	if f.Steps[0].URL != "/deny" {
+		t.Fatalf("DeletePreview URL = %q, want %q", f.Steps[0].URL, "/deny")
 	}
 	s.mu.Lock()
 	pending := s.preview != nil
@@ -1191,8 +1191,8 @@ func TestInstancePrefetchRedirectCarriesDest(t *testing.T) {
 	u, _ := url.Parse("/redirect")
 	s.prefetch(s.ctx, u)
 
-	e := s.log[1%uint64(len(s.log))].Effects[0]
-	if e.Type != effectSetPreview {
+	e := s.log[1%uint64(len(s.log))].Steps[0]
+	if e.Type != stepSetPreview {
 		t.Fatalf("expected SetPreview, got %+v", e)
 	}
 	if e.URL != "/redirect" {
@@ -1235,17 +1235,17 @@ func TestInstancePreviewRebasedOnApply(t *testing.T) {
 
 	s.apply(s.ctx, []int{0}, nil)
 	f := s.log[2%uint64(len(s.log))]
-	var ap, sp *effect
-	for i := range f.Effects {
-		switch f.Effects[i].Type {
-		case effectApplyPatch:
-			ap = &f.Effects[i]
-		case effectSetPreview:
-			sp = &f.Effects[i]
+	var ap, sp *step
+	for i := range f.Steps {
+		switch f.Steps[i].Type {
+		case stepApplyPatch:
+			ap = &f.Steps[i]
+		case stepSetPreview:
+			sp = &f.Steps[i]
 		}
 	}
 	if ap == nil || sp == nil {
-		t.Fatalf("frame should carry both ApplyPatch and SetPreview, got %+v", f.Effects)
+		t.Fatalf("frame should carry both ApplyPatch and SetPreview, got %+v", f.Steps)
 	}
 	if sp.URL != "/next" {
 		t.Fatalf("rebased SetPreview = %+v, want url %q", sp, "/next")
@@ -1278,7 +1278,7 @@ func TestInstanceCommitPreviewInstallsView(t *testing.T) {
 	u, _ := url.Parse("/next")
 	s.prefetch(s.ctx, u)
 	cand := s.ver // the outgoing tree's ver names the candidate
-	pver := s.log[1%uint64(len(s.log))].Effects[0].Ver
+	pver := s.log[1%uint64(len(s.log))].Steps[0].Ver
 
 	s.commitPreview(s.ctx, cand)
 	s.mu.Lock()
@@ -1360,12 +1360,12 @@ func TestInstancePreviewFreezesAtLimit(t *testing.T) {
 	// The freeze frame is the most recent: a DeletePreview, no SetPreview.
 	f := s.log[s.head%uint64(len(s.log))]
 	var del, set bool
-	for _, e := range f.Effects {
-		del = del || e.Type == effectDeletePreview
-		set = set || e.Type == effectSetPreview
+	for _, e := range f.Steps {
+		del = del || e.Type == stepDeletePreview
+		set = set || e.Type == stepSetPreview
 	}
 	if !del || set {
-		t.Fatalf("freeze frame should carry DeletePreview and no SetPreview, got %+v", f.Effects)
+		t.Fatalf("freeze frame should carry DeletePreview and no SetPreview, got %+v", f.Steps)
 	}
 }
 
@@ -1980,8 +1980,8 @@ func lastFrame[Msg any](s *instance[Msg]) frame {
 }
 
 func hasApplyPatch(f frame) bool {
-	for _, e := range f.Effects {
-		if e.Type == effectApplyPatch {
+	for _, e := range f.Steps {
+		if e.Type == stepApplyPatch {
 			return true
 		}
 	}
@@ -2354,8 +2354,8 @@ func TestDispatchCommitRejectionCorrects(t *testing.T) {
 		optimistic(s, v0, key, setValue([]vdom.Step{vdom.Index(0)}, "new"))
 
 		var corrected bool
-		for _, e := range lastFrame(s).Effects {
-			if e.Type == effectApplyPatch {
+		for _, e := range lastFrame(s).Steps {
+			if e.Type == stepApplyPatch {
 				b, err := json.Marshal(e.Patches)
 				if err != nil {
 					t.Fatal(err)
@@ -2392,8 +2392,8 @@ func TestDispatchCommitUndecodedCorrects(t *testing.T) {
 		synctest.Wait()
 
 		var corrected bool
-		for _, e := range lastFrame(s).Effects {
-			if e.Type == effectApplyPatch {
+		for _, e := range lastFrame(s).Steps {
+			if e.Type == stepApplyPatch {
 				b, err := json.Marshal(e.Patches)
 				if err != nil {
 					t.Fatal(err)

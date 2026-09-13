@@ -332,10 +332,10 @@ const editing = new WeakSet();
 // only as the parent of a child op — so the root is never replaced; it
 // survives the whole patch stream.
 //
-// Every op is a pure DOM mutation of `root` alone — no document-level or
+// Every patch is a pure DOM mutation of `root` alone — no document-level or
 // navigation side-effects — so it is safe to run against a detached
 // clone, as preview snapshot construction does. Document-level changes
-// travel as effects in an effect frame, run only against the live page.
+// travel as steps in a frame, run only against the live page.
 function applyPatch(root, p) {
   switch (p.Op) {
     case 'Replace': {
@@ -610,7 +610,7 @@ export function run() {
   }
 
   // navigateToPreview applies the held preview by simulating
-  // a normal navigation effect list: PushURL, ApplyPatch, SetTitle.
+  // a normal navigation step list: PushURL, ApplyPatch, SetTitle.
   // It navigates to p.dest, which is the requested url unless the app
   // redirected the preview, so the URL bar and the URLChange the server
   // routes on both reflect the page actually rendered.
@@ -781,55 +781,55 @@ export function run() {
   });
 
   const sse = new EventSource(eventsURL);
-  sse.addEventListener('effect', (ev) => {
+  sse.addEventListener('update', (ev) => {
     checkPreviewTTL();
     let f;
     try {
       f = JSON.parse(ev.data);
     } catch (e) {
-      console.error('domi: bad effect JSON', ev.data, e);
+      console.error('domi: bad update JSON', ev.data, e);
       return;
     }
     if (f.Base && f.Base !== base) return;
-    // Run the effects in the order the server chose. PushURL leads any
+    // Run the steps in the order the server chose. PushURL leads any
     // DOM patches so the outgoing page (current DOM + title) is
     // snapshotted before it changes; SetTitle trails them so that
     // snapshot still holds the old title. LoadURL abandons the document,
-    // so it returns without touching the remaining effects.
-    for (const eff of f.Effects) {
-      switch (eff.Type) {
+    // so it returns without touching the remaining steps.
+    for (const step of f.Steps) {
+      switch (step.Type) {
         case 'ApplyPatch':
-          for (const p of eff.Patches) applyPatch(root, p);
-          ver = eff.Ver;
+          for (const p of step.Patches) applyPatch(root, p);
+          ver = step.Ver;
           break;
         case 'SetTitle':
-          document.title = eff.Title ?? '';
+          document.title = step.Title ?? '';
           break;
         case 'AddPathSets':
-          addPathSets(eff.PathSets);
+          addPathSets(step.PathSets);
           break;
         case 'PushURL':
           cacheSnapshot(ver, root, document.title);
           history.replaceState({ domiSnapshot: ver }, '', location.href);
-          history.pushState(null, '', eff.URL);
+          history.pushState(null, '', step.URL);
           break;
         case 'ReplaceURL':
-          history.replaceState(history.state, '', eff.URL);
+          history.replaceState(history.state, '', step.URL);
           break;
         case 'LoadURL':
-          window.location.assign(eff.URL);
+          window.location.assign(step.URL);
           return;
         case 'SetPreview':
           // Ignore any preview we're not intentionally waiting for. The
           // match is on the requested url; Dest is where committing the
           // preview navigates (it differs when the app redirected).
-          if (!pv || pv.url !== eff.URL) break;
+          if (!pv || pv.url !== step.URL) break;
           pv.isReady = true;
-          pv.patches = eff.Patches;
-          pv.title = eff.Title;
-          pv.dest = eff.Dest;
+          pv.patches = step.Patches;
+          pv.title = step.Title;
+          pv.dest = step.Dest;
           pv.base = ver;
-          pv.ver = eff.Ver;
+          pv.ver = step.Ver;
           pv.at ||= Date.now();
           if (pv.isClicked) navigateToPreview();
           break;
@@ -837,7 +837,7 @@ export function run() {
           // Drop the preview for the given url. (Empty means any preview.)
           // A waiting click means the server denied the preview request
           // (or perhaps even a resync), so fall back to a normal request.
-          if (pv && (!eff.URL || pv.url === eff.URL)) {
+          if (pv && (!step.URL || pv.url === step.URL)) {
             const { url, isClicked } = pv;
             pv = null;
             if (isClicked) {
@@ -850,7 +850,7 @@ export function run() {
           }
           break;
         default:
-          console.warn('domi: unknown effect', eff);
+          console.warn('domi: unknown step', step);
       }
     }
   });
