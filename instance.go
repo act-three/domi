@@ -44,7 +44,7 @@ type instance[Msg any] struct {
 	mu        sync.Mutex // protects the following fields
 	title     string
 	view      []vdom.Node
-	ver       string                // version id naming the current view; see effect.Ver
+	ver       string                // version id naming the current view; see step.Ver
 	tables    map[string]table[Msg] // tree version → its handler bindings; see dispatch
 	pathSets  map[string]pathSet    // items already delivered to the client
 	log       []frame               // fixed-size ring; log[seq%len(log)] holds frame seq
@@ -71,16 +71,16 @@ type sseAttachment struct {
 // instance and travels back to the client as the SSE event id, so a
 // reconnecting client can ask for everything after the seq it last saw.
 type frame struct {
-	seq     uint64   // SSE event id
-	Base    string   `json:",omitempty"` // required base ver, if set
-	Effects []effect `json:",omitempty"`
+	seq   uint64 // SSE event id
+	Base  string `json:",omitempty"` // required base ver, if set
+	Steps []step `json:",omitempty"`
 }
 
-// effect is one side-effect in a frame, run by the client in list order
+// A step is one execution step in a frame, run by the client in order
 // against the live document. Type selects which of the remaining fields
 // carry its data.
-type effect struct {
-	Type     effectType
+type step struct {
+	Type     stepType
 	Patches  []vdom.Patch       `json:",omitempty"` // ApplyPatch/SetPreview: DOM patches
 	Title    string             `json:",omitempty"` // SetTitle/SetPreview: the document title
 	URL      string             `json:",omitempty"` // PushURL/ReplaceURL/LoadURL/SetPreview/DeletePreview target
@@ -89,24 +89,24 @@ type effect struct {
 	PathSets map[string]pathSet `json:",omitempty"`
 }
 
-type effectType string
+type stepType string
 
 const (
-	effectApplyPatch    effectType = "ApplyPatch"    // apply DOM patches to the live tree
-	effectSetTitle      effectType = "SetTitle"      // set document.title
-	effectPushURL       effectType = "PushURL"       // snapshot outgoing page, then history.pushState
-	effectReplaceURL    effectType = "ReplaceURL"    // history.replaceState
-	effectLoadURL       effectType = "LoadURL"       // full-page navigation, leaving the instance
-	effectSetPreview    effectType = "SetPreview"    // hold a rebased link preview for instant navigation
-	effectDeletePreview effectType = "DeletePreview" // drop the held link preview
-	effectAddPathSets   effectType = "AddPathSets"
+	stepApplyPatch    stepType = "ApplyPatch"    // apply DOM patches to the live tree
+	stepSetTitle      stepType = "SetTitle"      // set document.title
+	stepPushURL       stepType = "PushURL"       // snapshot outgoing page, then history.pushState
+	stepReplaceURL    stepType = "ReplaceURL"    // history.replaceState
+	stepLoadURL       stepType = "LoadURL"       // full-page navigation, leaving the instance
+	stepSetPreview    stepType = "SetPreview"    // hold a rebased link preview for instant navigation
+	stepDeletePreview stepType = "DeletePreview" // drop the held link preview
+	stepAddPathSets   stepType = "AddPathSets"
 )
 
 // nav is the navigation side-effect of a cmd.
-// apply turns push into a PushURL effect or replace
-// into a ReplaceURL effect, ordered ahead of the DOM patches in the
+// apply turns push into a PushURL step or replace
+// into a ReplaceURL step, ordered ahead of the DOM patches in the
 // next frame. A load is handled separately: it replaces the whole
-// document, so apply emits a lone LoadURL effect without an
+// document, so apply emits a lone LoadURL step without an
 // Update/View cycle.
 type nav struct {
 	push    *url.URL // PushURL target, or nil
@@ -235,7 +235,7 @@ func (s *instance[Msg]) spawn(cmd Cmd[Msg]) {
 }
 
 // apply calls Update for each msg in order,
-// then renders once and emits a frame for the view's diff and any effects.
+// then renders once and emits a frame for the view's diff and any steps.
 // Applying no msgs is just a render pass.
 func (s *instance[Msg]) apply(ctx context.Context, msgs []Msg, n *nav) {
 	// s.mu serializes the whole update cycle, including the user's Update
@@ -245,12 +245,12 @@ func (s *instance[Msg]) apply(ctx context.Context, msgs []Msg, n *nav) {
 
 	// A load is a full-page browser navigation: the document is replaced
 	// wholesale, so there's no Update to run, view to diff, or
-	// subscriptions to reconcile. Emit a lone LoadURL effect and return;
+	// subscriptions to reconcile. Emit a lone LoadURL step and return;
 	// any accompanying msgs are intentionally dropped.
 	if n != nil && n.load != "" {
 		// No Base: a LoadURL frame has no DOM patches, so the client runs
 		// it regardless of which snapshot its tree is built on.
-		s.appendFrame(frame{Effects: []effect{{Type: effectLoadURL, URL: n.load}}})
+		s.appendFrame(frame{Steps: []step{{Type: stepLoadURL, URL: n.load}}})
 		return
 	}
 
@@ -274,34 +274,34 @@ func (s *instance[Msg]) apply(ctx context.Context, msgs []Msg, n *nav) {
 	}
 	s.tables[s.ver] = typed[Msg](h)
 
-	// Effect order is the client's execution order.
-	var effects []effect
+	// Step order is the client's execution order.
+	var steps []step
 	if len(add) > 0 {
 		// Goes before ApplyPatches to be ready for new handlers.
-		effects = append(effects, effect{Type: effectAddPathSets, PathSets: add})
+		steps = append(steps, step{Type: stepAddPathSets, PathSets: add})
 	}
 	if n != nil {
 		// Goes before ApplyPatches+SetTitle to snapshot outgoing state.
 		switch {
 		case n.push != nil:
 			s.snapshots.put(oldVer, tree{view: s.view, title: s.title, pathSets: maps.Clone(s.pathSets)})
-			effects = append(effects, effect{Type: effectPushURL, URL: n.push.String()})
+			steps = append(steps, step{Type: stepPushURL, URL: n.push.String()})
 		case n.replace != nil:
-			effects = append(effects, effect{Type: effectReplaceURL, URL: n.replace.String()})
+			steps = append(steps, step{Type: stepReplaceURL, URL: n.replace.String()})
 		}
 	}
 	// ApplyPatches and SetTitle go together.
 	if len(patches) > 0 {
-		effects = append(effects, effect{Type: effectApplyPatch, Patches: patches, Ver: s.ver})
+		steps = append(steps, step{Type: stepApplyPatch, Patches: patches, Ver: s.ver})
 	}
 	if title != s.title {
-		effects = append(effects, effect{Type: effectSetTitle, Title: title})
+		steps = append(steps, step{Type: stepSetTitle, Title: title})
 	}
 
 	if s.preview != nil && !s.preview.frozen && len(patches) > 0 {
 		if s.preview.addView(s.ver, tree{view: next, title: title, pathSets: maps.Clone(s.pathSets)}) {
-			effects = append(effects, effect{
-				Type:    effectSetPreview,
+			steps = append(steps, step{
+				Type:    stepSetPreview,
 				Patches: vdom.Diff(next, s.preview.view),
 				Title:   s.preview.title,
 				URL:     s.preview.url,
@@ -310,12 +310,12 @@ func (s *instance[Msg]) apply(ctx context.Context, msgs []Msg, n *nav) {
 			})
 		} else {
 			s.preview.frozen = true
-			effects = append(effects, effect{Type: effectDeletePreview, URL: s.preview.url})
+			steps = append(steps, step{Type: stepDeletePreview, URL: s.preview.url})
 		}
 	}
 
-	if len(effects) > 0 {
-		s.appendFrame(frame{Base: s.base, Effects: effects})
+	if len(steps) > 0 {
+		s.appendFrame(frame{Base: s.base, Steps: steps})
 	}
 	s.view = next
 	s.title = title
@@ -379,7 +379,7 @@ func (s *instance[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		SnapshotVer string         `json:",omitempty"`
 		ToPreview   bool           `json:",omitempty"`
 		// Ver echoes the version id of the tree the client displayed
-		// when a Dispatch event fired. See effect.Ver.
+		// when a Dispatch event fired. See step.Ver.
 		Ver string `json:",omitempty"`
 		// Mutations carries optional client-initiated DOM changes.
 		Mutations []vdom.ClientMutation `json:",omitempty"`
@@ -510,7 +510,7 @@ func (s *instance[Msg]) applyClientMutations(ctx context.Context, ver string, mu
 		// derived base and rebuild the client's tree from the authoritative one.
 		s.logger.WarnContext(ctx, "client state reconstruct failed", "ver", ver, "error", err)
 		s.base = derived
-		s.appendFrame(frame{Base: derived, Effects: resetEffects(s.view, s.title, s.ver, maps.Clone(s.pathSets))})
+		s.appendFrame(frame{Base: derived, Steps: resetSteps(s.view, s.title, s.ver, maps.Clone(s.pathSets))})
 		return
 	}
 	s.base = derived
@@ -562,19 +562,19 @@ func (s *instance[Msg]) actedOn(ver string) (tree, bool) {
 	return s.snapshots.get(ver)
 }
 
-// resetEffects rebuilds the client's tree from scratch and clears transient
+// resetSteps rebuilds the client's tree from scratch and clears transient
 // client state: re-deliver the path sets so the rebuilt handlers resolve,
 // Reset the view named ver, set the title, and drop any held preview (stale
 // against the new tree). ps is taken as the caller's to keep.
-func resetEffects(view []vdom.Node, title, ver string, ps map[string]pathSet) []effect {
-	efs := []effect{}
+func resetSteps(view []vdom.Node, title, ver string, ps map[string]pathSet) []step {
+	steps := []step{}
 	if len(ps) > 0 {
-		efs = append(efs, effect{Type: effectAddPathSets, PathSets: ps})
+		steps = append(steps, step{Type: stepAddPathSets, PathSets: ps})
 	}
-	return append(efs,
-		effect{Type: effectApplyPatch, Patches: []vdom.Patch{vdom.Reset(view)}, Ver: ver},
-		effect{Type: effectSetTitle, Title: title},
-		effect{Type: effectDeletePreview},
+	return append(steps,
+		step{Type: stepApplyPatch, Patches: []vdom.Patch{vdom.Reset(view)}, Ver: ver},
+		step{Type: stepSetTitle, Title: title},
+		step{Type: stepDeletePreview},
 	)
 }
 
@@ -664,7 +664,7 @@ func (s *instance[Msg]) handleSSE(w http.ResponseWriter, req *http.Request) {
 	rc.Flush()
 
 	if resync, view, title, head, base, ver, ps := s.needsResync(seen); resync {
-		f := frame{seq: head, Base: base, Effects: resetEffects(view, title, ver, ps)}
+		f := frame{seq: head, Base: base, Steps: resetSteps(view, title, ver, ps)}
 		if err := writeFrame(w, rc, f); err != nil {
 			s.logger.DebugContext(req.Context(), "sse", "error", err)
 			return
@@ -801,7 +801,7 @@ func (s *instance[Msg]) prefetch(ctx context.Context, u *url.URL) {
 		if s.preview != nil && s.preview.url == href {
 			s.preview = nil
 		}
-		s.appendFrame(frame{Effects: []effect{{Type: effectDeletePreview, URL: href}}})
+		s.appendFrame(frame{Steps: []step{{Type: stepDeletePreview, URL: href}}})
 		return
 	}
 	du := mustParseRelativeURL("domi.App.Preview", dest)
@@ -811,19 +811,19 @@ func (s *instance[Msg]) prefetch(ctx context.Context, u *url.URL) {
 	s.tables[p.ver] = typed[Msg](h)
 	p.addView(s.ver, tree{view: s.view, title: s.title, pathSets: maps.Clone(s.pathSets)})
 	s.preview = p
-	var effects []effect
+	var steps []step
 	if len(add) > 0 {
-		effects = append(effects, effect{Type: effectAddPathSets, PathSets: add})
+		steps = append(steps, step{Type: stepAddPathSets, PathSets: add})
 	}
-	effects = append(effects, effect{
-		Type:    effectSetPreview,
+	steps = append(steps, step{
+		Type:    stepSetPreview,
 		Patches: vdom.Diff(s.view, next),
 		Title:   title,
 		URL:     href,
 		Dest:    p.dest,
 		Ver:     p.ver,
 	})
-	s.appendFrame(frame{Base: s.base, Effects: effects})
+	s.appendFrame(frame{Base: s.base, Steps: steps})
 }
 
 // commitPreview installs the outstanding preview as the current view.
@@ -873,7 +873,7 @@ func writeFrame(w http.ResponseWriter, rc *http.ResponseController, f frame) err
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(w, "id: %d\nevent: effect\ndata: %s\n\n", f.seq, data); err != nil {
+	if _, err := fmt.Fprintf(w, "id: %d\nevent: update\ndata: %s\n\n", f.seq, data); err != nil {
 		return err
 	}
 	rc.Flush()
