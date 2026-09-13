@@ -224,6 +224,12 @@ func (s *instance[Msg]) spawn(cmd Cmd[Msg]) {
 			switch {
 			case c.f != nil:
 				m = []Msg{c.f()}
+			case c.eff != nil:
+				run, ok := s.sv.effects[c.eff.t]
+				if !ok {
+					panic(fmt.Errorf("domi: no handler for effect %v", c.eff.t))
+				}
+				m = []Msg{run(s.ctx, c.eff.v)}
 			case c.nav.push != nil:
 				m = []Msg{s.sv.onURLChange(c.nav.push.Clone())}
 			case c.nav.replace != nil:
