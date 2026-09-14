@@ -28,7 +28,7 @@ func Effect[Msg, E any](e E) Cmd[Msg] {
 // and is cancelled when the instance ends.
 func EffectHandler[E, Msg any](f func(context.Context, E) Msg) Option {
 	if f == nil {
-		panic("domi: EffectHandler called with a nil function")
+		panic(fmt.Errorf("domi: EffectHandler called with a nil function"))
 	}
 	return optionEffectHandler[Msg]{
 		eff: effectTypeOf[E](),
@@ -61,7 +61,7 @@ func (o optionEffectHandler[Msg]) types() (effect, msg string) {
 func effectTypeOf[E any]() reflect.Type {
 	t := reflect.TypeFor[E]()
 	if t.Kind() == reflect.Interface {
-		panic(fmt.Sprintf("domi: effect type %v must be concrete", t))
+		panic(fmt.Errorf("domi: effect type %v must be concrete", t))
 	}
 	return t
 }

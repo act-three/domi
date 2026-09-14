@@ -83,7 +83,7 @@ func isReservedAttr(name string) bool {
 func Name(name string, value ...string) Attr {
 	mustValidAttrName(name)
 	if isReservedAttr(name) {
-		panic(fmt.Sprintf("domi: attribute %s is reserved", name))
+		panic(fmt.Errorf("domi: attribute %s is reserved", name))
 	}
 	switch len(value) {
 	case 0:
@@ -122,7 +122,7 @@ func Group(a ...Attr) Attr {
 					}
 				}
 			default:
-				panic(fmt.Sprintf("domi: cannot lower %T", a))
+				panic(fmt.Errorf("domi: cannot lower %T", a))
 			}
 		}
 	})
@@ -145,7 +145,7 @@ func HandleLink(policy string) Attr {
 	switch policy {
 	case "yes", "same-origin", "no":
 	default:
-		panic(fmt.Sprintf("domi: invalid link policy %q", policy))
+		panic(fmt.Errorf("domi: invalid link policy %q", policy))
 	}
 	return Name("domi-handle", policy)
 }

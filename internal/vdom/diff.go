@@ -610,7 +610,7 @@ func diffGaps(sim, newKids []Node, path []int, out []patch) []patch {
 			return out
 		}
 		if i == len(sim) || j == len(newKids) || childKey(sim[i]) != childKey(newKids[j]) {
-			panic(fmt.Sprintf("domi: internal: keyed delimiters desynced at %d/%d", i, j))
+			panic(fmt.Errorf("domi: internal: keyed delimiters desynced at %d/%d", i, j))
 		}
 		i++
 		j++

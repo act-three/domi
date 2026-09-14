@@ -140,11 +140,11 @@ func isReservedTag(name string) bool {
 func Tag(name string, attr ...Attr) Element {
 	mustValidTagName(name)
 	if isReservedTag(name) {
-		panic(fmt.Sprintf("domi: tag %s is reserved", name))
+		panic(fmt.Errorf("domi: tag %s is reserved", name))
 	}
 	return func(children ...Node) node {
 		if vdom.IsVoid(name) && hasNode(children) {
-			panic(fmt.Sprintf("domi: void element <%s> cannot have children", name))
+			panic(fmt.Errorf("domi: void element <%s> cannot have children", name))
 		}
 		return element{tag: name, attrs: attr, children: children}
 	}
@@ -179,21 +179,21 @@ func hasNode(nodes []Node) bool {
 // If n already has a key or is not a single element, WithKey panics.
 func WithKey(key string, n Node) Node {
 	if key == "" {
-		panic("domi: key must be nonempty")
+		panic(fmt.Errorf("domi: key must be nonempty"))
 	}
 	var only node
 	for c := range Fragment(n).(fragment) {
 		if only != nil {
-			panic(fmt.Sprintf("domi: keyed node %q must be a single element", key))
+			panic(fmt.Errorf("domi: keyed node %q must be a single element", key))
 		}
 		only = c
 	}
 	e, ok := only.(element)
 	if !ok {
-		panic(fmt.Sprintf("domi: keyed node %q must be an element, got %T", key, only))
+		panic(fmt.Errorf("domi: keyed node %q must be an element, got %T", key, only))
 	}
 	if e.key != "" {
-		panic(fmt.Sprintf("domi: keyed node %q already has key %q", key, e.key))
+		panic(fmt.Errorf("domi: keyed node %q already has key %q", key, e.key))
 	}
 	e.key = key
 	return e
@@ -259,7 +259,7 @@ func Fragment(n ...Node) Node {
 					return
 				}
 			default:
-				panic(fmt.Sprintf("domi: cannot lower %T", c))
+				panic(fmt.Errorf("domi: cannot lower %T", c))
 			}
 		}
 	})

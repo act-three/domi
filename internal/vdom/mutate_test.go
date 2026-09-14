@@ -42,7 +42,7 @@ func steps(path ...any) []Step {
 		case string:
 			out[i] = Key(s)
 		default:
-			panic(fmt.Sprintf("steps: %v is not an int or string", s))
+			panic(fmt.Errorf("steps: %v is not an int or string", s))
 		}
 	}
 	return out
