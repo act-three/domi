@@ -59,6 +59,17 @@ const (
 	routeItem
 )
 
+func main() {
+	sv := domi.NewServer(
+		newApp,
+		func(u *url.URL) Msg { return Msg{URLRequest: u} },
+		func(u *url.URL) Msg { return Msg{URLChange: u} },
+	)
+	addr := "127.0.0.1:3013"
+	log.Printf("panes listening on http://%s", addr)
+	log.Fatal(http.ListenAndServe(addr, sv))
+}
+
 type App struct {
 	route  route
 	itemID int
@@ -233,15 +244,4 @@ func detail(app *App) N {
 		),
 		p()(a(attr.Href("/"))(text("← back to home"))),
 	)
-}
-
-func main() {
-	sv := domi.NewServer(
-		newApp,
-		func(u *url.URL) Msg { return Msg{URLRequest: u} },
-		func(u *url.URL) Msg { return Msg{URLChange: u} },
-	)
-	addr := "127.0.0.1:3013"
-	log.Printf("panes listening on http://%s", addr)
-	log.Fatal(http.ListenAndServe(addr, sv))
 }
