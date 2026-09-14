@@ -73,11 +73,11 @@ type batch[Msg any] []cmd[Msg]
 
 func (batch[Msg]) isCmd() {}
 
-// cmd is the lowered form of a single command:
-// a Msg-producing function, or a navigation.
+// A cmd is the lowered form of a single command.
 type cmd[Msg any] struct {
 	f   func() Msg
 	nav *nav
+	eff *effect
 }
 
 // Func returns a Cmd that calls f.
@@ -113,7 +113,7 @@ func MapCmd[T, Msg any](f func(T) Msg, c Cmd[T]) Cmd[Msg] {
 	mapped := make(batch[Msg], len(all))
 	for i, c := range all {
 		if c.f == nil {
-			mapped[i] = cmd[Msg]{nav: c.nav}
+			mapped[i] = cmd[Msg]{nav: c.nav, eff: c.eff}
 		} else {
 			mapped[i] = cmd[Msg]{f: func() Msg { return f(c.f()) }}
 		}

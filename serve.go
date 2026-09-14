@@ -3,6 +3,7 @@ package domi
 import (
 	"context"
 	"crypto/rand"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -23,6 +24,7 @@ type Server[Msg any] struct {
 	keepalive       time.Duration
 	prefix          string // namespace for internal URLs, e.g. "/-/domi"; "/" for the site root
 	clientPath      string // full path the client runtime is served at, prefix included
+	effects         effectTable[Msg]
 
 	appf         func(context.Context, *url.URL) (App[Msg], Cmd[Msg])
 	onURLRequest func(*url.URL) Msg
@@ -88,6 +90,14 @@ func NewServer[Msg any, A App[Msg]](
 			sv.keepalive = o.d
 		case loggerOption:
 			sv.logger = o.l
+		case optionEffectHandler[Msg]:
+			if sv.effects == nil {
+				sv.effects = effectTable[Msg]{}
+			}
+			sv.effects[o.eff] = o.run
+		case optionEffectHandlerOther:
+			eff, msg := o.types()
+			panic(fmt.Errorf("domi: effect handler for %s: invalid msg type %s", eff, msg))
 		}
 	}
 	sv.clientPath = path.Join("/", sv.prefix, "domi."+clientJSDigest+".js")
