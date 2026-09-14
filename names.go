@@ -75,14 +75,14 @@ func isValidTagName(name string) bool {
 // mustValidTagName panics unless name is a valid tag name.
 func mustValidTagName(name string) {
 	if !isValidTagName(name) {
-		panic(fmt.Sprintf("domi: invalid tag name %q", name))
+		panic(fmt.Errorf("domi: invalid tag name %q", name))
 	}
 }
 
 // mustValidAttrName panics unless name is a valid attribute name.
 func mustValidAttrName(name string) {
 	if !isValidName(name, foreignAttrNames) {
-		panic(fmt.Sprintf("domi: invalid attribute name %q", name))
+		panic(fmt.Errorf("domi: invalid attribute name %q", name))
 	}
 }
 

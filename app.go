@@ -95,7 +95,7 @@ func Batch[Msg any](c ...Cmd[Msg]) Cmd[Msg] {
 		case batch[Msg]:
 			all = append(all, v...)
 		default:
-			panic(fmt.Sprintf("domi: cannot lower %T", c))
+			panic(fmt.Errorf("domi: cannot lower %T", c))
 		}
 	}
 	return all
@@ -107,7 +107,7 @@ func Batch[Msg any](c ...Cmd[Msg]) Cmd[Msg] {
 // to a message of type Msg.
 func MapCmd[T, Msg any](f func(T) Msg, c Cmd[T]) Cmd[Msg] {
 	if f == nil {
-		panic("domi: MapCmd called with a nil function")
+		panic(fmt.Errorf("domi: MapCmd called with a nil function"))
 	}
 	all := Batch[T](c).(batch[T])
 	mapped := make(batch[Msg], len(all))
@@ -166,7 +166,7 @@ func Subs[Msg any](s ...Sub[Msg]) Sub[Msg] {
 		case subs[Msg]:
 			all = append(all, v...)
 		default:
-			panic(fmt.Sprintf("domi: cannot lower %T", s))
+			panic(fmt.Errorf("domi: cannot lower %T", s))
 		}
 	}
 	return all
@@ -178,7 +178,7 @@ func Subs[Msg any](s ...Sub[Msg]) Sub[Msg] {
 // to a message of type Msg.
 func MapSub[T, Msg any](f func(T) Msg, s Sub[T]) Sub[Msg] {
 	if f == nil {
-		panic("domi: MapSub called with a nil function")
+		panic(fmt.Errorf("domi: MapSub called with a nil function"))
 	}
 	all := Subs[T](s).(subs[T])
 	mapped := make(subs[Msg], len(all))

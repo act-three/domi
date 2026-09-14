@@ -63,7 +63,7 @@ func renderChildren(w io.Writer, e Element) error {
 		}
 		t, ok := e.children[0].(Text)
 		if len(e.children) != 1 || !ok {
-			panic(fmt.Sprintf("domi: <%s> must contain only text", e.tag))
+			panic(fmt.Errorf("domi: <%s> must contain only text", e.tag))
 		}
 		_, err := io.WriteString(w, string(t))
 		return err

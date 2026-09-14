@@ -123,7 +123,7 @@ func (a *bunApplier) apply(initial string, patches []patch) (string, error) {
 		return "", fmt.Errorf("decode: %w (line=%s)", err, string(line))
 	}
 	if resp.Tag != tag {
-		panic(fmt.Sprintf("bunApplier out of sync: sent tag %q, got %q (stderr=%s)", tag, resp.Tag, a.stderrSnapshot()))
+		panic(fmt.Errorf("bunApplier out of sync: sent tag %q, got %q (stderr=%s)", tag, resp.Tag, a.stderrSnapshot()))
 	}
 	if resp.Err != "" {
 		return "", fmt.Errorf("bun: %s", resp.Err)

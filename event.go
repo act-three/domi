@@ -82,7 +82,7 @@ func adapt[Msg any](hd handler) func(jsontext.Value) (Msg, error) {
 	if !vok && !pok {
 		got, want := reflect.TypeOf(hd.pzero).Elem(), reflect.TypeFor[Msg]()
 		if want.Kind() != reflect.Interface || !got.Implements(want) {
-			panic(fmt.Sprintf("domi: On(%q) handler returns %v, want %v", hd.event, got, want))
+			panic(fmt.Errorf("domi: On(%q) handler returns %v, want %v", hd.event, got, want))
 		}
 	}
 	return func(v jsontext.Value) (msg Msg, err error) {
@@ -106,7 +106,7 @@ func adapt[Msg any](hd handler) func(jsontext.Value) (Msg, error) {
 //	MapNode(func(m widget.Msg) Msg { return widgetMsg{m} }, widget.View(ctx))
 func MapNode[T, Msg any](f func(T) Msg, n Node) Node {
 	if f == nil {
-		panic("domi: MapNode called with a nil function")
+		panic(fmt.Errorf("domi: MapNode called with a nil function"))
 	}
 	mapper := func(hd handler) handler {
 		unmarshal := adapt[T](hd)
@@ -173,10 +173,10 @@ func iterMap[V, U any](seq iter.Seq[V], f func(V) U) iter.Seq[U] {
 // If event is invalid or f is nil, On panics.
 func On[Msg any](event string, f func(jsontext.Value) (Msg, error), field ...[]string) Attr {
 	if !isValidName(event, nil) {
-		panic(fmt.Sprintf("domi: invalid event name %q", event))
+		panic(fmt.Errorf("domi: invalid event name %q", event))
 	}
 	if f == nil {
-		panic("domi: On called with a nil unmarshal function")
+		panic(fmt.Errorf("domi: On called with a nil unmarshal function"))
 	}
 	ps := pathSet(field)
 	slices.SortFunc(ps, slices.Compare)

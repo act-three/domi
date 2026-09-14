@@ -1623,7 +1623,7 @@ func soleKey[Msg any](t *testing.T, s *instance[Msg], ver string) string {
 	for k := range table {
 		return k
 	}
-	panic("unreachable")
+	panic(fmt.Errorf("unreached"))
 }
 
 // waitGot settles the bubble and compares the app's recorded Msgs.

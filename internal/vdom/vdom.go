@@ -58,17 +58,17 @@ func NewElement(tag string, attrs iter.Seq[Attr], children []Node) Element {
 	slices.SortStableFunc(a, Attr.cmp)
 
 	if IsVoid(tag) && len(children) > 0 {
-		panic(fmt.Sprintf("domi: void element <%s> cannot have children", tag))
+		panic(fmt.Errorf("domi: void element <%s> cannot have children", tag))
 	}
 	children = coalesceText(children)
 	validateChildren(children)
 	if IsRawTextElement(tag) && len(children) > 0 {
 		t, ok := children[0].(Text)
 		if len(children) != 1 || !ok {
-			panic(fmt.Sprintf("domi: <%s> must contain only text", tag))
+			panic(fmt.Errorf("domi: <%s> must contain only text", tag))
 		}
 		if err := CheckRawText(tag, string(t)); err != nil {
-			panic("domi: " + err.Error())
+			panic(fmt.Errorf("domi: %w", err))
 		}
 	}
 
@@ -100,7 +100,7 @@ func validateChildren(nodes []Node) {
 			seen = make(map[string]struct{}, len(nodes))
 		}
 		if _, dup := seen[e.key]; dup {
-			panic(fmt.Sprintf("domi: duplicate key %q among sibling children", e.key))
+			panic(fmt.Errorf("domi: duplicate key %q among sibling children", e.key))
 		}
 		seen[e.key] = struct{}{}
 	}
@@ -155,7 +155,7 @@ func withoutAttr(attrs []Attr, name string) []Attr {
 // so the client can recognize opaque subtrees in the live DOM.
 func (e Element) WithKey(key string, opaque bool) Element {
 	if key == "" {
-		panic("domi: a keyed child must have a nonempty key")
+		panic(fmt.Errorf("domi: a keyed child must have a nonempty key"))
 	}
 	e.key = key
 	e.opaque = opaque
