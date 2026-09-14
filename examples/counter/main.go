@@ -31,6 +31,17 @@ type Counter struct {
 	count int
 }
 
+func main() {
+	sv := domi.NewServer(
+		newCounter,
+		func(*url.URL) Msg { return Msg{} },
+		func(*url.URL) Msg { return Msg{} },
+	)
+	addr := "127.0.0.1:3010"
+	log.Printf("counter listening on http://%s", addr)
+	log.Fatal(http.ListenAndServe(addr, sv))
+}
+
 func newCounter(_ context.Context, _ *url.URL) (*Counter, domi.Cmd[Msg]) {
 	return &Counter{}, nil
 }
@@ -61,15 +72,4 @@ func (c *Counter) Subscriptions(_ context.Context) (s domi.Sub[Msg]) { return s 
 
 func (c *Counter) Preview(ctx context.Context, _ *url.URL) (string, string, N) {
 	return "", "", nil
-}
-
-func main() {
-	sv := domi.NewServer(
-		newCounter,
-		func(*url.URL) Msg { return Msg{} },
-		func(*url.URL) Msg { return Msg{} },
-	)
-	addr := "127.0.0.1:3010"
-	log.Printf("counter listening on http://%s", addr)
-	log.Fatal(http.ListenAndServe(addr, sv))
 }

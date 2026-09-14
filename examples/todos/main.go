@@ -45,6 +45,17 @@ type Todos struct {
 	nextID uint64
 }
 
+func main() {
+	sv := domi.NewServer(
+		newTodos,
+		func(*url.URL) Msg { return Msg{} },
+		func(*url.URL) Msg { return Msg{} },
+	)
+	addr := "127.0.0.1:3011"
+	log.Printf("todos listening on http://%s", addr)
+	log.Fatal(http.ListenAndServe(addr, sv))
+}
+
 func newTodos(_ context.Context, _ *url.URL) (*Todos, domi.Cmd[Msg]) {
 	t := &Todos{}
 	for _, s := range []string{"learn go generics", "spike domi", "ship something"} {
@@ -123,15 +134,4 @@ func itemRow(it Item) N {
 		button(onClick(Msg{Tag: "MoveUp", ID: it.ID}))(text("↑")),
 		button(onClick(Msg{Tag: "Remove", ID: it.ID}))(text("×")),
 	)
-}
-
-func main() {
-	sv := domi.NewServer(
-		newTodos,
-		func(*url.URL) Msg { return Msg{} },
-		func(*url.URL) Msg { return Msg{} },
-	)
-	addr := "127.0.0.1:3011"
-	log.Printf("todos listening on http://%s", addr)
-	log.Fatal(http.ListenAndServe(addr, sv))
 }
