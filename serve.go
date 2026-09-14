@@ -76,20 +76,10 @@ func NewServer[Msg any, A App[Msg]](
 	}
 	for _, o := range o {
 		switch o := o.(type) {
-		case documentOption:
+		case optionDocument:
 			sv.document = func(_, title string, body Node) Node {
 				return o.f(title, body)
 			}
-		case internalURLPrefixOption:
-			sv.prefix = o.p
-		case instanceTimeoutOption:
-			sv.instanceTimeout = o.d
-		case replayWindowOption:
-			sv.replayWindow = o.n
-		case keepaliveOption:
-			sv.keepalive = o.d
-		case loggerOption:
-			sv.logger = o.l
 		case optionEffectHandler[Msg]:
 			if sv.effects == nil {
 				sv.effects = effectTable[Msg]{}
@@ -98,6 +88,16 @@ func NewServer[Msg any, A App[Msg]](
 		case optionEffectHandlerOther:
 			eff, msg := o.types()
 			panic(fmt.Errorf("domi: effect handler for %s: invalid msg type %s", eff, msg))
+		case optionInstanceTimeout:
+			sv.instanceTimeout = o.d
+		case optionInternalURLPrefix:
+			sv.prefix = o.p
+		case optionKeepalive:
+			sv.keepalive = o.d
+		case optionLogger:
+			sv.logger = o.l
+		case optionReplayWindow:
+			sv.replayWindow = o.n
 		}
 	}
 	sv.clientPath = path.Join("/", sv.prefix, "domi."+clientJSDigest+".js")

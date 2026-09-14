@@ -9,22 +9,22 @@ import (
 // An Option configures a [Server].
 type Option interface{ isOption() }
 
-func (documentOption) isOption()          {}
-func (internalURLPrefixOption) isOption() {}
-func (keepaliveOption) isOption()         {}
-func (loggerOption) isOption()            {}
-func (replayWindowOption) isOption()      {}
-func (instanceTimeoutOption) isOption()   {}
+func (optionDocument) isOption()          {}
+func (optionInstanceTimeout) isOption()   {}
+func (optionInternalURLPrefix) isOption() {}
+func (optionKeepalive) isOption()         {}
+func (optionLogger) isOption()            {}
+func (optionReplayWindow) isOption()      {}
 
 type (
-	documentOption struct {
+	optionDocument struct {
 		f func(title string, body Node) Node
 	}
-	internalURLPrefixOption struct{ p string }
-	keepaliveOption         struct{ d time.Duration }
-	loggerOption            struct{ l *slog.Logger }
-	replayWindowOption      struct{ n int }
-	instanceTimeoutOption   struct{ d time.Duration }
+	optionInstanceTimeout   struct{ d time.Duration }
+	optionInternalURLPrefix struct{ p string }
+	optionKeepalive         struct{ d time.Duration }
+	optionLogger            struct{ l *slog.Logger }
+	optionReplayWindow      struct{ n int }
 )
 
 // Document supplies a custom builder for the initial HTML shell.
@@ -48,7 +48,7 @@ type (
 //
 // Apps using Document are responsible for loading the Domi client JavaScript.
 // See Serving the Client JavaScript Module in the package documentation for details.
-func Document(f func(title string, body Node) Node) Option { return documentOption{f} }
+func Document(f func(title string, body Node) Node) Option { return optionDocument{f} }
 
 // InternalURLPrefix specifies the prefix p
 // used for domi's internal URL paths.
@@ -57,20 +57,20 @@ func Document(f func(title string, body Node) Node) Option { return documentOpti
 //
 // The default prefix is "/".
 func InternalURLPrefix(p string) Option {
-	return internalURLPrefixOption{path.Clean("/" + p)}
+	return optionInternalURLPrefix{path.Clean("/" + p)}
 }
 
 // Keepalive sets how long an SSE connection is left idle
 // before the server sends an SSE comment line to the client.
 // This traffic prevents proxies from killing an idle connection.
 // The default keepalive time is 25 seconds.
-func Keepalive(d time.Duration) Option { return keepaliveOption{d} }
+func Keepalive(d time.Duration) Option { return optionKeepalive{d} }
 
 // Logger sets the structured logger used by domi
 // for internal diagnostics such as malformed client events
 // and handler registry misses.
 // The default logger is [slog.Default].
-func Logger(l *slog.Logger) Option { return loggerOption{l} }
+func Logger(l *slog.Logger) Option { return optionLogger{l} }
 
 // ReplayWindow sets the number of recent patch frames an instance retains
 // for SSE clients to resume from after a transient disconnection.
@@ -78,9 +78,9 @@ func Logger(l *slog.Logger) Option { return loggerOption{l} }
 // receive the patches they missed.
 // Clients further behind get a full resync of the current view.
 // The default window is 128 frames.
-func ReplayWindow(n int) Option { return replayWindowOption{n} }
+func ReplayWindow(n int) Option { return optionReplayWindow{n} }
 
 // InstanceTimeout sets how long an instance can remain idle
 // before domi considers it garbage and deletes it.
 // The default timeout is 48 hours.
-func InstanceTimeout(d time.Duration) Option { return instanceTimeoutOption{d} }
+func InstanceTimeout(d time.Duration) Option { return optionInstanceTimeout{d} }
