@@ -57,6 +57,21 @@
 // are never updated by domi,
 // like all opaque DOM content.
 //
+// # Retained Event Handlers
+//
+// In some cases, it is useful for the application
+// to clone and retain DOM nodes beyond the lifetime managed by Domi.
+// Applications should use JavaScript function Domi.clone for this.
+// It returns a deep copy of an element,
+// annotated to retain any Domi event handlers after the source is removed.
+//
+// Applications should not mutate the DOM or clone nodes
+// while Domi is mutating the DOM.
+// Synchronous custom-element callbacks
+// such as connectedCallback or disconnectedCallback
+// should use queueMicrotask or another mechanism
+// to defer work until Domi updates are complete.
+//
 // # Serving the Client JavaScript Module
 //
 // Domi provides a JavaScript module to run in the browser.

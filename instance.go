@@ -1,6 +1,7 @@
 package domi
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/json/jsontext"
@@ -387,6 +388,9 @@ func (s *instance[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		// Ver echoes the version id of the tree the client displayed
 		// when a Dispatch event fired. See step.Ver.
 		Ver string `json:",omitempty"`
+		// HandlerVer is the tree version to use to find the handler
+		// for Event. If empty, use Ver.
+		HandlerVer string `json:",omitempty"`
 		// Mutations carries optional client-initiated DOM changes.
 		Mutations []vdom.ClientMutation `json:",omitempty"`
 	}
@@ -404,7 +408,10 @@ func (s *instance[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		if mutated {
 			s.applyClientMutations(ctx, envelope.Ver, envelope.Mutations)
 		}
-		msgs := s.resolve(ctx, envelope.Ver, envelope.Handler, envelope.Event)
+		// The mutations above describe the tree named Ver; only the
+		// handler lookup follows HandlerVer.
+		ver := cmp.Or(envelope.HandlerVer, envelope.Ver)
+		msgs := s.resolve(ctx, ver, envelope.Handler, envelope.Event)
 		if len(msgs) > 0 || mutated {
 			// If msgs is empty, we still apply it if there are
 			// client mutations, to send a corrective diff.

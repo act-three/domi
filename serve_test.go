@@ -1702,6 +1702,37 @@ func TestDispatchUnknownVerDropped(t *testing.T) {
 	})
 }
 
+// A Dispatch names the tree its handler came from separately from the
+// tree on display: HandlerVer selects the table, so a copy kept from an
+// old render fires that render's function while Ver stays the acted-on
+// tree. Absent, it defaults to Ver; naming a tree the instance never
+// produced resolves nothing rather than some other table's binding.
+func TestDispatchHandlerVerSelectsTable(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		app := &captureApp{body: func(n int) Node { return Textf("%d", n) }}
+		s := newTestInstance(app)
+		defer s.cancel()
+
+		ver0 := s.ver
+		s.apply(s.ctx, []int{-1}, nil) // n: 0 → 1; body changes; fresh ver
+		ver1 := s.ver
+		key := soleKey(t, s, ver1)
+		dispatch := func(body string) {
+			rec := httptest.NewRecorder()
+			s.handleEvent(rec, httptest.NewRequest("POST", "/x/event", strings.NewReader(body)))
+		}
+
+		dispatch(fmt.Sprintf(`{"Type":"Dispatch","Handler":%q,"Ver":%q,"HandlerVer":%q}`, key, ver1, ver0))
+		waitGot(t, s, app, []int{0})
+
+		dispatch(fmt.Sprintf(`{"Type":"Dispatch","Handler":%q,"Ver":%q}`, key, s.ver))
+		waitGot(t, s, app, []int{0, 2})
+
+		dispatch(fmt.Sprintf(`{"Type":"Dispatch","Handler":%q,"Ver":%q,"HandlerVer":"nonexistent"}`, key, s.ver))
+		waitGot(t, s, app, []int{0, 2})
+	})
+}
+
 // A handler whose function produces some other app's Msg type is a
 // coding error: typed panics when the harvest lands, at render time,
 // naming the event and both types.
@@ -1911,6 +1942,9 @@ func TestHandleRootMountsWrapperInsideBody(t *testing.T) {
 	}
 	if !strings.Contains(html, "<div>0</div></domi-root></body>") {
 		t.Fatalf("view not mounted inside the wrapper:\n%s", html)
+	}
+	if strings.Contains(html, " event-tree-ver=") {
+		t.Fatalf("mount exposes the private event version:\n%s", html)
 	}
 }
 
@@ -2227,6 +2261,47 @@ func TestDispatchMutatedUndecodedRerenders(t *testing.T) {
 		}
 		if !hasApplyPatch(f) {
 			t.Fatal("the render pass should emit the corrective patch at the event")
+		}
+	})
+}
+
+// A Dispatch carrying both client mutations and a HandlerVer keeps the
+// two roles of a version apart: the mutations replay against the tree
+// named Ver, the one the client acted on, while the handler resolves in
+// the table named HandlerVer. Here only the old table knows the
+// handler, and the move only fits the new tree.
+func TestDispatchHandlerVerWithMutations(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		app := &sortApp{order: []string{"a", "b", "c"}}
+		s := newTestInstance(app)
+		defer s.cancel()
+		v0 := s.ver
+		s.apply(s.ctx, []moveMsg{{Key: "c", Before: "a"}}, nil) // [c a b]; fresh ver
+		v1 := s.ver
+		s.mu.Lock()
+		s.tables[v0] = table[moveMsg]{"old": func(jsontext.Value) (moveMsg, error) {
+			return moveMsg{Key: "b", Before: "c"}, nil
+		}}
+		head := s.head
+		s.mu.Unlock()
+
+		body := fmt.Sprintf(
+			`{"Type":"Dispatch","Handler":"old","Ver":%q,"HandlerVer":%q,"Mutations":[{"Op":"move","From":[0,"b"],"To":[0,"b"],"Before":"c"}]}`, v1, v0)
+		rec := httptest.NewRecorder()
+		s.handleEvent(rec, httptest.NewRequest("POST", "/x/event", strings.NewReader(body)))
+		synctest.Wait()
+
+		s.mu.Lock()
+		base, order, frames := s.base, slices.Clone(app.order), s.head-head
+		s.mu.Unlock()
+		if base != v1+verMutatedSuffix {
+			t.Fatalf("base = %q, want derived from the acted-on %q", base, v1)
+		}
+		if !slices.Equal(order, []string{"b", "c", "a"}) {
+			t.Fatalf("model order = %v, want [b c a]", order)
+		}
+		if frames != 0 {
+			t.Fatalf("agreement emitted %d frame(s); the optimistic row should stand untouched", frames)
 		}
 	})
 }
