@@ -20,14 +20,21 @@ var clientJSDigest = func() string {
 	return fmt.Sprintf("%x", h[:3])
 }()
 
-// ClientModule returns a script element
-// that loads the JavaScript module used by domi.
-// Applications that do not provide a custom document
-// do not need to use ClientModule.
+// ClientModule returns an HTML script element
+// that loads the JavaScript module used by Domi.
+// The returned Node can be placed into the head element
+// of the application's custom document, if any.
 // See [Document].
 //
 // The given prefix must match the value
 // used in [InternalURLPrefix].
+//
+// Applications that do not provide a custom document
+// do not need to use ClientModule.
+// Applications that bundle the Domi module
+// with additional JavaScript do not need to use ClientModule.
+// See the “Serving the Client JavaScript Module” section
+// in the package documentation for details.
 func ClientModule(prefix string) Node {
 	return Tag("script",
 		Name("type", "module"),
