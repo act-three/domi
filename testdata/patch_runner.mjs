@@ -1,10 +1,10 @@
-// patch_runner — exercises client.js's patch applier against form
+// patch_runner — exercises domi.js's patch applier against form
 // controls carrying user state under jsdom. Once a user has interacted
 // with a control, its dirty flags stop the content attributes (and, for
 // textarea, the text content) from reflecting into what's displayed, so
 // the applier must sync the properties itself; these scenarios pin that
 // behavior, including the focused-element guard. It imports the
-// production applyPatch (kept internal to client.js) by copying the
+// production applyPatch (kept internal to domi.js) by copying the
 // source to a temp module that re-exports it, and exits non-zero with a
 // message on the first failure. Run by TestClientApplyPatchFormState,
 // which skips when bun is absent.
@@ -20,7 +20,7 @@ globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.Node = dom.window.Node;
 
-const src = await readFile(new URL('../client.js', import.meta.url), 'utf8');
+const src = await readFile(new URL('../domi.js', import.meta.url), 'utf8');
 const tmp = join(tmpdir(), `domi-patch-${process.pid}.mjs`);
 await writeFile(tmp, src + '\nexport { applyPatch, editing };');
 const { applyPatch, editing } = await import(pathToFileURL(tmp).href);

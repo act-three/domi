@@ -1,5 +1,5 @@
-// mutate_runner — exercises client.js's optimistic move applier under
-// jsdom. It imports the production applyMove (kept internal to client.js)
+// mutate_runner — exercises domi.js's optimistic move applier under
+// jsdom. It imports the production applyMove (kept internal to domi.js)
 // by copying the source to a temp module that re-exports it, drives a few
 // DOM scenarios, and exits non-zero with a message on the first failure.
 // Run by TestClientApplyMove, which skips when bun is absent.
@@ -15,7 +15,7 @@ globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.Node = dom.window.Node;
 
-const src = await readFile(new URL('../client.js', import.meta.url), 'utf8');
+const src = await readFile(new URL('../domi.js', import.meta.url), 'utf8');
 const tmp = join(tmpdir(), `domi-mutate-${process.pid}.mjs`);
 await writeFile(tmp, src + '\nexport { applyMove, childMap, applyClientMutations };');
 const { applyMove, childMap, applyClientMutations } = await import(pathToFileURL(tmp).href);

@@ -1,4 +1,4 @@
-// navigation_runner exercises client.js's anchor handling policy and URL
+// navigation_runner exercises domi.js's anchor handling policy and URL
 // normalization under jsdom. It imports the production helper by copying the
 // source to a temporary module that re-exports it, and exits non-zero on the
 // first failure. Run by TestClientAnchorNavigation, which skips without bun.
@@ -17,7 +17,7 @@ globalThis.document = dom.window.document;
 globalThis.location = dom.window.location;
 globalThis.Node = dom.window.Node;
 
-const src = await readFile(new URL('../client.js', import.meta.url), 'utf8');
+const src = await readFile(new URL('../domi.js', import.meta.url), 'utf8');
 const tmp = join(tmpdir(), `domi-navigation-${process.pid}.mjs`);
 await writeFile(tmp, src + '\nexport { handledAnchorURL };');
 const { handledAnchorURL } = await import(pathToFileURL(tmp).href);

@@ -1,7 +1,7 @@
 // Browser coverage for clone stamps, scoped dispatch, and event versions.
 import assert from 'node:assert/strict';
 import { JSDOM } from 'jsdom';
-import * as Domi from '../client.js';
+import * as Domi from '../domi.js';
 
 const { window } = new JSDOM(
   '<body><domi-root prefix="/i">' +

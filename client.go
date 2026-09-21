@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-//go:embed client.js
+//go:embed domi.js
 var rawClientJS []byte
 
 var clientJS = append(rawClientJS, "\nrun();\n"...)
