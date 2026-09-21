@@ -483,9 +483,28 @@ function getFields(e, el, paths) {
 // ---- instance initialization ----
 
 const EVENTS = ['click', 'submit', 'input', 'change', 'keydown', 'keyup'];
+let eventVer;
 
-function postEnvelope(eventURL, h, e, ver, mutations) {
+function updateDOM(next, f) {
+  eventVer = null;
+  const v = f();
+  eventVer = next;
+  return v;
+}
+
+// scopedVer returns the nearest domi-event-tree-ver attribute value on
+// el or an ancestor, or null if no such scope exists.
+function scopedVer(el) {
+  const scope = el.closest('[domi-event-tree-ver]');
+  return scope ? scope.getAttribute('domi-event-tree-ver') : null;
+}
+
+// postEnvelope sends a Dispatch for the handlers h. handlerVer, when
+// set, names the tree whose table resolves them on the server; the
+// mutations, if any, describe ver's tree either way.
+function postEnvelope(eventURL, h, e, ver, handlerVer, mutations) {
   const body = { Type: 'Dispatch', Handler: h, Event: e, Ver: ver };
+  if (handlerVer != null) body.HandlerVer = handlerVer;
   if (mutations && mutations.length) body.Mutations = mutations;
   fetch(eventURL, {
     method: 'POST',
@@ -526,6 +545,20 @@ function handledAnchorURL(a) {
   return pathname + url.search + url.hash;
 }
 
+// clone deep-copies el, preserving existing event scopes. Within domi-root,
+// it stamps the event-handler version, which must be available.
+export function clone(el) {
+  const root = el.closest('domi-root');
+  if (!root) return el.cloneNode(true);
+  if (!eventVer) {
+    throw new Error('domi: clone requires an available tree version; defer until the DOM update finishes');
+  }
+  const ver = scopedVer(el) || eventVer;
+  const node = el.cloneNode(true);
+  node.setAttribute('domi-event-tree-ver', ver);
+  return node;
+}
+
 // run wires up the domi instance on the <domi-root> mount element just
 // inside document.body and starts the SSE patch stream. Reads the URL
 // prefix from domi-root[prefix=…] (which the server emits on initial
@@ -558,7 +591,7 @@ export function run() {
 
   // Snapshot cache for instant back/forward. Maps snapshot vers (the
   // tree versions of cached pages, stored in history.state) to
-  // { frag, title }: a DocumentFragment holding detached clones of the
+  // snapshot data: a DocumentFragment holding detached clones of the
   // page's children, plus its document title. A snapshot is the whole
   // page as data — restoring it sets both the DOM and the title.
   // `ver` is the server-minted name of the tree the DOM displays; the
@@ -569,6 +602,7 @@ export function run() {
   const SNAPSHOT_MAX = 30;
   let base = '11111111111111111111111111';
   let ver = '11111111111111111111111111';
+  eventVer = ver; // differs from ver after client mutation
 
   // The snapshot parameter is snapVer, not ver: these helpers assign
   // the outer ver, which a same-named parameter would shadow.
@@ -576,7 +610,7 @@ export function run() {
     if (!snapVer) return;
     const frag = document.createDocumentFragment();
     for (const child of source.childNodes) frag.appendChild(child.cloneNode(true));
-    snapshots.set(snapVer, { frag, title });
+    snapshots.set(snapVer, { frag, title, eventVer });
     while (snapshots.size > SNAPSHOT_MAX) {
       snapshots.delete(snapshots.keys().next().value);
     }
@@ -585,14 +619,16 @@ export function run() {
   function restoreSnapshot(snapVer) {
     const cached = snapshots.get(snapVer);
     if (!cached) return;
-    while (root.firstChild) root.removeChild(root.firstChild);
-    delete root.__domiChildren;
-    // Clone-on-restore keeps the cache intact for future restores.
-    const fresh = cached.frag.cloneNode(true);
-    while (fresh.firstChild) root.appendChild(fresh.firstChild);
-    document.title = cached.title ?? '';
-    base = snapVer;
-    ver = snapVer;
+    updateDOM(cached.eventVer, () => {
+      while (root.firstChild) root.removeChild(root.firstChild);
+      delete root.__domiChildren;
+      // Clone-on-restore keeps the cache intact for future restores.
+      const fresh = cached.frag.cloneNode(true);
+      while (fresh.firstChild) root.appendChild(fresh.firstChild);
+      document.title = cached.title ?? '';
+      base = snapVer;
+      ver = snapVer;
+    });
   }
 
   // The single in-flight link preview, or null. The client tracks exactly
@@ -620,10 +656,12 @@ export function run() {
     cacheSnapshot(p.base, root, document.title);
     history.replaceState({ domiSnapshot: p.base }, '', location.href);
     history.pushState(null, '', p.dest);
-    for (const patch of p.patches ?? []) applyPatch(root, patch);
-    document.title = p.title ?? '';
-    base = p.base;
-    ver = p.ver;
+    updateDOM(p.ver, () => {
+      for (const patch of p.patches ?? []) applyPatch(root, patch);
+      document.title = p.title ?? '';
+      base = p.base;
+      ver = p.ver;
+    });
     fetch(eventURL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -664,10 +702,16 @@ export function run() {
               if (p) paths.push(...p);
             }
             const fields = getFields(e, el, paths);
-            const committed = commits ? commitOps(root, e.target) : [];
-            const muts = e.detail && e.detail.domi && e.detail.domi.mutations;
-            const proposed = Array.isArray(muts) && muts.length ? (applyClientMutations(root, muts) ?? []) : [];
-            const ops = committed.concat(proposed);
+            // The scope is el's, the element whose handler matched: a
+            // target inside a scoped copy may match a handler above it,
+            // which keeps its own dispatch.
+            const handlerVer = scopedVer(el);
+            const ops = updateDOM(eventVer, () => {
+              const committed = commits ? commitOps(root, e.target) : [];
+              const muts = e.detail && e.detail.domi && e.detail.domi.mutations;
+              const proposed = Array.isArray(muts) && muts.length ? (applyClientMutations(root, muts) ?? []) : [];
+              return committed.concat(proposed);
+            });
             if (ops.length) {
               // Optimistic commit: the mutations are applied and we rebase
               // onto a derived version (so frames built against the old tree
@@ -676,11 +720,11 @@ export function run() {
               // against its render.
               const acted = ver;
               base = ver = acted + '-mutated';
-              postEnvelope(eventURL, keys.join(','), fields, acted, ops);
+              postEnvelope(eventURL, keys.join(','), fields, acted, handlerVer, ops);
             } else {
               // No mutations, or a set we declined to apply: a plain
               // dispatch, leaving the server's next render to reconcile.
-              postEnvelope(eventURL, keys.join(','), fields, ver);
+              postEnvelope(eventURL, keys.join(','), fields, ver, handlerVer);
             }
             return;
           }
@@ -690,7 +734,7 @@ export function run() {
       // A commit on a control with no app handler is reverted here
       // to the rendered state, to keep client DOM in sync.
       if (commits && e.target.nodeType === 1 && !hasEditHandler(root, e.target)) {
-        revertControl(root, e.target);
+        updateDOM(eventVer, () => revertControl(root, e.target));
       }
     });
   }
@@ -799,8 +843,10 @@ export function run() {
     for (const step of f.Steps) {
       switch (step.Type) {
         case 'ApplyPatch':
-          for (const p of step.Patches) applyPatch(root, p);
-          ver = step.Ver;
+          updateDOM(step.Ver, () => {
+            for (const p of step.Patches) applyPatch(root, p);
+            ver = step.Ver;
+          });
           break;
         case 'SetTitle':
           document.title = step.Title ?? '';
