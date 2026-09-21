@@ -188,10 +188,7 @@ func (sv *Server[Msg]) defaultDocument(title string, body Node) Node {
 		Tag("head")(
 			Tag("meta", Name("charset", "utf-8")),
 			Tag("title")(Text(title)),
-			Tag("script",
-				Name("type", "module"),
-				Name("src", clientJSPath(sv.prefix)),
-			),
+			ClientModule(sv.prefix),
 		),
 		body,
 	)

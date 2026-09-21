@@ -80,10 +80,10 @@
 // module in the document head.
 //
 // Apps that provide their own document shell (see [Document])
-// must also serve the JavaScript module.
+// must also load the JavaScript module.
 // There are two ways to do it.
 //
-//   - Serve it directly using [ClientModule].
+//   - Load it directly using [ClientModule].
 //   - Bundle it with additional JavaScript code.
 //
 // Apps that provide their own JavaScript code
