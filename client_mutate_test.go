@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestClientApplyMove drives client.js's optimistic move applier under
+// TestClientApplyMove drives domi.js's optimistic move applier under
 // jsdom (see testdata/mutate_runner.mjs): reorder, append, cross-container
 // move, and destination key collision. The runner exits non-zero with a
 // message on the first failed check. It needs bun; the test skips where

@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestClientCommit drives client.js's form-control commit logic under
+// TestClientCommit drives domi.js's form-control commit logic under
 // jsdom (see testdata/commit_runner.mjs): the mutation ops and attribute
 // writes reporting a control's committed state, the local revert that
 // converges unhandled controls, and the handler test that decides

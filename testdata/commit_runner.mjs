@@ -1,10 +1,10 @@
-// commit_runner — exercises client.js's form-control commit logic
+// commit_runner — exercises domi.js's form-control commit logic
 // under jsdom: commitOps (the ops reporting a control's committed
 // state, and the attribute writes that keep the live DOM matching the
 // server's reconstruction), revertControl (the local convergence for
 // controls nobody listens to), and hasEditHandler (the test deciding
 // between the two). It imports the production functions (kept internal
-// to client.js) by copying the source to a temp module that re-exports
+// to domi.js) by copying the source to a temp module that re-exports
 // them, and exits non-zero with a message on the first failure. Run by
 // TestClientCommit, which skips when bun is absent.
 
@@ -19,7 +19,7 @@ globalThis.window = dom.window;
 globalThis.document = dom.window.document;
 globalThis.Node = dom.window.Node;
 
-const src = await readFile(new URL('../client.js', import.meta.url), 'utf8');
+const src = await readFile(new URL('../domi.js', import.meta.url), 'utf8');
 const tmp = join(tmpdir(), `domi-commit-${process.pid}.mjs`);
 await writeFile(tmp, src + '\nexport { commitOps, revertControl, hasEditHandler, editing };');
 const { commitOps, revertControl, hasEditHandler, editing } = await import(pathToFileURL(tmp).href);

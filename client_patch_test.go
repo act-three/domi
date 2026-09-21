@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// TestClientApplyPatchFormState drives client.js's patch applier against
+// TestClientApplyPatchFormState drives domi.js's patch applier against
 // form controls carrying user state under jsdom (see
 // testdata/patch_runner.mjs): dirty inputs, checkboxes, options, and
 // textareas whose properties no longer reflect their attributes, plus
