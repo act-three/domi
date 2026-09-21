@@ -17,13 +17,12 @@ import (
 type Server[Msg any] struct {
 	// Config. Never changed after init. Safe to read concurrently.
 	mux             http.ServeMux
-	document        func(clientPath, title string, body Node) Node // or nil
+	document        func(title string, body Node) Node // or nil
 	logger          *slog.Logger
 	instanceTimeout time.Duration
 	replayWindow    int
 	keepalive       time.Duration
 	prefix          string // namespace for internal URLs, e.g. "/-/domi"; "/" for the site root
-	clientPath      string // full path the client runtime is served at, prefix included
 	effects         effectTable[Msg]
 
 	appf         func(context.Context, *url.URL) (App[Msg], Cmd[Msg])
@@ -77,9 +76,7 @@ func NewServer[Msg any, A App[Msg]](
 	for _, o := range o {
 		switch o := o.(type) {
 		case optionDocument:
-			sv.document = func(_, title string, body Node) Node {
-				return o.f(title, body)
-			}
+			sv.document = o.f
 		case optionEffectHandler[Msg]:
 			if sv.effects == nil {
 				sv.effects = effectTable[Msg]{}
@@ -100,10 +97,9 @@ func NewServer[Msg any, A App[Msg]](
 			sv.replayWindow = o.n
 		}
 	}
-	sv.clientPath = path.Join("/", sv.prefix, "domi."+clientJSDigest+".js")
 	sv.mux.HandleFunc("GET "+path.Join("/", sv.prefix, "{id}/events"), sv.handleSSE)
 	sv.mux.HandleFunc("POST "+path.Join("/", sv.prefix, "{id}/event"), sv.handleEvent)
-	sv.mux.HandleFunc("GET "+sv.clientPath, clientJSHandler)
+	sv.mux.HandleFunc("GET "+clientJSPath(sv.prefix), clientJSHandler)
 	sv.mux.HandleFunc("GET /", sv.handleRoot)
 	return sv
 }
@@ -187,12 +183,15 @@ func (sv *Server[Msg]) delete(id string) {
 	delete(sv.m, id)
 }
 
-func defaultDocument(clientPath, title string, body Node) Node {
+func (sv *Server[Msg]) defaultDocument(title string, body Node) Node {
 	return Tag("html")(
 		Tag("head")(
 			Tag("meta", Name("charset", "utf-8")),
 			Tag("title")(Text(title)),
-			Tag("script", Name("type", "module"), Name("src", clientPath)),
+			Tag("script",
+				Name("type", "module"),
+				Name("src", clientJSPath(sv.prefix)),
+			),
 		),
 		body,
 	)
