@@ -379,20 +379,20 @@ func (s *instance[Msg]) handleEvent(w http.ResponseWriter, req *http.Request) {
 		msgURLChange  msgType = "URLChange"  // a history navigation
 	)
 	var envelope struct {
-		Type        msgType        `json:",omitempty"`
-		Handler     string         `json:",omitempty"`
-		Event       jsontext.Value `json:",omitempty"`
-		URL         string         `json:",omitempty"`
-		SnapshotVer string         `json:",omitempty"`
-		ToPreview   bool           `json:",omitempty"`
+		Type        msgType
+		Handler     string
+		Event       jsontext.Value
+		URL         string
+		SnapshotVer string
+		ToPreview   bool
 		// Ver echoes the version id of the tree the client displayed
 		// when a Dispatch event fired. See step.Ver.
-		Ver string `json:",omitempty"`
+		Ver string
 		// HandlerVer is the tree version to use to find the handler
 		// for Event. If empty, use Ver.
-		HandlerVer string `json:",omitempty"`
+		HandlerVer string
 		// Mutations carries optional client-initiated DOM changes.
-		Mutations []vdom.ClientMutation `json:",omitempty"`
+		Mutations []vdom.ClientMutation
 	}
 	if err := json.UnmarshalRead(req.Body, &envelope); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
