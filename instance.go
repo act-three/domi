@@ -195,10 +195,10 @@ func (s *instance[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 	)
 	document := s.sv.document
 	if document == nil {
-		document = defaultDocument
+		document = s.sv.defaultDocument
 	}
 	// The document shell cannot contain event handlers.
-	roots, _ := lower(0, document(s.sv.clientPath, title, body))
+	roots, _ := lower(0, document(title, body))
 
 	s.updateSubs(app.Subscriptions(appCtx))
 	s.spawn(cmd)

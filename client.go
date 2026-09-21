@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"net/http"
+	"path"
 	"time"
 )
 
@@ -41,6 +42,12 @@ var clientJSDigest = func() string {
 //	html.Script(attr.Type("module"), attr.Src(path))
 func ClientModule() (digest string, h http.Handler) {
 	return clientJSDigest, http.HandlerFunc(clientJSHandler)
+}
+
+// clientJSPath returns the URL path where a server
+// with the given internal URL prefix serves the client module.
+func clientJSPath(prefix string) string {
+	return path.Join("/", prefix, "domi."+clientJSDigest+".js")
 }
 
 func clientJSHandler(w http.ResponseWriter, req *http.Request) {
