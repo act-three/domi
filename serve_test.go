@@ -178,6 +178,7 @@ func TestHandlerDocumentOption(t *testing.T) {
 			Tag("head")(
 				Tag("title")(Text("custom:"+title)),
 				Tag("meta", Name("name", "test"), Name("content", "hello")),
+				ClientModule("/"),
 			),
 			body,
 		)
@@ -204,10 +205,18 @@ func TestHandlerDocumentOption(t *testing.T) {
 	if !strings.Contains(body, ` prefix="`) {
 		t.Fatalf("instance marker not attached to domi-root; got: %s", body)
 	}
-	// The default client script tag must not appear when Document is set —
-	// the App is responsible for loading the client itself.
-	if strings.Contains(body, clientJSDigest) {
-		t.Fatalf("default client script leaked into custom Document; got: %s", body)
+	// The App is responsible for loading the client itself: the only
+	// client script tag is the one its Document placed with ClientModule,
+	// and that tag points at a path the server actually serves.
+	srcs := regexp.MustCompile(`<script src="([^"]*)" type="module">`).FindAllStringSubmatch(body, -1)
+	if len(srcs) != 1 {
+		t.Fatalf("got %d client script tags, want 1; body: %s", len(srcs), body)
+	}
+	src := srcs[0][1]
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest("GET", src, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("client runtime not served at %s: status %d", src, w.Code)
 	}
 }
 
