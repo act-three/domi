@@ -96,7 +96,7 @@
 // to add domi.js into their JavaScript bundle.
 // Obtain the filesystem path of domi.js by running:
 //
-//	go list -m -f '{{.Dir}}/domi.js' ily.dev/domi
+//	go list -f '{{.Dir}}/domi.js' ily.dev/domi
 //
 // Include this path in the app's JavaScript bundle.
 // Then import the module, and call run:
