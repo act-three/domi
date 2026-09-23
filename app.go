@@ -64,14 +64,14 @@ type App[Msg any] interface {
 //
 // A nil Cmd is a valid command with no effect.
 type Cmd[Msg any] interface {
-	isCmd()
+	isCmd(Msg)
 }
 
 // batch is the lowered form of a [Cmd]: a list of commands
 // that domi spawns concurrently.
 type batch[Msg any] []cmd[Msg]
 
-func (batch[Msg]) isCmd() {}
+func (batch[Msg]) isCmd(Msg) {}
 
 // A cmd is the lowered form of a single command.
 type cmd[Msg any] struct {
@@ -109,7 +109,7 @@ func MapCmd[T, Msg any](f func(T) Msg, c Cmd[T]) Cmd[Msg] {
 	if f == nil {
 		panic(fmt.Errorf("domi: MapCmd called with a nil function"))
 	}
-	all := Batch[T](c).(batch[T])
+	all := Batch(c).(batch[T])
 	mapped := make(batch[Msg], len(all))
 	for i, c := range all {
 		if c.f == nil {
@@ -126,14 +126,14 @@ func MapCmd[T, Msg any](f func(T) Msg, c Cmd[T]) Cmd[Msg] {
 //
 // A nil Sub is valid and produces no messages.
 type Sub[Msg any] interface {
-	isSub()
+	isSub(Msg)
 }
 
 // subs is the lowered form of a [Sub]: a flat set of event sources
 // that domi reconciles between update cycles.
 type subs[Msg any] []sub[Msg]
 
-func (subs[Msg]) isSub() {}
+func (subs[Msg]) isSub(Msg) {}
 
 type sub[Msg any] struct {
 	key    any
@@ -180,7 +180,7 @@ func MapSub[T, Msg any](f func(T) Msg, s Sub[T]) Sub[Msg] {
 	if f == nil {
 		panic(fmt.Errorf("domi: MapSub called with a nil function"))
 	}
-	all := Subs[T](s).(subs[T])
+	all := Subs(s).(subs[T])
 	mapped := make(subs[Msg], len(all))
 	for i, s := range all {
 		mapped[i] = sub[Msg]{

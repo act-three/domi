@@ -762,7 +762,7 @@ func TestBatchNilCmdContributesNothing(t *testing.T) {
 	s := newTestInstance(&counterApp{})
 	defer s.cancel()
 	done := make(chan struct{})
-	cmd := Batch[int](nil, Func(func() int {
+	cmd := Batch(nil, Func(func() int {
 		close(done)
 		return 0
 	}), nil)
@@ -975,7 +975,7 @@ func TestSubsComposition(t *testing.T) {
 	noop := func(context.Context) iter.Seq[int] { return func(func(int) bool) {} }
 	a := Subscription[int](tickKey{"a"}, noop)
 	b := Subscription[int](tickKey{"b"}, noop)
-	combined := Subs[int](a, b).(subs[int])
+	combined := Subs(a, b).(subs[int])
 	if len(combined) != 2 {
 		t.Fatalf("expected 2 entries, got %d", len(combined))
 	}
@@ -986,7 +986,7 @@ func TestSubsComposition(t *testing.T) {
 func TestSubsNilContributesNothing(t *testing.T) {
 	noop := func(context.Context) iter.Seq[int] { return func(func(int) bool) {} }
 	a := Subscription[int](tickKey{"a"}, noop)
-	combined := Subs[int](nil, a, nil).(subs[int])
+	combined := Subs(nil, a, nil).(subs[int])
 	if len(combined) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(combined))
 	}

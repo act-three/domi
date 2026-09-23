@@ -219,7 +219,7 @@ func (s *instance[Msg]) handleRoot(w http.ResponseWriter, req *http.Request) {
 // spawn runs each command in its own goroutine and feeds the
 // resulting Msg and optional nav back into apply.
 func (s *instance[Msg]) spawn(cmd Cmd[Msg]) {
-	for _, c := range Batch[Msg](cmd).(batch[Msg]) {
+	for _, c := range Batch(cmd).(batch[Msg]) {
 		go func() {
 			var m []Msg
 			switch {
@@ -337,7 +337,7 @@ func (s *instance[Msg]) apply(ctx context.Context, msgs []Msg, n *nav) {
 // New keys start a goroutine that iterates the event stream;
 // absent keys cancel their goroutine via context.
 func (s *instance[Msg]) updateSubs(wanted Sub[Msg]) {
-	all := Subs[Msg](wanted).(subs[Msg])
+	all := Subs(wanted).(subs[Msg])
 	next := make(map[any]func(context.Context) iter.Seq[Msg], len(all))
 	for _, e := range all {
 		next[e.key] = e.events

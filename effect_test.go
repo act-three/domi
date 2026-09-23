@@ -43,8 +43,8 @@ func TestEffectDispatch(t *testing.T) {
 						return prefix + e.value
 					}),
 				)
-				c := Batch[int](nil, Effect[int](testEffect{"saved"}),
-					Batch[int](Func(func() int { return 7 }), Effect[int](testEffect{"again"})))
+				c := Batch(nil, Effect[int](testEffect{"saved"}),
+					Batch(Func(func() int { return 7 }), Effect[int](testEffect{"again"})))
 				c = MapCmd(func(n int) int { return n + 1 }, c)
 				s.spawn(MapCmd(strconv.Itoa, c))
 				synctest.Wait()
