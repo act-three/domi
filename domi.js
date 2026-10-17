@@ -258,13 +258,11 @@ function revertControl(root, el) {
 }
 
 // hasEditHandler reports whether a handler on el or an ancestor
-// listens for el's edits — an input or change handler, the two commit
-// events (bound by event.Input, event.Change, and event.Check).
+// listens for el's edits — a change handler, the commit event (bound
+// by event.Change and event.Check).
 function hasEditHandler(root, el) {
   for (let n = el; n && n !== root.parentNode; n = n.parentNode) {
-    if (n.nodeType === 1 && (n.getAttribute('domi-msg-input') || n.getAttribute('domi-msg-change'))) {
-      return true;
-    }
+    if (n.nodeType === 1 && n.getAttribute('domi-msg-change')) return true;
   }
   return false;
 }
@@ -321,10 +319,9 @@ function syncTextareaValue(parent) {
 }
 
 // editing holds the controls with an edit that has not reached a
-// commit point. Every input and change event marks its control (the
-// marking listener in run); reaching a commit (commitOps), a revert
-// (revertControl), or losing focus (the focusout listener in run)
-// clears it.
+// commit point. An input event marks its control (the input listener
+// in run); reaching a commit (commitOps), a revert (revertControl), or
+// losing focus (the focusout listener in run) clears it.
 const editing = new WeakSet();
 
 // applyPatch applies a single patch to the tree rooted at `root`.
@@ -482,7 +479,7 @@ function getFields(e, el, paths) {
 
 // ---- instance initialization ----
 
-const EVENTS = ['click', 'submit', 'input', 'change', 'keydown', 'keyup'];
+const EVENTS = ['click', 'submit', 'change', 'keydown', 'keyup'];
 let eventVer;
 
 function updateDOM(next, f) {
@@ -669,24 +666,29 @@ export function run() {
     }).catch((err) => console.error('domi: urlChange POST failed', err));
   }
 
-  // Be sure to run marking before the dispatch listeners (registration order),
-  // so a commit or revert in the same event clears the mark it just
-  // set. See [editing].
-  for (const ev of ['input', 'change']) {
-    root.addEventListener(ev, (e) => {
-      if (e.target.nodeType === 1) editing.add(e.target);
-    });
-  }
+  // Typing marks a control as editing until the change event that
+  // commits it. On a control nobody listens to there is nothing to
+  // commit, so each keystroke is reverted on the spot and the user
+  // learns under the cursor that the control is display-only. During
+  // IME composition nothing is final yet, so the revert waits. See
+  // [editing].
+  root.addEventListener('input', (e) => {
+    if (e.target.nodeType !== 1) return;
+    if (!e.isComposing && !hasEditHandler(root, e.target)) {
+      updateDOM(eventVer, () => revertControl(root, e.target));
+    } else {
+      editing.add(e.target);
+    }
+  });
   root.addEventListener('focusout', (e) => {
     if (e.target.nodeType === 1) editing.delete(e.target);
   });
 
   for (const ev of EVENTS) {
     root.addEventListener(ev, (e) => {
-      // input and change are commit points: the user's edit to a form
-      // control is ready to reconcile with the server. During IME
-      // composition nothing is ready yet, so nothing commits.
-      const commits = (ev === 'input' || ev === 'change') && !e.isComposing;
+      // change is the commit point: the user's edit to a form control
+      // is ready to reconcile with the server.
+      const commits = ev === 'change';
       let el = e.target;
       while (el && el !== root.parentNode) {
         if (el.nodeType === 1) {

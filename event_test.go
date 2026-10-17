@@ -143,9 +143,9 @@ func TestOnEventDistinguishesHandlers(t *testing.T) {
 // key to the attribute value, after the handler key, so the client can
 // look up the path set. The handler stays keyed by the handler part.
 func TestOnPathSet(t *testing.T) {
-	n, h := lower(0, Tag("input", On("input", msgFn("x"), []string{"target", "value"}))())
+	n, h := lower(0, Tag("input", On("change", msgFn("x"), []string{"target", "value"}))())
 	html := vdom.Render(n[0])
-	const marker = `domi-msg-input="`
+	const marker = `domi-msg-change="`
 	i := strings.Index(html, marker)
 	if i < 0 {
 		t.Fatalf("no handler attr in render %q", html)

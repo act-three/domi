@@ -6,8 +6,9 @@ import * as Domi from '../domi.js';
 const { window } = new JSDOM(
   '<body><domi-root prefix="/i">' +
     '<div id="outbox"><button id="source" domi-msg-click="old:ps">note</button></div>' +
-    '<input id="edit" value="before" domi-msg-input="edit:ps" domi-msg-click="edit:ps">' +
+    '<input id="edit" value="before" domi-msg-change="edit:ps" domi-msg-click="edit:ps">' +
     '<div id="display" domi-opaque></div><a id="link" href="/next">next</a>' +
+    '<input id="plain" value="keep">' +
   '</domi-root></body>', { url: 'https://app.example/' });
 const { document } = window;
 Object.assign(globalThis, { window, document, location: window.location, history: window.history });
@@ -86,14 +87,25 @@ document.body.setAttribute('domi-event-tree-ver', 'above-root');
 dispatch(find('target'), 'ancestor', 'V1', 'above-root');
 document.body.removeAttribute('domi-event-tree-ver');
 
-// A clone made before the mutation request reaches the server must still
-// name the server-provided table, while Ver advances for reconciliation.
+// Typing dispatches nothing: a handled control keeps its in-progress
+// value for the change event to commit, and an unhandled one is reverted
+// under the cursor.
 const edit = find('edit');
 posted.length = 0;
 edit.value = 'after';
 edit.dispatchEvent(new window.Event('input', { bubbles: true }));
+assert.equal(edit.value, 'after');
+const plain = find('plain');
+plain.value = 'typed';
+plain.dispatchEvent(new window.Event('input', { bubbles: true }));
+assert.equal(plain.value, 'keep');
+assert.deepEqual(posted, []);
+
+// A clone made before the mutation request reaches the server must still
+// name the server-provided table, while Ver advances for reconciliation.
+edit.dispatchEvent(new window.Event('change', { bubbles: true }));
 assert.deepEqual(posted, [{
-  Type: 'Dispatch', Handler: 'edit', Ver: 'V1', Event: { type: 'input' },
+  Type: 'Dispatch', Handler: 'edit', Ver: 'V1', Event: { type: 'change' },
   Mutations: [{ Op: 'setvalue', Path: [1], Value: 'after' }],
 }]);
 assert.equal(stamp(edit), 'V1');

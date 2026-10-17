@@ -20,12 +20,6 @@ func Submit[Msg any](msg Msg) domi.Attr {
 	return domi.On("submit", constant(msg))
 }
 
-// Input responds to "input" events on text fields and text areas.
-// It calls f with the new value and delivers the resulting message.
-func Input[Msg any](f func(value string) Msg) domi.Attr {
-	return domi.On("input", targetField("value", f), []string{"target", "value"})
-}
-
 // Change responds to "change" events
 // on text fields, text areas, and select elements.
 // It calls f with the new value and delivers the resulting message.

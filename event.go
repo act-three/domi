@@ -161,7 +161,7 @@ func iterMap[V, U any](seq iter.Seq[V], f func(V) U) iter.Seq[U] {
 // and includes it in the JSON object given to f.
 // For instance,
 //
-//	On("input", f, []string{"target", "value"})
+//	On("change", f, []string{"target", "value"})
 //
 // calls f with the JSON text
 //
