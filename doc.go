@@ -49,7 +49,7 @@
 // While the user is editing a control,
 // domi avoids disturbing their in-progress work
 // by suspending its updates to that control's value.
-// When an "input" or "change" event handler is present,
+// When a "change" event handler is present,
 // the event commits the user's changes
 // and domi resumes applying server updates.
 //

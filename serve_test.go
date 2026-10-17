@@ -1890,7 +1890,7 @@ type pathSetApp struct{}
 
 func (pathSetApp) Update(context.Context, int) Cmd[int] { return Batch[int]() }
 func (pathSetApp) View(context.Context) (string, Node) {
-	return "", Tag("input", On("input", msgInt(1), []string{"target", "value"}))()
+	return "", Tag("input", On("change", msgInt(1), []string{"target", "value"}))()
 }
 func (pathSetApp) Subscriptions(context.Context) Sub[int]                   { return nil }
 func (pathSetApp) Preview(context.Context, *url.URL) (string, string, Node) { return "", "", nil }
@@ -1909,8 +1909,8 @@ func TestHandleRootSeedsPathSets(t *testing.T) {
 	sv.handleRoot(rec, httptest.NewRequest("GET", "/", nil))
 	html := rec.Body.String()
 
-	// The input handler's path-set key must appear in the seed blob, not
-	// only in the domi-msg-input attribute that references it.
+	// The change handler's path-set key must appear in the seed blob, not
+	// only in the domi-msg-change attribute that references it.
 	psKey := pathSet{{"target", "value"}}.key()
 
 	const marker = `path-sets="`
